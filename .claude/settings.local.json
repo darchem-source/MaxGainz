@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(grep -n \"JSON.stringify\\({email, password}\\)\" \"/Users/maximiliandarche/Library/CloudStorage/OneDrive-Personal/GymTracker/Claude Code/gymtracker.html\")",
-      "Bash(grep -n \"^<\\\\/div>$\" \"/Users/maximiliandarche/Library/CloudStorage/OneDrive-Personal/GymTracker/Claude Code/gymtracker.html\")",
-      "mcp__Claude_in_Chrome__tabs_context_mcp"
-    ]
-  }
-}

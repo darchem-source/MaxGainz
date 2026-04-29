@@ -1,0 +1,14 @@
+# Mac system files
+.DS_Store
+
+# Claude / local settings
+.claude/
+
+# Node (if ever used)
+node_modules/
+
+# Logs
+*.log
+
+# Secrets
+.env
