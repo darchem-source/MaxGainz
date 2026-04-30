@@ -823,8 +823,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 <div class="modal-ov" id="adhocMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal">
     <div class="modal-handle"></div>
-    <div style="font-size:19px;font-weight:800;margin-bottom:4px;">Add Extra Session</div>
-    <div style="font-size:13px;color:var(--text2);margin-bottom:16px;">Pick any workout. Won't affect your Path progress.</div>
+    <div id="adhocModTitle" style="font-size:19px;font-weight:800;margin-bottom:4px;">Add Extra Session</div>
+    <div id="adhocModSub" style="font-size:13px;color:var(--text2);margin-bottom:16px;">Pick any workout. Won't affect your Path progress.</div>
     <div id="adhocContent"></div>
     <button onclick="document.getElementById('adhocMod').classList.remove('open')"
       style="width:100%;margin-top:8px;background:transparent;border:none;color:var(--text2);font-size:13px;padding:8px;cursor:pointer;">Cancel</button>
@@ -6291,6 +6291,30 @@ const HIIT=[
   ]}
 ];
 
+// ── HIIT WORKOUT MUSCLE-FOCUS MAP ──
+// Maps each HIIT workout name to the muscle groups it primarily targets.
+const HIIT_MUSCLE_FOCUS = {
+  "Garry's Bootcamp - 30 (Arms & Abs)":    ['push','pull','core'],
+  "Garry's Blast - 45 (Chest, Back & Abs)":['push','pull','core'],
+  "Garry's Burn - 45 (Biceps & Triceps)":  ['push','pull'],
+  "Garry's Blaze - 45 (Glutes & Legs)":    ['legs'],
+  "Garry's Bootcamp - 60 (Total Body)":    ['push','pull','legs','core'],
+  "Garry's Blast - 60 (Chest, Back & Abs)":['push','pull','core'],
+  "Garry's Burn - 60 (Glutes & Legs)":     ['legs'],
+  "AMRAP 20 – Full Body Blitz":        ['push','pull','legs','core'],
+  "AMRAP 12 – Upper Body Pump":        ['push','pull'],
+  "AMRAP 25 – Strength Endurance":     ['push','pull','legs','core'],
+  "EMOM 20 – Power Circuit":           ['push','pull','legs','core'],
+  "EMOM 15 – Upper Body":              ['push','pull'],
+  "EMOM 30 – Full Body Strength":      ['push','pull','legs','core'],
+  "Barbell Complex – 5 Rounds":        ['push','pull','legs','core'],
+  "Dumbbell Complex – 4 Rounds":       ['push','pull','legs'],
+  "KB/DB Complex – Conditioning":      ['push','pull','legs','core'],
+  "Core Blaster – 24 min":            ['core'],
+  "Abs & Obliques – 15 min":          ['core'],
+  "Core & Lower Back – 25 min":       ['core','legs'],
+};
+
 // ── HIIT DURATION SELF-AUDIT (runs once at startup, logs to console) ──
 (function auditHIITDurations(){
   const issues = [];
@@ -8682,6 +8706,10 @@ function startPathSession(programme, dayName) {
 function openAdhocModal() {
   const content = document.getElementById('adhocContent');
   if(!content) return;
+  const titleEl = document.getElementById('adhocModTitle');
+  const subEl   = document.getElementById('adhocModSub');
+  if(titleEl) titleEl.textContent = 'Add Extra Session';
+  if(subEl)   subEl.textContent   = "Pick any workout. Won't affect your Path progress.";
 
   const allOptions = [
     { prog:'ULF',  icon:'🏋️', label:'ULF Strength',   desc:'Upper / Lower / Full Body',       colour:'var(--accent)' },
@@ -8728,11 +8756,308 @@ function selectAdhocProg(prog) {
   }
 }
 
-function openAddOnSelector(prog) {
-  if(prog === 'HIIT'){
-    // Route to the Workout tab where HIIT sessions are listed
-    goTab('workout', document.getElementById('nav-workout'));
+// ─────────────────────────────────────────────
+// ADD-ON RECOMMENDATION SYSTEM
+// ─────────────────────────────────────────────
+
+// Calculates muscle group percentages from recent sessions (last N weeks).
+// Returns { push, pull, legs, core } as integer percentages and hasData flag.
+function calcMuscleImbalance(windowWeeks) {
+  const wk = 7 * 24 * 60 * 60 * 1000;
+  const since = new Date(Date.now() - windowWeeks * wk);
+  const muscleVol = {push:0, pull:0, legs:0, core:0};
+  const setCounts  = {push:0, pull:0, legs:0, core:0};
+  completedSessions.filter(s => !s.manualActivity && s.setLog && new Date(s.date) >= since).forEach(s => {
+    const w = getRecencyWeight(s.date);
+    if(!w) return;
+    Object.entries(s.setLog).forEach(([exName, data]) => {
+      const splits = getSplits(exName);
+      if(!splits) return;
+      const sets = data.sets || 0;
+      const repsArr = Array.isArray(data.reps) ? data.reps : (data.reps ? [data.reps] : []);
+      const repsSum = repsArr.reduce((a, r) => a + (parseInt(r) || 0), 0);
+      let ew = data.weight || 0;
+      if(!ew && data.bw) ew = userProfile.weight || 80;
+      const vol = ew * repsSum;
+      splits.forEach(({cat, f}) => {
+        setCounts[cat] += sets * f * w;
+        muscleVol[cat] += vol * f * w;
+      });
+    });
+  });
+  const totalVol  = Object.values(muscleVol).reduce((a, v) => a + v, 0);
+  const totalSets = Object.values(setCounts).reduce((a, v) => a + v, 0);
+  const avgVPS    = totalSets > 0 ? (totalVol / totalSets) || 100 : 100;
+  const bv = {};
+  ['push','pull','legs','core'].forEach(c => {
+    bv[c] = muscleVol[c] > 0 ? muscleVol[c] : setCounts[c] * avgVPS * 0.5;
+  });
+  const total = Object.values(bv).reduce((a, v) => a + v, 1);
+  return {
+    push: Math.round((bv.push / total) * 100),
+    pull: Math.round((bv.pull / total) * 100),
+    legs: Math.round((bv.legs / total) * 100),
+    core: Math.round((bv.core / total) * 100),
+    hasData: total > 1
+  };
+}
+
+// Muscle focus for strength days (ULF/PPL) used when path is HIIT.
+const STRENGTH_MUSCLE_FOCUS = {
+  'Upper':     ['push','pull'],
+  'Lower':     ['legs','core'],
+  'Full Body': ['push','pull','legs','core'],
+  'Push A': ['push'], 'Push B': ['push'],
+  'Pull A': ['pull'], 'Pull B': ['pull'],
+  'Legs A': ['legs','core'], 'Legs B': ['legs','core'],
+};
+
+// Scores a workout's focus against sorted-by-rank weak groups.
+// Returns a numeric score: higher = better match for weak areas.
+function _scoreWorkoutFocus(focusGroups, sortedByWeakness) {
+  let score = 0;
+  focusGroups.forEach(g => {
+    const rank = sortedByWeakness.indexOf(g); // 0 = weakest
+    if(rank >= 0) score += (4 - rank); // weakest = 4pts, 2nd = 3pts, etc.
+  });
+  return score;
+}
+
+// Returns an array of up to 3 recommendation objects: { name, prog, day, duration, diff, focusGroups, reason }
+// addOnType: 'HIIT' → recommend HIIT workouts; 'ULF'/'PPL' → recommend strength days
+function getAddOnRecommendations(addOnType, balance) {
+  const groups   = ['push','pull','legs','core'];
+  const sorted   = [...groups].sort((a, b) => balance[a] - balance[b]); // weakest first
+  const groupNames = { push:'Push (Chest/Shoulders/Tri)', pull:'Pull (Back/Biceps)', legs:'Legs & Glutes', core:'Core' };
+
+  function makeReason(focusGroups) {
+    const weak = sorted.slice(0, 2).filter(g => focusGroups.includes(g));
+    if(!balance.hasData) return 'No recent data — a great all-round choice';
+    if(weak.length === 0) return 'Good balance workout';
+    if(weak.length === 1) {
+      const g = weak[0];
+      return `Your ${groupNames[g]} is only ${balance[g]}% — this targets it directly`;
+    }
+    return `Targets your weak ${weak.map(g => groupNames[g].split(' ')[0]).join(' & ')} (${weak.map(g => balance[g]+'%').join(' / ')})`;
   }
+
+  let candidates = [];
+
+  if(addOnType === 'HIIT') {
+    // Recommend HIIT workouts
+    HIIT.forEach((w, idx) => {
+      const focus = HIIT_MUSCLE_FOCUS[w.name] || ['push','pull','legs','core'];
+      candidates.push({ idx, name:w.name, prog:'HIIT', duration:w.duration, diff:w.diff,
+        focusGroups:focus, score:_scoreWorkoutFocus(focus, sorted), format:w.format });
+    });
+    // Include custom HIITs (no muscle focus data — score 0)
+    (typeof customHIITs !== 'undefined' ? customHIITs : []).forEach((w, ci) => {
+      candidates.push({ ci, name:w.name, prog:'CUSTOM_HIIT', duration:w.duration||20, diff:w.diff||2,
+        focusGroups:['push','pull','legs','core'], score:1, format:w.format||'Custom' });
+    });
+  } else {
+    // Recommend ULF + PPL days
+    const ulfVariant = userPath ? userPath.coreSchedule.variant : 'standard';
+    const ulfDays = ['Upper','Lower','Full Body'];
+    const pplDays = ulfVariant === '6day'
+      ? ['Push A','Pull A','Legs A','Push B','Pull B','Legs B']
+      : ['Push A','Pull A','Legs A'];
+
+    ulfDays.forEach(day => {
+      const focus = STRENGTH_MUSCLE_FOCUS[day] || [];
+      candidates.push({ day, prog:'ULF', duration:60, diff:2, focusGroups:focus,
+        score:_scoreWorkoutFocus(focus, sorted) });
+    });
+    pplDays.forEach(day => {
+      const focus = STRENGTH_MUSCLE_FOCUS[day] || [];
+      candidates.push({ day, prog:'PPL', duration:60, diff:2, focusGroups:focus,
+        score:_scoreWorkoutFocus(focus, sorted) });
+    });
+    (typeof customWorkouts !== 'undefined' ? customWorkouts : []).forEach((w, ci) => {
+      candidates.push({ ci, name:w.name, prog:'CUSTOM', duration:w.duration||60, diff:2,
+        focusGroups:['push','pull','legs','core'], score:1 });
+    });
+  }
+
+  // Sort by score desc, then duration asc (shorter first as a tiebreaker for quick wins)
+  candidates.sort((a, b) => b.score - a.score || a.duration - b.duration);
+
+  // Deduplicate by focus profile — don't show 3 identical workouts
+  const seen = new Set();
+  const recs = [];
+  for(const c of candidates) {
+    const key = c.focusGroups.slice().sort().join(',');
+    if(!seen.has(key) || recs.length < 2) {
+      seen.add(key);
+      recs.push({ ...c, reason: makeReason(c.focusGroups) });
+      if(recs.length >= 3) break;
+    }
+  }
+  return recs;
+}
+
+// Returns full filtered workout list for "Other" view.
+// addOnType 'HIIT' → all HIIT + custom HIIT; otherwise → all ULF+PPL+custom strength
+function getFilteredAddOnList(addOnType) {
+  if(addOnType === 'HIIT') {
+    const formats = [...new Set(HIIT.map(w => w.format))];
+    const groups = formats.map(fmt => ({
+      label: fmt,
+      workouts: HIIT.filter(w => w.format === fmt).map((w, i) => ({
+        name: w.name, prog:'HIIT', idx: HIIT.indexOf(w),
+        duration: w.duration, diff: w.diff, format: w.format
+      }))
+    }));
+    const cHIITs = (typeof customHIITs !== 'undefined' ? customHIITs : []);
+    if(cHIITs.length > 0) {
+      groups.push({ label:'My Workouts', workouts: cHIITs.map((w, ci) => ({
+        name: w.name, prog:'CUSTOM_HIIT', ci, duration: w.duration||20, diff: w.diff||2
+      }))});
+    }
+    return groups;
+  } else {
+    const ulfVariant = userPath ? userPath.coreSchedule.variant : 'standard';
+    const ulfDays = ['Upper','Lower','Full Body'];
+    const pplDays = ulfVariant === '6day'
+      ? ['Push A','Pull A','Legs A','Push B','Pull B','Legs B']
+      : ['Push A','Pull A','Legs A'];
+    const groups = [
+      { label:'ULF', workouts: ulfDays.map(d => ({ day:d, name:d, prog:'ULF', duration:60, diff:2 })) },
+      { label:'PPL', workouts: pplDays.map(d => ({ day:d, name:d, prog:'PPL', duration:60, diff:2 })) },
+    ];
+    const cWkts = (typeof customWorkouts !== 'undefined' ? customWorkouts : []);
+    if(cWkts.length > 0) {
+      groups.push({ label:'My Programmes', workouts: cWkts.map((w, ci) => ({
+        name: w.name, prog:'CUSTOM', ci, duration: w.duration||60, diff:2
+      }))});
+    }
+    return groups;
+  }
+}
+
+// Starts the chosen add-on workout, closes modal first.
+function startAddOnWorkout(prog, name, day, idx, ci) {
+  document.getElementById('adhocMod').classList.remove('open');
+  window._currentSessionIsAdhoc = true;
+  if(prog === 'HIIT') {
+    const i = (idx != null) ? idx : HIIT.findIndex(w => w.name === name);
+    if(i >= 0) startHIIT(i);
+  } else if(prog === 'CUSTOM_HIIT') {
+    const w = (typeof customHIITs !== 'undefined') ? (ci != null ? customHIITs[ci] : customHIITs.find(w => w.name === name)) : null;
+    if(w) { const i = customHIITs.indexOf(w); startCustomHIIT && startCustomHIIT(i); }
+  } else if(prog === 'ULF') {
+    startSessionULF(day || name);
+  } else if(prog === 'PPL') {
+    startSession(day || name, PPL);
+  } else if(prog === 'CUSTOM') {
+    // Navigate to Workout tab and open that custom programme's detail view
+    const cIdx = (ci != null) ? ci : (typeof customWorkouts !== 'undefined' ? customWorkouts.findIndex(w => w.name === name) : -1);
+    goTab('workout', document.getElementById('nav-workout'));
+    if(cIdx >= 0) setTimeout(() => renderCustomProgView(cIdx), 150);
+  }
+}
+
+// Renders the full workout list view inside adhocContent.
+function showAddOnFullList(addOnType) {
+  const content = document.getElementById('adhocContent');
+  if(!content) return;
+  const groups = getFilteredAddOnList(addOnType);
+  const typeLabel = addOnType === 'HIIT' ? 'HIIT' : 'Strength';
+  const diffDots = d => '●'.repeat(d||1) + '○'.repeat(Math.max(0,4-(d||1)));
+  let html = `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+      <button onclick="_renderAddOnRecommendations('${addOnType}')"
+        style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;">← Back</button>
+      <div style="font-size:15px;font-weight:800;">All ${typeLabel} Workouts</div>
+    </div>`;
+  groups.forEach(group => {
+    html += `<div style="font-size:10px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin:12px 0 6px;">${group.label}</div>`;
+    group.workouts.forEach(w => {
+      html += `
+        <div style="display:flex;align-items:center;gap:10px;padding:12px;background:var(--surface2);border-radius:12px;margin-bottom:6px;border:1px solid var(--border);">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${w.name}</div>
+            <div style="font-size:10px;color:var(--text2);margin-top:2px;">${w.duration||60} min · ${diffDots(w.diff)}</div>
+          </div>
+          <button onclick="startAddOnWorkout('${w.prog}','${(w.name||'').replace(/'/g,"\\'")}','${(w.day||'').replace(/'/g,"\\'")}',${w.idx!=null?w.idx:'null'},${w.ci!=null?w.ci:'null'})"
+            style="background:var(--accent);border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:800;color:#000;cursor:pointer;white-space:nowrap;">▶ Start</button>
+        </div>`;
+    });
+  });
+  content.innerHTML = html;
+}
+
+// Renders recommendation cards into adhocContent and opens modal.
+function _renderAddOnRecommendations(addOnType) {
+  const content = document.getElementById('adhocContent');
+  if(!content) return;
+  const balance  = calcMuscleImbalance(14);
+  const recs     = getAddOnRecommendations(addOnType, balance);
+  const isHIIT   = addOnType === 'HIIT';
+  const typeLabel = isHIIT ? 'HIIT' : 'Strength';
+  const groups   = {push:'Push (Chest/Shoulders/Tri)',pull:'Pull (Back/Biceps)',legs:'Legs & Glutes',core:'Core'};
+  const sorted   = ['push','pull','legs','core'].sort((a, b) => balance[a] - balance[b]);
+  const weakest  = sorted[0];
+  const diffDots = d => '●'.repeat(d||1) + '○'.repeat(Math.max(0,4-(d||1)));
+  const formatColors = {'Garry\'s Style':'#00d4ff','AMRAP':'#ff8c42','EMOM':'#9d7bff',
+    'Core/Timed':'#39e09b','Complex':'#c8ff00','Tabata':'var(--accent)','Custom':'var(--text2)'};
+
+  // Imbalance banner
+  let bannerHtml = '';
+  if(balance.hasData) {
+    const wPct   = balance[weakest];
+    const colour = wPct < 10 ? 'rgba(255,77,106,0.12)' : 'rgba(255,160,0,0.10)';
+    const bord   = wPct < 10 ? 'rgba(255,77,106,0.35)' : 'rgba(255,160,0,0.35)';
+    const icon   = wPct < 10 ? '🔴' : '⚠️';
+    const msg    = wPct < 10
+      ? `${groups[weakest]} is critically low at ${wPct}%`
+      : `${groups[weakest]} is under-trained at ${wPct}%`;
+    bannerHtml = `
+      <div style="background:${colour};border:1px solid ${bord};border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--text);">
+        ${icon} <strong>${msg}</strong> — the workouts below target your weak spots.
+      </div>`;
+  }
+
+  // Recommendation cards
+  const recCards = recs.map(r => {
+    const label = r.prog === 'HIIT' ? (r.format || 'HIIT') : r.prog === 'CUSTOM_HIIT' ? 'Custom HIIT' : r.prog === 'ULF' ? 'ULF Strength' : r.prog === 'PPL' ? 'PPL Strength' : 'Custom';
+    const fColor = formatColors[r.format] || 'var(--text2)';
+    const dispName = r.name || r.day || '';
+    return `
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:10px;">
+        <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:14px;font-weight:800;margin-bottom:2px;">${dispName}</div>
+            <div style="font-size:10px;font-weight:700;color:${fColor};text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">${label} · ${r.duration||60} min · ${diffDots(r.diff)}</div>
+            <div style="font-size:11px;color:var(--text2);line-height:1.45;">${r.reason}</div>
+          </div>
+        </div>
+        <button onclick="startAddOnWorkout('${r.prog}','${(dispName).replace(/'/g,"\\'")}','${(r.day||'').replace(/'/g,"\\'")}',${r.idx!=null?r.idx:'null'},${r.ci!=null?r.ci:'null'})"
+          style="width:100%;background:var(--accent);border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:800;color:#000;cursor:pointer;">▶ Start</button>
+      </div>`;
+  }).join('');
+
+  content.innerHTML = `
+    <div style="font-size:10px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">Recommended ${typeLabel} Add-Ons</div>
+    ${bannerHtml}
+    ${recCards}
+    <button onclick="showAddOnFullList('${addOnType}')"
+      style="width:100%;background:var(--surface3);border:1px solid var(--border);border-radius:12px;padding:11px;font-size:13px;font-weight:700;color:var(--text2);cursor:pointer;margin-top:4px;">
+      Browse all ${typeLabel} workouts →
+    </button>`;
+}
+
+function openAddOnSelector(prog) {
+  const content = document.getElementById('adhocContent');
+  if(!content) return;
+  // Determine add-on type: 'HIIT' or strength ('ULF'/'PPL')
+  const addOnType = (prog === 'ULF' || prog === 'PPL') ? prog : 'HIIT';
+  const titleEl = document.getElementById('adhocModTitle');
+  const subEl   = document.getElementById('adhocModSub');
+  if(titleEl) titleEl.textContent = '⚡ Smart Add-On Selector';
+  if(subEl)   subEl.textContent   = "Personalised picks based on your muscle balance.";
+  _renderAddOnRecommendations(addOnType);
+  document.getElementById('adhocMod').classList.add('open');
 }
 
 // ─────────────────────────────────────────────
