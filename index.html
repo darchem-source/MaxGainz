@@ -9221,17 +9221,20 @@ function _renderPathTabActive() {
 
   return `
     <!-- Path Header -->
-    <div style="padding:20px 16px 0;">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">
-        <div>
-          <div style="font-size:11px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:4px;">🎯 ACTIVE PATH</div>
-          <div style="font-size:24px;font-weight:900;">${userPath.programme}</div>
-          <div style="font-size:13px;color:var(--text2);">${userPath.duration}-week programme</div>
+    <div style="padding:16px 16px 0;">
+      <!-- Week badge — centered at top so profile icon can't overlap it -->
+      <div style="text-align:center;margin-bottom:14px;">
+        <div style="display:inline-flex;flex-direction:column;align-items:center;background:rgba(200,255,0,0.08);border:1px solid rgba(200,255,0,0.3);border-radius:14px;padding:10px 24px;">
+          <div style="font-size:11px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:2px;margin-bottom:2px;">ACTIVE PATH</div>
+          <div style="font-size:22px;font-weight:900;color:var(--accent);line-height:1.1;">WEEK ${week} <span style="font-size:14px;font-weight:600;color:var(--text2);">of ${userPath.duration}</span></div>
         </div>
-        <div style="text-align:right;">
-          <div style="font-size:18px;font-weight:900;color:var(--accent);">Week ${week}</div>
-          <div style="font-size:11px;color:var(--text2);">of ${userPath.duration}</div>
+      </div>
+      <!-- Programme name row (no week info here — moved above) -->
+      <div style="margin-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
+          <div style="font-size:11px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:1.5px;">🎯 ${userPath.programme}</div>
         </div>
+        <div style="font-size:13px;color:var(--text2);">${userPath.duration}-week programme</div>
       </div>
       <!-- Progress bar -->
       <div style="background:var(--surface3);border-radius:4px;height:6px;overflow:hidden;margin-bottom:6px;">
