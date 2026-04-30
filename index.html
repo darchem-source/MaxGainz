@@ -509,13 +509,19 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
         <div class="chip" onclick="selLift('pushpress',this)">Push Press</div>
         <div class="chip" onclick="selLift('row',this)">Row</div>
       </div>
+      <!-- Variation pills: shown when multiple exact-name variations are found in history -->
+      <div id="variationPicker" style="display:none;flex-wrap:wrap;gap:6px;padding:0 16px 10px;"></div>
       <div class="card" style="padding:16px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div><div style="font-size:15px;font-weight:700;" id="liftName">Bench Press</div><div style="font-size:12px;color:var(--text2);" id="liftDetail">31 sessions</div></div>
           <div style="text-align:right;"><div style="font-size:20px;font-weight:900;color:var(--accent);" id="liftPB">82.5 kg</div><div style="background:rgba(200,255,0,0.15);color:var(--accent);font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;">PB</div></div>
         </div>
-        <div id="liftChart" style="height:110px;"></div>
-        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--text2);" id="chartX"></div>
+        <!-- Chart row: Y-axis labels on left + SVG on right -->
+        <div style="display:flex;height:116px;gap:0;">
+          <div id="liftYAxis" style="width:34px;flex-shrink:0;position:relative;"></div>
+          <div id="liftChart" style="flex:1;min-width:0;overflow:visible;"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--text2);margin-left:34px;" id="chartX"></div>
       </div>
       <div class="section-label">MUSCLE BALANCE</div>
       <div class="card" style="padding:16px;"><div id="muscleBal"></div></div>
@@ -7113,13 +7119,16 @@ function getULFDay(dayName){
   return variants[count%variants.length].map(e=>({...e}));
 }
 
+let _currentLiftColor = '#c8ff00';
+let _currentVariations = [];
+
 const TRACKED_LIFTS=[
-  {key:'bench',     name:'Bench Press',    color:'#c8ff00'},
-  {key:'deadlift',  name:'Deadlift',       color:'#00d4ff'},
-  {key:'squat',     name:'Squat',          color:'#9d7bff'},
-  {key:'ohp',       name:'Overhead Press', color:'#39e09b'},
-  {key:'pushpress', name:'Push Press',     color:'#ff8c42'},
-  {key:'row',       name:'Barbell Row',    color:'#ff4d6a'},
+  {key:'bench',     name:'Bench Press',    color:'#c8ff00', searchKey:'bench'},
+  {key:'deadlift',  name:'Deadlift',       color:'#00d4ff', searchKey:'deadlift'},
+  {key:'squat',     name:'Squat',          color:'#9d7bff', searchKey:'squat'},
+  {key:'ohp',       name:'Overhead Press', color:'#39e09b', searchKey:'overhead press'},
+  {key:'pushpress', name:'Push Press',     color:'#ff8c42', searchKey:'push press'},
+  {key:'row',       name:'Barbell Row',    color:'#ff4d6a', searchKey:'row'},
 ];
 const LIFT_ALIASES={
   bench:['Bench Press'],
@@ -7152,27 +7161,124 @@ function getPB(key){
 
 // renderPBCards: dynamic version defined above
 
-function miniChart(el,data,color){if(!el)return;const w=340,h=110,mn=Math.min(...data)-5,mx=Math.max(...data)+5;const pts=data.map((v,i)=>[(i/(data.length-1))*w,h-((v-mn)/(mx-mn))*h]);const line='M'+pts.map(p=>p.join(',')).join('L');const area=line+` L${w},${h} L0,${h}Z`;const lx=pts[pts.length-1][0],ly=pts[pts.length-1][1];el.innerHTML=`<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%;height:100%;overflow:visible;"><defs><linearGradient id="grad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity="0.25"/><stop offset="100%" stop-color="${color}" stop-opacity="0.02"/></linearGradient></defs><path d="${area}" fill="url(#grad)"/><path d="${line}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="${lx}" cy="${ly}" r="5" fill="${color}"/></svg>`;}
+function miniChart(el, data, color, yAxisEl) {
+  if (!el || !data.length) return;
+  const w = 340, h = 116;
+  const rawMin = Math.min(...data), rawMax = Math.max(...data);
+  const range = rawMax - rawMin;
+  const step = range <= 5 ? 1 : range <= 15 ? 2 : range <= 30 ? 5 : range <= 80 ? 10 : range <= 160 ? 20 : 50;
+  const yMin = Math.max(0, Math.floor((rawMin - step * 0.8) / step) * step);
+  const yMax = Math.ceil((rawMax + step * 0.5) / step) * step;
+  const yRange = yMax - yMin || 1;
 
-function selLift(key,el){
-  document.querySelectorAll('#liftTabs .chip').forEach(c=>c.classList.remove('active'));
-  el.classList.add('active');
-  const lift=TRACKED_LIFTS.find(l=>l.key===key)||TRACKED_LIFTS[0];
-  const pts=getLiftHistory(key);
-  const pb=pts.length?Math.max(...pts.map(p=>p.weight)):null;
-  document.getElementById('liftName').textContent=lift.name;
-  document.getElementById('liftDetail').textContent=pts.length?pts.length+' data points':'No data yet';
-  document.getElementById('liftPB').textContent=pb!==null?pb+' kg':'–';
-  const chartEl=document.getElementById('liftChart');
-  const xEl=document.getElementById('chartX');
-  if(!pts.length){
-    chartEl.innerHTML='<div style="height:110px;display:flex;align-items:center;justify-content:center;color:var(--text2);font-size:13px;">Complete sessions to see your progress</div>';
-    xEl.innerHTML='';
+  // Tick generation (max 5)
+  const allTicks = [];
+  for (let t = yMin; t <= yMax + 0.001; t += step) allTicks.push(Math.round(t));
+  const ticks = allTicks.length <= 5 ? allTicks
+    : allTicks.filter((_, i, a) => i === 0 || i === a.length - 1 || i % Math.ceil((a.length - 1) / 4) === 0);
+
+  // Gridlines inside SVG
+  const grids = ticks.map(t => {
+    const y = ((yMax - t) / yRange * h).toFixed(1);
+    return `<line x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>`;
+  }).join('');
+
+  // Y-axis labels as HTML (no text distortion)
+  if (yAxisEl) {
+    yAxisEl.innerHTML = ticks.map(t => {
+      const pct = ((yMax - t) / yRange * 100).toFixed(1);
+      return `<span style="position:absolute;right:4px;top:calc(${pct}% - 5px);font-size:9px;color:var(--text2);line-height:1;white-space:nowrap;">${t}</span>`;
+    }).join('');
+  }
+
+  // Data points
+  const pts = data.length === 1
+    ? [[w / 2, h / 2]]
+    : data.map((v, i) => [(i / (data.length - 1)) * w, h - (v - yMin) / yRange * h]);
+  const line = 'M' + pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join('L');
+  const area = data.length > 1 ? line + ` L${w},${h} L0,${h}Z` : '';
+  const [lx, ly] = pts[pts.length - 1];
+
+  el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%;height:100%;overflow:visible;"><defs><linearGradient id="grad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity="0.25"/><stop offset="100%" stop-color="${color}" stop-opacity="0.02"/></linearGradient></defs>${grids}${area ? `<path d="${area}" fill="url(#grad)"/>` : ''}<path d="${line}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="5" fill="${color}"/></svg>`;
+}
+
+// Scan all session history and return unique exact exercise names matching this lift's searchKey
+function getLiftVariations(lift) {
+  const keyword = (lift.searchKey || lift.name).toLowerCase();
+  const nameCount = {};
+  completedSessions.filter(s => !s.manualActivity).forEach(s => {
+    Object.keys(s.setLog || {}).forEach(name => {
+      if (name.toLowerCase().includes(keyword)) {
+        const entry = s.setLog[name];
+        if (entry && entry.weight > 0) nameCount[name] = (nameCount[name] || 0) + 1;
+      }
+    });
+    (s.topLifts || []).forEach(tl => {
+      if (tl.name.toLowerCase().includes(keyword) && tl.weight > 0)
+        nameCount[tl.name] = (nameCount[tl.name] || 0) + 1;
+    });
+  });
+  return Object.entries(nameCount).sort((a, b) => b[1] - a[1]).map(([n]) => n);
+}
+
+function selLift(key, el) {
+  document.querySelectorAll('#liftTabs .chip').forEach(c => c.classList.remove('active'));
+  if (el) el.classList.add('active');
+  const lift = TRACKED_LIFTS.find(l => l.key === key) || TRACKED_LIFTS[0];
+  _currentLiftColor = lift.color;
+
+  const variations = getLiftVariations(lift);
+  _currentVariations = variations;
+
+  const picker = document.getElementById('variationPicker');
+  if (picker) {
+    if (variations.length > 1) {
+      picker.style.display = 'flex';
+      const defaultVar = variations.includes(lift.name) ? lift.name : variations[0];
+      picker.innerHTML = variations.map((v, i) => {
+        const isActive = v === defaultVar;
+        return `<div class="chip${isActive ? ' active' : ''}" onclick="selVariationByIndex(${i})" style="font-size:11px;padding:4px 10px;">${v}</div>`;
+      }).join('');
+      selVariation(defaultVar);
+    } else {
+      picker.style.display = 'none';
+      selVariation(variations.length ? variations[0] : lift.name);
+    }
+  } else {
+    selVariation(variations.length ? (variations.includes(lift.name) ? lift.name : variations[0]) : lift.name);
+  }
+}
+
+function selVariationByIndex(i) {
+  const name = _currentVariations[i];
+  if (!name) return;
+  document.querySelectorAll('#variationPicker .chip').forEach((c, j) => c.classList.toggle('active', j === i));
+  selVariation(name);
+}
+
+function selVariation(exactName) {
+  const pts = getLiftHistoryByName(exactName);
+  const pb = pts.length ? Math.max(...pts.map(p => p.weight)) : null;
+  document.getElementById('liftName').textContent = exactName;
+  document.getElementById('liftDetail').textContent = pts.length
+    ? pts.length + ' session' + (pts.length !== 1 ? 's' : '')
+    : 'No data yet';
+  document.getElementById('liftPB').textContent = pb !== null ? pb + ' kg' : '–';
+  const chartEl = document.getElementById('liftChart');
+  const yAxisEl = document.getElementById('liftYAxis');
+  const xEl = document.getElementById('chartX');
+  if (!pts.length) {
+    chartEl.innerHTML = '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text2);font-size:13px;">Complete sessions to see your progress</div>';
+    if (yAxisEl) yAxisEl.innerHTML = '';
+    if (xEl) xEl.innerHTML = '';
     return;
   }
-  miniChart(chartEl,pts.map(p=>p.weight),lift.color);
-  const step=Math.max(1,Math.ceil(pts.length/5));
-  xEl.innerHTML=Array.from({length:Math.min(5,pts.length)},(_,i)=>`<span>${pts[i*step]?pts[i*step].date.toLocaleDateString('en-GB',{day:'numeric',month:'short'}):''}</span>`).join('');
+  miniChart(chartEl, pts.map(p => p.weight), _currentLiftColor, yAxisEl);
+  const step = Math.max(1, Math.ceil(pts.length / 5));
+  if (xEl) xEl.innerHTML = Array.from({length: Math.min(5, pts.length)}, (_, i) => {
+    const pt = pts[i * step];
+    return `<span>${pt ? new Date(pt.date).toLocaleDateString('en-GB', {day:'numeric', month:'short'}) : ''}</span>`;
+  }).join('');
 }
 
 // ── ONBOARDING ──
