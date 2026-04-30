@@ -2474,6 +2474,7 @@ function cancelSession(){
   twoPhaseState=null;
   stopAmrapEmomTimers();
   if(window._barryRestInterval){ clearInterval(window._barryRestInterval); window._barryRestInterval=null; }
+  if(window._floorTransitionInterval){ clearInterval(window._floorTransitionInterval); window._floorTransitionInterval=null; }
   clearInterval(exSetTimerInterval); timedSetRunning=false;
   window._nonTabataSessionStarted=false;
   // Fully reset rest timer via stopRest() — clears interval, nulls restStartTime, hides UI
@@ -3730,6 +3731,9 @@ function startTimedSetBarry(ex){
       if(blockChanged){
         // 30s rest between treadmill ↔ floor blocks
         showBarryBlockRest(30, nextEx, nextIdx);
+      } else if(ex.block && ex.block.toLowerCase() === 'floor'){
+        // 5s floor-to-floor transition with audio cues
+        showFloorTransition(nextIdx, ex.name);
       } else {
         curIdx = nextIdx;
         updateSessUI();
@@ -4192,6 +4196,69 @@ function showBarryBlockRest(secs, nextEx, nextIdx){
 
 function skipBarryRest(nextIdx){
   clearInterval(window._barryRestInterval);
+  curIdx = nextIdx;
+  updateSessUI();
+  setupTimedExercise(sessExs[curIdx]);
+}
+
+function showFloorTransition(nextIdx, prevExName){
+  const display = document.getElementById('hiitDisplay');
+  if(!display) return;
+  const nextEx = sessExs[nextIdx];
+  let remaining = 5;
+  display.style.display = 'block';
+  function renderTransition(){
+    const isGo = remaining === 0;
+    const timerColor = isGo ? 'var(--green)' : 'var(--accent)';
+    const timerLabel = isGo ? 'GO!' : String(remaining);
+    display.innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;background:rgba(76,255,145,0.07);border-radius:20px;padding:24px 20px;gap:10px;margin:0 0 12px;border:1px solid rgba(76,255,145,0.25);">
+        <div style="font-size:10px;font-weight:700;color:#4cff91;text-transform:uppercase;letter-spacing:2px;">💪 FLOOR TRANSITION</div>
+        <div style="font-size:12px;color:var(--text2);font-weight:600;text-align:center;opacity:0.8;">${prevExName}</div>
+        <div style="font-size:80px;font-weight:900;color:${timerColor};line-height:1;font-family:monospace;">${timerLabel}</div>
+        <div style="background:rgba(255,255,255,0.05);border-radius:12px;padding:10px 18px;text-align:center;">
+          <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">NEXT UP</div>
+          <div style="font-size:17px;font-weight:800;color:var(--text);">${nextEx.name}</div>
+        </div>
+        <button onclick="skipFloorTransition(${nextIdx})" style="background:var(--surface3);border:1px solid var(--border);border-radius:10px;padding:8px 20px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;margin-top:4px;">Skip →</button>
+      </div>`;
+  }
+  renderTransition();
+  // Beep each second using Web Audio
+  function beepTick(){
+    try {
+      const ac = _sharedAC();
+      const osc = ac.createOscillator();
+      const gain = ac.createGain();
+      osc.connect(gain); gain.connect(ac.destination);
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.25, ac.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.12);
+      osc.start(ac.currentTime); osc.stop(ac.currentTime + 0.12);
+    } catch(e){}
+  }
+  beepTick(); // immediate beep for 5
+  window._floorTransitionInterval = setInterval(()=>{
+    remaining--;
+    if(remaining > 0){
+      beepTick();
+      renderTransition();
+    } else {
+      clearInterval(window._floorTransitionInterval);
+      renderTransition(); // shows "GO!"
+      speakCountdown('Go');
+      playCompletionDing();
+      setTimeout(()=>{
+        curIdx = nextIdx;
+        updateSessUI();
+        setupTimedExercise(sessExs[curIdx]);
+      }, 700);
+    }
+  }, 1000);
+}
+
+function skipFloorTransition(nextIdx){
+  clearInterval(window._floorTransitionInterval);
   curIdx = nextIdx;
   updateSessUI();
   setupTimedExercise(sessExs[curIdx]);
