@@ -760,41 +760,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 </div>
 
 <!-- ONBOARDING MODAL -->
-<div class="modal-ov" id="onboardMod" style="background:rgba(0,0,0,0.95);">
-  <div class="modal" style="max-width:420px;text-align:center;padding:32px 24px;">
-    <div id="onboardStep1">
-      <div style="font-size:64px;margin-bottom:14px;">💪</div>
-      <div style="font-size:24px;font-weight:900;margin-bottom:8px;color:var(--text);">Welcome to Max Gainz</div>
-      <div style="font-size:14px;color:var(--text2);margin-bottom:24px;line-height:1.5;">Track your lifts. Follow guided HIIT classes. Build the body you want.</div>
-      <button class="btn-p" style="width:100%;" onclick="onboardNext(1)">Let's Go →</button>
-    </div>
-    <div id="onboardStep2" style="display:none;">
-      <div style="font-size:48px;margin-bottom:14px;">📋</div>
-      <div style="font-size:22px;font-weight:900;margin-bottom:8px;color:var(--text);">Pick Your Programme</div>
-      <div style="font-size:14px;color:var(--text2);margin-bottom:20px;">Which training style fits you?</div>
-      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px;">
-        <button onclick="onboardPickProg('ULF')" class="onboard-prog-btn">
-          <div style="font-size:16px;font-weight:800;margin-bottom:2px;">ULF (Upper / Lower / Full)</div>
-          <div style="font-size:12px;color:var(--text2);">3-4 days a week · Strength + balance</div>
-        </button>
-        <button onclick="onboardPickProg('PPL')" class="onboard-prog-btn">
-          <div style="font-size:16px;font-weight:800;margin-bottom:2px;">PPL (Push / Pull / Legs)</div>
-          <div style="font-size:12px;color:var(--text2);">5-6 days a week · Higher volume</div>
-        </button>
-        <button onclick="onboardPickProg('HIIT')" class="onboard-prog-btn">
-          <div style="font-size:16px;font-weight:800;margin-bottom:2px;">HIIT</div>
-          <div style="font-size:12px;color:var(--text2);">Guided timer-based sessions · Cardio focus</div>
-        </button>
-      </div>
-      <button onclick="onboardSkip()" style="width:100%;background:transparent;border:none;color:var(--text2);font-size:13px;padding:8px;cursor:pointer;">Skip for now</button>
-    </div>
-    <div id="onboardStep3" style="display:none;">
-      <div style="font-size:48px;margin-bottom:14px;">🎯</div>
-      <div style="font-size:22px;font-weight:900;margin-bottom:8px;color:var(--text);">You're All Set!</div>
-      <div style="font-size:14px;color:var(--text2);margin-bottom:8px;line-height:1.5;">Tap <strong style="color:var(--accent);">▶ Start Session</strong> on the Today tab to begin your first workout.</div>
-      <div style="font-size:13px;color:var(--text2);margin-bottom:20px;line-height:1.5;">💡 Tip: Tap the exercise name during a workout to see form cues.</div>
-      <button class="btn-p" style="width:100%;" onclick="onboardComplete()">Start Training 💪</button>
-    </div>
+<div class="modal-ov" id="onboardMod" style="background:rgba(0,0,0,0.97);z-index:500;">
+  <div class="modal" style="max-height:92vh;overflow-y:auto;padding:20px 20px 28px;">
+    <div id="onboardContent"></div>
   </div>
 </div>
 
@@ -7373,35 +7341,421 @@ function selVariation(exactName) {
 }
 
 // ── ONBOARDING ──
-function onboardNext(currentStep){
-  document.getElementById('onboardStep'+currentStep).style.display = 'none';
-  document.getElementById('onboardStep'+(currentStep+1)).style.display = 'block';
+// ─────────────────────────────────────────────
+// SMART STARTING WEIGHTS ONBOARDING
+// ─────────────────────────────────────────────
+
+// Onboarding state (reset each time onboarding starts)
+let _ob = {
+  step: 0,
+  experienceLevel: null,    // 'beginner' | 'intermediate' | 'advanced'
+  hadPriorTraining: null,   // true | false
+  bodyWeight: null,         // number (in chosen unit)
+  bodyWeightUnit: 'kg',     // 'kg' | 'lbs'
+  fitnessBaseline: [],      // ['pushups', 'pullups', 'squats']
+  equipmentAccess: [],      // ['dumbbells', 'barbells', 'machines', 'bands', 'cardio']
+  injuryHistory: [],        // ['none', 'shoulder', 'elbow_wrist', 'lower_back', 'knee_ankle']
+  previousLifts: { bench: null, squat: null, deadlift: null },
+  trainingGoal: null,       // 'strength' | 'muscle' | 'endurance' | 'fat_loss' | 'general'
+  trainingFrequency: null,  // '2-3' | '4-5' | '6+'
+  sportsBackground: '',
+  age: null,
+  gender: null,
+};
+
+// Base starting weights for a true beginner (before multipliers)
+const _OB_BASE = {
+  'Bench Press':20,'Incline Bench Press':20,'Overhead Press':15,'Push Press':20,
+  'Barbell Row':30,'Bent Over Barbell Row':30,'Barbell Bent-Over Row':30,
+  'Squat':30,'Deadlift':40,'Romanian Deadlift':35,'Barbell Romanian Deadlift':35,
+  'Barbell Front Squat':25,'Barbell Hang Clean':20,
+  'Incline Dumbbell Press':10,'Dumbbell Shoulder Press':8,
+  'Dumbbell Chest Press':12,'Dumbbell Bench Press':12,
+  'Dumbbell Row':12,'Dumbbell Rows':12,
+  'Dumbbell Curl':7,'Dumbbell Bicep Curls':7,
+  'Barbell Curl':15,'Barbell Curls':15,
+  'Hammer Curls':7,'Hammer Curl':7,
+  'Dumbbell Lunges':10,'Dumbbell Romanian Deadlift':15,
+  'Goblet Squat':12,'Goblet Squats':12,
+  'Dumbbell Front Squat':12,'Dumbbell Squat':12,
+  'Dumbbell Deadlift':15,'Dumbbell Thrusters':10,
+  'Bulgarian Split Squat':10,'Bulgarian Split Squats':10,
+  "Fly's":7,"Cable Fly's":7,
+  'Lateral Raises':5,'Lateral Raise':5,'Dumbbell Lateral Raise':5,
+  'Dumbbell Reverse Lunge':10,'Step Ups':12,'Dumbbell Clean & Press':12,
+  'Glute Bridges (weighted)':12,'Arnold Press':8,
+  'Leg Press':60,'Leg Curl':30,'Leg Curls':30,
+  'Leg Extension':25,'Leg Extensions':25,
+  'Calf Raises':40,'Lat Pulldown':30,'Pulldowns':30,
+  'Cable Row':20,'Tricep Pushdown':15,'Triceps Pushdowns':15,
+  'Triceps Extension':12,'Pec Deck':25,'Face Pulls':12,
+  'Straight Arm Pulldown':20,'Standing One-Arm Cable Curl':10,
+  'Russian Twists':8,'Skull Crushers':20,
+};
+
+// Exercises affected by each injury type
+const _OB_INJ = {
+  shoulder: new Set(['Bench Press','Incline Bench Press','Overhead Press','Push Press',
+    'Dumbbell Shoulder Press','Incline Dumbbell Press','Dumbbell Chest Press','Dumbbell Bench Press',
+    'Dumbbell Thrusters',"Fly's","Cable Fly's",'Pec Deck','Face Pulls','Lateral Raises',
+    'Lateral Raise','Dumbbell Lateral Raise','Arnold Press','Skull Crushers','Triceps Extension']),
+  elbow_wrist: new Set(['Bench Press','Overhead Press','Push Press','Dumbbell Curl',
+    'Barbell Curl','Barbell Curls','Hammer Curls','Hammer Curl','Triceps Extension',
+    'Skull Crushers','Tricep Pushdown','Triceps Pushdowns','Dumbbell Shoulder Press','Incline Dumbbell Press']),
+  lower_back: new Set(['Deadlift','Romanian Deadlift','Barbell Romanian Deadlift',
+    'Dumbbell Romanian Deadlift','Barbell Row','Bent Over Barbell Row','Barbell Bent-Over Row',
+    'Dumbbell Row','Dumbbell Rows','Barbell Hang Clean']),
+  knee_ankle: new Set(['Squat','Leg Press','Leg Curl','Leg Curls','Leg Extension','Leg Extensions',
+    'Goblet Squat','Goblet Squats','Dumbbell Lunges','Bulgarian Split Squat','Bulgarian Split Squats',
+    'Step Ups','Dumbbell Squat','Dumbbell Front Squat','Barbell Front Squat']),
+};
+
+// Progress bar for steps 1-7 (8 = review has its own header)
+function _obBar(step) {
+  if(step === 0 || step === 8) return '';
+  const bars = Array.from({length:7},(_,i)=>{
+    const s = i+1;
+    const col = s < step ? 'var(--accent)' : s === step ? 'var(--accent)' : 'var(--surface3)';
+    const op  = s < step ? '1' : s === step ? '1' : '0.4';
+    return `<div style="flex:1;height:3px;border-radius:2px;background:${col};opacity:${op};"></div>`;
+  }).join('');
+  return `<div style="display:flex;gap:3px;margin-bottom:6px;">${bars}</div>
+    <div style="font-size:10px;color:var(--text2);text-align:right;margin-bottom:18px;">Step ${step} of 7</div>`;
 }
 
-function onboardPickProg(prog){
-  todayProg = prog;
+// Shared "back" button
+function _obBackBtn(toStep) {
+  return `<button onclick="renderOnboardStep(${toStep})" style="flex:0 0 auto;padding:12px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;font-size:14px;font-weight:700;color:var(--text2);cursor:pointer;">← Back</button>`;
+}
+
+// Shared selectable row
+function _obRow(label, sub, emoji, selected, onclick) {
+  return `<div onclick="${onclick}" style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:${selected?'rgba(200,255,0,0.07)':'var(--surface2)'};border:1px solid ${selected?'rgba(200,255,0,0.35)':'var(--border)'};border-radius:12px;cursor:pointer;margin-bottom:7px;">
+    <div style="font-size:${emoji.length>1?'18':'20'}px;width:24px;text-align:center;flex-shrink:0;">${emoji}</div>
+    <div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:${selected?'800':'600'};color:${selected?'var(--accent)':'var(--text)'};">${label}</div>${sub?`<div style="font-size:11px;color:var(--text2);">${sub}</div>`:''}</div>
+    <div style="width:20px;height:20px;border-radius:5px;border:2px solid ${selected?'var(--accent)':'var(--border)'};background:${selected?'var(--accent)':'transparent'};display:flex;align-items:center;justify-content:center;font-size:11px;color:#000;font-weight:900;flex-shrink:0;">${selected?'✓':''}</div>
+  </div>`;
+}
+
+// Render a step into #onboardContent
+function renderOnboardStep(step) {
+  const content = document.getElementById('onboardContent');
+  if(!content) return;
+  _ob.step = step;
+  let html = '';
+
+  if(step === 0) {
+    // Welcome
+    html = `<div style="text-align:center;padding:12px 0;">
+      <div style="font-size:60px;margin-bottom:14px;">💪</div>
+      <div style="font-size:24px;font-weight:900;margin-bottom:8px;">Let's set up your training</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:22px;line-height:1.6;">We'll calculate smart starting weights for every exercise — personalised to your fitness level and goals.</div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:22px;text-align:left;">
+        ${['📊 Experience level & body weight','🏋️ Equipment & injury history','🎯 Training goals'].map(t=>`<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--surface2);border-radius:10px;font-size:12px;color:var(--text2);">${t}</div>`).join('')}
+      </div>
+      <button class="btn-p" onclick="renderOnboardStep(1)" style="width:100%;font-size:15px;padding:14px;margin-bottom:10px;">Get Started →</button>
+      <button onclick="_obComplete(true)" style="width:100%;background:transparent;border:none;color:var(--text2);font-size:12px;padding:8px;cursor:pointer;">Skip setup</button>
+    </div>`;
+  }
+
+  else if(step === 1) {
+    // Experience + Body weight
+    const exps = [{val:'beginner',label:'Beginner',sub:'0–6 months'},{val:'intermediate',label:'Intermediate',sub:'6–24 months'},{val:'advanced',label:'Advanced',sub:'2+ years'}];
+    html = `${_obBar(1)}
+      <div style="font-size:19px;font-weight:900;margin-bottom:5px;">How long have you been training?</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;">Be honest — this calibrates your starting weights.</div>
+      <div style="margin-bottom:18px;">
+        ${exps.map(o=>`<div onclick="_obSetExp('${o.val}')" style="padding:12px 14px;background:${_ob.experienceLevel===o.val?'rgba(200,255,0,0.08)':'var(--surface2)'};border:1px solid ${_ob.experienceLevel===o.val?'rgba(200,255,0,0.4)':'var(--border)'};border-radius:12px;cursor:pointer;margin-bottom:7px;">
+          <div style="font-size:14px;font-weight:${_ob.experienceLevel===o.val?'800':'600'};color:${_ob.experienceLevel===o.val?'var(--accent)':'var(--text)'};">${o.label}</div>
+          <div style="font-size:11px;color:var(--text2);">${o.sub}</div>
+        </div>`).join('')}
+      </div>
+      <div style="font-size:15px;font-weight:800;margin-bottom:8px;">Your body weight</div>
+      <div style="display:flex;gap:8px;margin-bottom:20px;">
+        <input id="ob_bw" type="number" inputmode="decimal" placeholder="${_ob.bodyWeightUnit==='kg'?'e.g. 80':'e.g. 176'}" value="${_ob.bodyWeight||''}" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:11px 12px;font-size:16px;color:var(--text);min-width:0;" oninput="_ob.bodyWeight=parseFloat(this.value)||null">
+        <div style="display:flex;background:var(--surface2);border:1px solid var(--border);border-radius:10px;overflow:hidden;flex-shrink:0;">
+          <button onclick="_obUnit('kg')" style="padding:10px 14px;border:none;background:${_ob.bodyWeightUnit==='kg'?'var(--accent)':'transparent'};color:${_ob.bodyWeightUnit==='kg'?'#000':'var(--text2)'};font-size:13px;font-weight:700;cursor:pointer;">kg</button>
+          <button onclick="_obUnit('lbs')" style="padding:10px 14px;border:none;background:${_ob.bodyWeightUnit==='lbs'?'var(--accent)':'transparent'};color:${_ob.bodyWeightUnit==='lbs'?'#000':'var(--text2)'};font-size:13px;font-weight:700;cursor:pointer;">lbs</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;">${_obBackBtn(0)}<button class="btn-p" onclick="_obStep1Next()" style="flex:1;font-size:15px;padding:14px;">Continue →</button></div>`;
+  }
+
+  else if(step === 2) {
+    // Fitness baseline
+    const opts = [{val:'pushups',label:'Push-ups',sub:'Full bodyweight',emoji:'🤸'},{val:'pullups',label:'Pull-ups',sub:'Dead hang',emoji:'🧗'},{val:'squats',label:'Bodyweight squats',sub:'Full depth',emoji:'🦵'}];
+    html = `${_obBar(2)}
+      <div style="font-size:19px;font-weight:900;margin-bottom:5px;">Can you currently do these?</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;">Tick all you can do. Leave blank if none — no pressure.</div>
+      ${opts.map(o=>_obRow(o.label,o.sub,o.emoji,_ob.fitnessBaseline.includes(o.val),`_obToggleArr('fitnessBaseline','${o.val}')`)).join('')}
+      <div style="font-size:11px;color:var(--text2);margin-bottom:20px;margin-top:-2px;">Leave all unchecked if you can't do any yet.</div>
+      <div style="display:flex;gap:8px;">${_obBackBtn(1)}<button class="btn-p" onclick="renderOnboardStep(3)" style="flex:1;font-size:15px;padding:14px;">Continue →</button></div>`;
+  }
+
+  else if(step === 3) {
+    // Equipment
+    const opts = [{val:'dumbbells',label:'Dumbbells',sub:'',emoji:'🏋️'},{val:'barbells',label:'Barbells',sub:'',emoji:'🪝'},{val:'machines',label:'Machines',sub:'Leg press, cables, chest press',emoji:'⚙️'},{val:'bands',label:'Resistance bands',sub:'',emoji:'🔗'},{val:'cardio',label:'Cardio equipment',sub:'Treadmill, bike, rower',emoji:'🏃'}];
+    html = `${_obBar(3)}
+      <div style="font-size:19px;font-weight:900;margin-bottom:5px;">What equipment do you have?</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;">Select all that are available to you.</div>
+      ${opts.map(o=>_obRow(o.label,o.sub,o.emoji,_ob.equipmentAccess.includes(o.val),`_obToggleArr('equipmentAccess','${o.val}')`)).join('')}
+      <div style="display:flex;gap:8px;margin-top:4px;">${_obBackBtn(2)}<button class="btn-p" onclick="renderOnboardStep(4)" style="flex:1;font-size:15px;padding:14px;">Continue →</button></div>`;
+  }
+
+  else if(step === 4) {
+    // Injury history
+    const opts = [{val:'none',label:'No injuries',sub:'',emoji:'✅'},{val:'shoulder',label:'Shoulder',sub:'',emoji:'💪'},{val:'elbow_wrist',label:'Elbow / Wrist',sub:'',emoji:'🦴'},{val:'lower_back',label:'Lower back',sub:'',emoji:'🔙'},{val:'knee_ankle',label:'Knee / Ankle',sub:'',emoji:'🦵'}];
+    html = `${_obBar(4)}
+      <div style="font-size:19px;font-weight:900;margin-bottom:5px;">Any injuries to be aware of?</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;">We'll reduce weights for affected movements to keep you safe.</div>
+      ${opts.map(o=>_obRow(o.label,o.sub,o.emoji,_ob.injuryHistory.includes(o.val),`_obToggleInjury('${o.val}')`)).join('')}
+      <div style="display:flex;gap:8px;margin-top:4px;">${_obBackBtn(3)}<button class="btn-p" onclick="_obStep4Next()" style="flex:1;font-size:15px;padding:14px;">Continue →</button></div>`;
+  }
+
+  else if(step === 5) {
+    // Previous lifts
+    const priYes = _ob.hadPriorTraining === true;
+    const priNo  = _ob.hadPriorTraining === false;
+    html = `${_obBar(5)}
+      <div style="font-size:19px;font-weight:900;margin-bottom:5px;">Previous lifting experience?</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;">Muscle memory lets you start heavier than a true beginner.</div>
+      <div style="font-size:14px;font-weight:700;margin-bottom:8px;">Have you lifted weights before?</div>
+      <div style="display:flex;gap:8px;margin-bottom:18px;">
+        <button onclick="_obSetPrior(true)" style="flex:1;padding:11px;border-radius:10px;border:1px solid ${priYes?'var(--accent)':'var(--border)'};background:${priYes?'rgba(200,255,0,0.1)':'var(--surface2)'};color:${priYes?'var(--accent)':'var(--text2)'};font-size:14px;font-weight:700;cursor:pointer;">Yes</button>
+        <button onclick="_obSetPrior(false)" style="flex:1;padding:11px;border-radius:10px;border:1px solid ${priNo?'var(--accent)':'var(--border)'};background:${priNo?'rgba(200,255,0,0.1)':'var(--surface2)'};color:${priNo?'var(--accent)':'var(--text2)'};font-size:14px;font-weight:700;cursor:pointer;">No</button>
+      </div>
+      ${priYes ? `
+      <div style="font-size:13px;color:var(--text2);margin-bottom:10px;">Best lifts? (kg, all optional — used as a starting anchor)</div>
+      ${[['bench','Bench Press'],['squat','Squat'],['deadlift','Deadlift']].map(([k,label])=>`
+        <div style="margin-bottom:10px;">
+          <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:5px;">${label}</div>
+          <input type="number" inputmode="decimal" placeholder="optional" value="${_ob.previousLifts[k]||''}"
+            style="width:100%;box-sizing:border-box;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:15px;color:var(--text);"
+            oninput="_ob.previousLifts['${k}']=parseFloat(this.value)||null">
+        </div>`).join('')}
+      ` : ''}
+      <div style="display:flex;gap:8px;margin-top:${priYes?4:0}px;">${_obBackBtn(4)}<button class="btn-p" onclick="renderOnboardStep(6)" style="flex:1;font-size:15px;padding:14px;">Continue →</button></div>`;
+  }
+
+  else if(step === 6) {
+    // Goals + frequency
+    const goals = [{val:'strength',label:'💪 Strength',sub:'Lift heavier weights'},{val:'muscle',label:'📈 Muscle',sub:'Build size & mass'},{val:'endurance',label:'🏃 Endurance',sub:'More reps, cardio'},{val:'fat_loss',label:'🔥 Fat loss',sub:'Burn calories'},{val:'general',label:'⚡ General fitness',sub:'Overall health'}];
+    const freqs = [{val:'2-3',label:'2–3 days/week'},{val:'4-5',label:'4–5 days/week'},{val:'6+',label:'6+ days/week'}];
+    html = `${_obBar(6)}
+      <div style="font-size:19px;font-weight:900;margin-bottom:5px;">What's your main goal?</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:13px;">This adjusts your weight targets.</div>
+      <div style="margin-bottom:18px;">
+        ${goals.map(o=>`<div onclick="_obSetGoal('${o.val}')" style="display:flex;align-items:center;padding:11px 14px;background:${_ob.trainingGoal===o.val?'rgba(200,255,0,0.08)':'var(--surface2)'};border:1px solid ${_ob.trainingGoal===o.val?'rgba(200,255,0,0.4)':'var(--border)'};border-radius:11px;cursor:pointer;margin-bottom:6px;gap:10px;">
+          <div style="flex:1;"><div style="font-size:13px;font-weight:${_ob.trainingGoal===o.val?'800':'600'};color:${_ob.trainingGoal===o.val?'var(--accent)':'var(--text)'};">${o.label}</div><div style="font-size:11px;color:var(--text2);">${o.sub}</div></div>
+          ${_ob.trainingGoal===o.val?`<div style="width:16px;height:16px;border-radius:50%;background:var(--accent);flex-shrink:0;"></div>`:''}
+        </div>`).join('')}
+      </div>
+      <div style="font-size:15px;font-weight:800;margin-bottom:8px;">Training frequency</div>
+      <div style="display:flex;gap:6px;margin-bottom:20px;">
+        ${freqs.map(o=>`<button onclick="_obSetFreq('${o.val}')" style="flex:1;padding:10px 4px;border-radius:10px;border:1px solid ${_ob.trainingFrequency===o.val?'var(--accent)':'var(--border)'};background:${_ob.trainingFrequency===o.val?'rgba(200,255,0,0.1)':'var(--surface2)'};color:${_ob.trainingFrequency===o.val?'var(--accent)':'var(--text2)'};font-size:11px;font-weight:${_ob.trainingFrequency===o.val?'800':'600'};cursor:pointer;text-align:center;">${o.label}</button>`).join('')}
+      </div>
+      <div style="display:flex;gap:8px;">${_obBackBtn(5)}<button class="btn-p" onclick="_obStep6Next()" style="flex:1;font-size:15px;padding:14px;">Continue →</button></div>`;
+  }
+
+  else if(step === 7) {
+    // Optional
+    html = `${_obBar(7)}
+      <div style="font-size:19px;font-weight:900;margin-bottom:4px;">A few optional details</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:16px;">All optional — skip anything you prefer not to share.</div>
+      <div style="margin-bottom:14px;">
+        <div style="font-size:13px;font-weight:700;margin-bottom:6px;">Your age (optional)</div>
+        <input type="number" inputmode="numeric" placeholder="e.g. 28" value="${_ob.age||''}"
+          style="width:100%;box-sizing:border-box;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:15px;color:var(--text);"
+          oninput="_ob.age=parseInt(this.value)||null">
+      </div>
+      <div style="margin-bottom:14px;">
+        <div style="font-size:13px;font-weight:700;margin-bottom:8px;">How do you identify? (optional)</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          ${['Male','Female','Non-binary','Prefer not to say'].map(g=>{const v=g.toLowerCase().replace(/ /g,'_');return`<button onclick="_obSetGender('${v}')" style="padding:7px 11px;border-radius:8px;border:1px solid ${_ob.gender===v?'var(--accent)':'var(--border)'};background:${_ob.gender===v?'rgba(200,255,0,0.1)':'var(--surface2)'};color:${_ob.gender===v?'var(--accent)':'var(--text2)'};font-size:12px;font-weight:600;cursor:pointer;">${g}</button>`;}).join('')}
+        </div>
+      </div>
+      <div style="margin-bottom:20px;">
+        <div style="font-size:13px;font-weight:700;margin-bottom:6px;">Sports background (optional)</div>
+        <input type="text" placeholder="e.g. Football, Swimming, None" value="${_ob.sportsBackground||''}"
+          style="width:100%;box-sizing:border-box;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:14px;color:var(--text);"
+          oninput="_ob.sportsBackground=this.value">
+      </div>
+      <div style="display:flex;gap:8px;">${_obBackBtn(6)}<button class="btn-p" onclick="renderOnboardStep(8)" style="flex:1;font-size:15px;padding:14px;">See my weights →</button></div>`;
+  }
+
+  else if(step === 8) {
+    // Review & confirm
+    const weights = _obCalcWeights();
+    const rows = Object.entries(weights);
+    html = `<div style="text-align:center;margin-bottom:18px;">
+      <div style="font-size:44px;margin-bottom:10px;">🎯</div>
+      <div style="font-size:22px;font-weight:900;margin-bottom:5px;">Your starting weights</div>
+      <div style="font-size:12px;color:var(--text2);">Calculated from your inputs. Adjust anytime during workouts.</div>
+    </div>
+    <div style="background:var(--surface2);border-radius:14px;overflow:hidden;margin-bottom:12px;border:1px solid var(--border);">
+      ${rows.map(([ex,wt],i)=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;${i<rows.length-1?'border-bottom:1px solid var(--border);':''}">
+        <div style="font-size:12px;color:var(--text);">${ex}</div>
+        <div style="font-size:14px;font-weight:800;color:var(--accent);">${wt}kg</div>
+      </div>`).join('')}
+    </div>
+    <div style="background:rgba(200,255,0,0.05);border:1px solid rgba(200,255,0,0.2);border-radius:10px;padding:10px 12px;margin-bottom:16px;font-size:11px;color:var(--text2);line-height:1.5;">
+      💡 These are estimates. Adjust during your first session if anything feels off — the app updates from there.
+    </div>
+    <button class="btn-p" onclick="_obComplete(false)" style="width:100%;font-size:15px;padding:14px;margin-bottom:8px;">Save & Continue to Path Setup →</button>
+    <button onclick="renderOnboardStep(7)" style="width:100%;background:transparent;border:0.5px solid var(--border);border-radius:12px;padding:10px;font-size:13px;font-weight:600;color:var(--text2);cursor:pointer;">← Back</button>`;
+  }
+
+  content.innerHTML = html;
+  const modal = content.closest('.modal');
+  if(modal) modal.scrollTop = 0;
+}
+
+// ── Onboarding helpers ──
+
+function _obSetExp(val)  { _ob.experienceLevel = val;    renderOnboardStep(1); }
+function _obUnit(unit)   { _ob.bodyWeightUnit = unit;    renderOnboardStep(1); }
+function _obSetPrior(v)  { _ob.hadPriorTraining = v;     renderOnboardStep(5); }
+function _obSetGoal(val) { _ob.trainingGoal = val;       renderOnboardStep(6); }
+function _obSetFreq(val) { _ob.trainingFrequency = val;  renderOnboardStep(6); }
+function _obSetGender(v) { _ob.gender = v;               renderOnboardStep(7); }
+
+function _obToggleArr(arr, val) {
+  if(!_ob[arr]) _ob[arr] = [];
+  const i = _ob[arr].indexOf(val);
+  if(i > -1) _ob[arr].splice(i, 1);
+  else _ob[arr].push(val);
+  renderOnboardStep(_ob.step);
+}
+
+function _obToggleInjury(val) {
+  if(!_ob.injuryHistory) _ob.injuryHistory = [];
+  if(val === 'none') {
+    _ob.injuryHistory = _ob.injuryHistory.includes('none') ? [] : ['none'];
+  } else {
+    const i = _ob.injuryHistory.indexOf(val);
+    if(i > -1) _ob.injuryHistory.splice(i, 1);
+    else { _ob.injuryHistory = _ob.injuryHistory.filter(x => x !== 'none'); _ob.injuryHistory.push(val); }
+  }
+  renderOnboardStep(4);
+}
+
+function _obStep1Next() {
+  // Capture body weight from input before navigating away
+  const bwEl = document.getElementById('ob_bw');
+  if(bwEl && bwEl.value) _ob.bodyWeight = parseFloat(bwEl.value) || null;
+  if(!_ob.experienceLevel) { alert('Please select your experience level.'); return; }
+  const bwKg = _ob.bodyWeightUnit === 'lbs' ? (_ob.bodyWeight||0) / 2.205 : (_ob.bodyWeight||0);
+  if(!_ob.bodyWeight || bwKg < 30 || bwKg > 300) { alert('Please enter a valid body weight (30–300 kg).'); return; }
+  renderOnboardStep(2);
+}
+
+function _obStep4Next() {
+  if(_ob.injuryHistory.length === 0) _ob.injuryHistory = ['none'];
+  renderOnboardStep(5);
+}
+
+function _obStep6Next() {
+  if(!_ob.trainingGoal)     { alert('Please select a training goal.'); return; }
+  if(!_ob.trainingFrequency){ alert('Please select your training frequency.'); return; }
+  renderOnboardStep(7);
+}
+
+// ── Weight calculation ──
+
+function _obCalcWeights() {
+  // Experience multiplier
+  const expMult = { beginner: _ob.hadPriorTraining ? 1.0 : 0.8, intermediate: 1.3, advanced: 1.6 }[_ob.experienceLevel] || 0.85;
+
+  // Body weight factor
+  const bwKg = _ob.bodyWeightUnit === 'lbs' ? (_ob.bodyWeight||80) / 2.205 : (_ob.bodyWeight||80);
+  const bwFactor = bwKg < 70 ? 0.85 : bwKg > 90 ? 1.15 : 1.0;
+
+  // Goal factor
+  const goalFactor = { strength:1.1, muscle:1.0, endurance:0.85, fat_loss:0.9, general:1.0 }[_ob.trainingGoal] || 1.0;
+
+  // Injury factors per exercise
+  const injuries = (_ob.injuryHistory||[]).filter(x => x !== 'none');
+  const injFactors = { shoulder:0.7, elbow_wrist:0.8, lower_back:0.6, knee_ankle:0.7 };
+
+  // Previous-lift anchors (start at 70% of stated max — conservative)
+  const anchors = {};
+  if(_ob.hadPriorTraining && _ob.previousLifts) {
+    if(_ob.previousLifts.bench)    anchors['Bench Press'] = Math.max(10, _ob.previousLifts.bench * 0.7);
+    if(_ob.previousLifts.squat)    anchors['Squat']       = Math.max(20, _ob.previousLifts.squat * 0.7);
+    if(_ob.previousLifts.deadlift) anchors['Deadlift']    = Math.max(20, _ob.previousLifts.deadlift * 0.7);
+  }
+
+  // Display order for review table
+  const ORDER = ['Bench Press','Squat','Deadlift','Overhead Press','Barbell Row',
+    'Incline Dumbbell Press','Dumbbell Shoulder Press','Romanian Deadlift','Leg Press',
+    'Lat Pulldown','Cable Row','Goblet Squats','Dumbbell Lunges','Barbell Curls',
+    'Hammer Curls','Triceps Pushdowns','Leg Curl','Calf Raises','Face Pulls'];
+
+  const result = {};
+  for(const ex of ORDER) {
+    if(!(ex in _OB_BASE)) continue;
+    if(anchors[ex]) { result[ex] = _obRound(anchors[ex]); continue; }
+    let injF = 1.0;
+    for(const inj of injuries) {
+      if(_OB_INJ[inj] && _OB_INJ[inj].has(ex)) injF = Math.min(injF, injFactors[inj] || 1.0);
+    }
+    result[ex] = _obRound(_OB_BASE[ex] * expMult * bwFactor * goalFactor * injF);
+  }
+  return result;
+}
+
+function _obRound(kg) { return Math.max(2.5, Math.round(kg / 2.5) * 2.5); }
+
+// ── Complete onboarding ──
+
+function _obComplete(skipSetup) {
+  const weights = skipSetup ? {} : _obCalcWeights();
+
+  if(!skipSetup) {
+    // Persist collected profile data
+    userProfile.onboarding = {
+      experienceLevel:    _ob.experienceLevel,
+      bodyWeight:         _ob.bodyWeight,
+      bodyWeightUnit:     _ob.bodyWeightUnit,
+      fitnessBaseline:    [...(_ob.fitnessBaseline||[])],
+      equipmentAccess:    [...(_ob.equipmentAccess||[])],
+      injuryHistory:      [...(_ob.injuryHistory||[])],
+      previousLifts:      { ..._ob.previousLifts },
+      trainingGoal:       _ob.trainingGoal,
+      trainingFrequency:  _ob.trainingFrequency,
+      sportsBackground:   _ob.sportsBackground,
+      age:                _ob.age,
+      gender:             _ob.gender,
+      calculatedStartingWeights: weights,
+    };
+    // Apply body weight to profile (used in muscle balance calculations)
+    if(_ob.bodyWeight) {
+      const bwKg = _ob.bodyWeightUnit === 'lbs' ? _ob.bodyWeight / 2.205 : _ob.bodyWeight;
+      userProfile.weight = Math.round(bwKg);
+    }
+    // Apply calculated weights to customWeights AND update default exercise weights
+    Object.entries(weights).forEach(([ex, wt]) => {
+      customWeights[ex] = wt;
+      Object.values(ULF).forEach(day => day.forEach(e => { if(e.name === ex && !e.bw) e.weight = wt; }));
+      Object.values(PPL).forEach(day => day.forEach(e => { if(e.name === ex && !e.bw) e.weight = wt; }));
+    });
+  }
+
   saveLocalCache();
   cloudSaveProfile();
-  renderTodayToggle();
-  renderToday();
-  onboardNext(2);
-}
-
-function onboardSkip(){
-  onboardNext(2);
-}
-
-function onboardComplete(){
   localStorage.setItem('maxgainz_onboarded', '1');
   document.getElementById('onboardMod').classList.remove('open');
+
+  // Launch path wizard if user doesn't have an active path
+  if(!isPathActive() && !localStorage.getItem('maxgainz_path_skipped')) {
+    _pathWizardAutoOpened = true;
+    setTimeout(() => openPathWizard(), 400);
+  }
 }
 
-function checkOnboarding(){
-  // Show onboarding if first time AND no completed sessions
-  if(!localStorage.getItem('maxgainz_onboarded') && completedSessions.length === 0 && isAuthenticated()){
-    document.getElementById('onboardStep1').style.display = 'block';
-    document.getElementById('onboardStep2').style.display = 'none';
-    document.getElementById('onboardStep3').style.display = 'none';
+function checkOnboarding() {
+  if(!localStorage.getItem('maxgainz_onboarded') && completedSessions.length === 0 && isAuthenticated()) {
+    renderOnboardStep(0);
     document.getElementById('onboardMod').classList.add('open');
   }
 }
