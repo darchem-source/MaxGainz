@@ -10792,6 +10792,13 @@ async function authSignup(){
       }
       updateProfileButton();
       checkPathWeekProgression();
+      // Show onboarding for brand-new users BEFORE path wizard
+      if(typeof checkOnboarding === 'function') checkOnboarding();
+      if(!isPathActive() && !localStorage.getItem('maxgainz_path_skipped')
+        && !document.getElementById('onboardMod').classList.contains('open')){
+        _pathWizardAutoOpened = true;
+        setTimeout(() => openPathWizard(), 800);
+      }
     });
   }catch(e){
     console.error('Signup error:', e);
@@ -10890,7 +10897,10 @@ async function authLogin(){
       // Refresh after cloud sync picks up any updated profile image
       updateProfileButton();
       checkPathWeekProgression();
-      if(!isPathActive() && isAuthenticated() && !localStorage.getItem('maxgainz_path_skipped')){
+      // Show onboarding for first-time users BEFORE path wizard
+      if(typeof checkOnboarding === 'function') checkOnboarding();
+      if(!isPathActive() && isAuthenticated() && !localStorage.getItem('maxgainz_path_skipped')
+        && !document.getElementById('onboardMod').classList.contains('open')){
         _pathWizardAutoOpened = true;
         setTimeout(() => openPathWizard(), 800);
       }
