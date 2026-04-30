@@ -8534,6 +8534,33 @@ function startAdhocSession(type, day) {
 // PATH SYSTEM — Phase 3: Today Tab
 // ─────────────────────────────────────────────
 
+// Returns true if the user completed an add-on session of the given type today.
+// addOnType: 'HIIT' | 'ULF' | 'PPL' (the add-on programme type from userPath)
+function hasAddOnBeenCompletedToday(addOnType) {
+  return !!getAddOnCompletionTime(addOnType);
+}
+
+// Returns the Date of the completed add-on session for today, or null.
+function getAddOnCompletionTime(addOnType) {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+  const ulfDays  = ['Upper','Lower','Full Body'];
+  const pplDays  = Object.keys(PPL);
+  const hiitNames = new Set(HIIT.map(w => w.name));
+  if(typeof customHIITs !== 'undefined') customHIITs.forEach(w => hiitNames.add(w.name));
+  const match = completedSessions.find(s => {
+    if(!s.adhoc) return false;
+    const sd = new Date(s.date);
+    if(sd < today || sd >= tomorrow) return false;
+    if(addOnType === 'HIIT')      return hiitNames.has(s.day);
+    if(addOnType === 'ULF')       return ulfDays.includes(s.day);
+    if(addOnType === 'PPL')       return pplDays.includes(s.day);
+    // Custom add-on type: match by programme name stored in day
+    return s.day === addOnType;
+  });
+  return match ? new Date(match.date) : null;
+}
+
 function renderTodayWithPath() {
   const todayInfo = getTodayPathWorkout();
   const week = getPathCurrentWeek();
@@ -8626,24 +8653,35 @@ function renderTodayWithPath() {
     if(todayInfo.addOnWorkout){
       const addOnProg = todayInfo.addOnWorkout;
       const isHIIT = addOnProg === 'HIIT';
+      const addOnDone = hasAddOnBeenCompletedToday(addOnProg);
+      const addOnTime = addOnDone ? getAddOnCompletionTime(addOnProg) : null;
+      const timeStr = addOnTime
+        ? addOnTime.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})
+        : '';
       html += `
         <div style="margin:12px 16px 0;">
           <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">TODAY'S ADD-ON</div>
-          <div style="background:var(--surface2);border:1px solid rgba(0,212,255,0.3);border-radius:16px;padding:16px;">
+          <div style="background:var(--surface2);border:1px solid ${addOnDone ? 'rgba(76,255,145,0.4)' : 'rgba(0,212,255,0.3)'};border-radius:16px;padding:16px;${addOnDone ? 'background:rgba(76,255,145,0.04);' : ''}">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
               <div style="display:flex;align-items:center;gap:10px;">
-                <div style="font-size:22px;">${isHIIT ? '⚡' : '🏋️'}</div>
+                <div style="font-size:22px;">${addOnDone ? '✅' : (isHIIT ? '⚡' : '🏋️')}</div>
                 <div>
                   <div style="font-size:15px;font-weight:800;">${addOnProg} Add-On</div>
-                  <div style="font-size:11px;color:var(--text2);">Optional extra session</div>
+                  <div style="font-size:11px;color:var(--text2);">${addOnDone ? 'Completed today' : 'Optional extra session'}</div>
                 </div>
               </div>
-              <span style="background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.3);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:800;color:#00d4ff;">ADD-ON</span>
+              ${addOnDone
+                ? `<span style="background:rgba(76,255,145,0.15);border:1px solid rgba(76,255,145,0.4);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:800;color:#4cff91;">✓ DONE</span>`
+                : `<span style="background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.3);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:800;color:#00d4ff;">ADD-ON</span>`}
             </div>
-            <button onclick="openAddOnSelector('${addOnProg}')"
-              style="width:100%;background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.3);border-radius:12px;padding:12px;font-size:14px;font-weight:700;color:#00d4ff;cursor:pointer;">
-              ▶ Start Add-On
-            </button>
+            ${addOnDone
+              ? `<div style="text-align:center;padding:10px;background:rgba(76,255,145,0.07);border:1px solid rgba(76,255,145,0.2);border-radius:12px;font-size:13px;font-weight:700;color:#4cff91;">
+                  ✓ Completed at ${timeStr}
+                </div>`
+              : `<button onclick="openAddOnSelector('${addOnProg}')"
+                  style="width:100%;background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.3);border-radius:12px;padding:12px;font-size:14px;font-weight:700;color:#00d4ff;cursor:pointer;">
+                  ▶ Start Add-On
+                </button>`}
           </div>
         </div>`;
     }
