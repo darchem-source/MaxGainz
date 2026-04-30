@@ -10937,6 +10937,7 @@ function authLogout(){
   userPath = null;
   localStorage.removeItem('maxgainz_path');
   localStorage.removeItem('maxgainz_path_skipped');
+  localStorage.removeItem('maxgainz_onboarded');
 
   // ── Clear auth tokens ──
   saveAuthState(null, null);
