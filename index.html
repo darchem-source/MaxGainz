@@ -533,6 +533,36 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
         </div>
         <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--text2);margin-left:34px;" id="chartX"></div>
       </div>
+      <!-- Body Weight Tracker -->
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px 8px;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text2);">BODY WEIGHT</div>
+        <button onclick="openBWLog()" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer;">+ Log weight</button>
+      </div>
+      <div class="card" style="padding:16px;" id="bwCard">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <div>
+            <div style="font-size:15px;font-weight:700;" id="bwCurrentLabel">–</div>
+            <div style="font-size:12px;color:var(--text2);margin-top:2px;" id="bwSubLabel">No entries yet</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:26px;font-weight:900;color:var(--accent);line-height:1;" id="bwCurrentVal">–</div>
+            <div style="font-size:11px;color:var(--text2);margin-top:3px;" id="bwTrend"></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:12px;" id="bwRangeRow">
+          <div class="chip active" onclick="setBWRange(30,this)">1M</div>
+          <div class="chip" onclick="setBWRange(90,this)">3M</div>
+          <div class="chip" onclick="setBWRange(180,this)">6M</div>
+          <div class="chip" onclick="setBWRange(0,this)">All</div>
+        </div>
+        <!-- Chart: Y-axis + SVG -->
+        <div style="display:flex;height:110px;gap:0;">
+          <div id="bwYAxis" style="width:34px;flex-shrink:0;position:relative;"></div>
+          <div id="bwChart" style="flex:1;min-width:0;overflow:visible;"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--text2);margin-left:34px;" id="bwChartX"></div>
+      </div>
+
       <div class="section-label">MUSCLE BALANCE</div>
       <div class="card" style="padding:16px;"><div id="muscleBal"></div></div>
       <div class="section-label">RECENT SESSIONS</div>
@@ -1043,6 +1073,31 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
   <div style="font-size:22px;font-weight:900;color:var(--text);margin-bottom:4px;" id="prAlertExName"></div>
   <div style="font-size:28px;font-weight:900;color:#ffd700;margin-bottom:6px;" id="prAlertWeight"></div>
   <div style="font-size:12px;color:var(--text2);" id="prAlertPrev"></div>
+</div>
+
+<!-- BODY WEIGHT LOG MODAL -->
+<div class="modal-ov" id="bwLogMod" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal-box" style="max-width:320px;">
+    <div style="font-size:17px;font-weight:800;margin-bottom:4px;">Log Body Weight</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:18px;">Track your weight over time</div>
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;">
+      <input id="bwLogInput" type="number" inputmode="decimal" step="0.1" placeholder="e.g. 80" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px 12px;font-size:20px;font-weight:700;color:var(--text);text-align:center;" />
+      <div style="display:flex;border:0.5px solid var(--border);border-radius:10px;overflow:hidden;">
+        <button id="bwUnitKg" onclick="setBWUnit('kg')" style="padding:12px 14px;border:none;background:var(--accent);color:#000;font-size:13px;font-weight:700;cursor:pointer;">kg</button>
+        <button id="bwUnitLbs" onclick="setBWUnit('lbs')" style="padding:12px 14px;border:none;background:transparent;color:var(--text2);font-size:13px;font-weight:700;cursor:pointer;">lbs</button>
+      </div>
+    </div>
+    <div style="margin-bottom:18px;">
+      <div style="font-size:12px;color:var(--text2);margin-bottom:6px;">Date</div>
+      <input id="bwLogDate" type="date" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:11px 12px;font-size:14px;color:var(--text);box-sizing:border-box;" />
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button onclick="document.getElementById('bwLogMod').classList.remove('open')" style="flex:1;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:13px;font-size:14px;font-weight:700;color:var(--text2);cursor:pointer;">Cancel</button>
+      <button onclick="saveBWEntry()" style="flex:1;background:var(--accent);border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:800;color:#000;cursor:pointer;">Save</button>
+    </div>
+    <!-- Recent entries -->
+    <div id="bwRecentList" style="margin-top:16px;"></div>
+  </div>
 </div>
 
 <!-- CELEBRATE ALERT -->
@@ -1673,6 +1728,7 @@ async function cloudSaveProfile() {
     customWorkouts,
     customHIITs: cHIITs,
     userPath,
+    bodyWeightLog,
     onboarded: !!localStorage.getItem('maxgainz_onboarded'),
     prefs: {
       speedUnit:    localStorage.getItem('userSpeedUnit')    || 'mph',
@@ -1792,6 +1848,10 @@ async function cloudLoadAll() {
           if (blob.onboarded) {
             localStorage.setItem('maxgainz_onboarded', '1');
           }
+          // Restore body weight log
+          if (Array.isArray(blob.bodyWeightLog)) {
+            bodyWeightLog = blob.bodyWeightLog;
+          }
         } catch(e) { console.warn('Profile blob parse error:', e); }
       } else {
         customWeights[r.exercise_name] = r.weight;
@@ -1822,6 +1882,7 @@ function saveLocalCache() {
       weights: customWeights,
       todayProg,
       userProfile,
+      bodyWeightLog,
       savedAt: new Date().toISOString()
     }));
   } catch(e) {}
@@ -1882,6 +1943,9 @@ const completedSessions = stored
   ? stored.sessions.map(s => ({...s, date: new Date(s.date)}))
   : [];
 const customWeights = stored ? (stored.weights || {}) : {};
+
+// Body weight log — array of {date: ISO string, weight: number, unit: 'kg'|'lbs'}
+let bodyWeightLog = stored ? (stored.bodyWeightLog || []) : [];
 
 // User profile - stored separately
 let userProfile = stored && stored.userProfile ? stored.userProfile : {
@@ -7815,6 +7879,14 @@ function _obComplete(skipSetup) {
     if(_ob.bodyWeight) {
       const bwKg = _ob.bodyWeightUnit === 'lbs' ? _ob.bodyWeight / 2.205 : _ob.bodyWeight;
       userProfile.weight = Math.round(bwKg);
+      userProfile.bodyWeight = Math.round(bwKg * 10) / 10;
+      userProfile.bodyWeightUnit = 'kg';
+      // Seed the body weight log with the onboarding entry
+      const todayStr = new Date().toISOString().split('T')[0];
+      if(!bodyWeightLog.find(e => e.date === todayStr)) {
+        bodyWeightLog.push({ date: todayStr, weight: Math.round(bwKg * 100) / 100, unit: 'kg', displayWeight: _ob.bodyWeight, displayUnit: _ob.bodyWeightUnit });
+        bodyWeightLog.sort((a,b) => a.date.localeCompare(b.date));
+      }
     }
     // Apply calculated weights to customWeights AND update default exercise weights
     Object.entries(weights).forEach(([ex, wt]) => {
@@ -8569,10 +8641,237 @@ function showCalDayDetail(dateStr){
   alert(`${dateLabel}\n\n${lines}`);
 }
 
+// ── BODY WEIGHT TRACKER ──
+let _bwRangeDays = 30; // current range filter
+
+function setBWRange(days, el) {
+  _bwRangeDays = days;
+  document.querySelectorAll('#bwRangeRow .chip').forEach(c => c.classList.remove('active'));
+  if(el) el.classList.add('active');
+  renderBWChart();
+}
+
+function openBWLog() {
+  // Default to user's profile unit
+  const unit = userProfile.bodyWeightUnit || localStorage.getItem('userWeightUnit') || 'kg';
+  setBWUnit(unit);
+  // Default value: last logged weight in that unit
+  const sorted = [...bodyWeightLog].sort((a,b) => new Date(b.date) - new Date(a.date));
+  const last = sorted[0];
+  const inputEl = document.getElementById('bwLogInput');
+  if(last) {
+    // Convert to current unit if needed
+    const val = last.unit === unit ? last.weight
+      : unit === 'lbs' ? Math.round(last.weight * 2.205 * 10) / 10
+      : Math.round(last.weight / 2.205 * 10) / 10;
+    inputEl.value = val;
+  } else {
+    inputEl.value = '';
+  }
+  // Default date: today
+  const today = new Date();
+  document.getElementById('bwLogDate').value = today.toISOString().split('T')[0];
+  // Render recent entries list
+  renderBWRecentList();
+  document.getElementById('bwLogMod').classList.add('open');
+  setTimeout(() => inputEl.focus(), 200);
+}
+
+let _bwUnit = 'kg';
+function setBWUnit(unit) {
+  _bwUnit = unit;
+  const kgBtn = document.getElementById('bwUnitKg');
+  const lbsBtn = document.getElementById('bwUnitLbs');
+  if(kgBtn && lbsBtn) {
+    kgBtn.style.background = unit === 'kg' ? 'var(--accent)' : 'transparent';
+    kgBtn.style.color      = unit === 'kg' ? '#000' : 'var(--text2)';
+    lbsBtn.style.background = unit === 'lbs' ? 'var(--accent)' : 'transparent';
+    lbsBtn.style.color      = unit === 'lbs' ? '#000' : 'var(--text2)';
+  }
+}
+
+function saveBWEntry() {
+  const raw = parseFloat(document.getElementById('bwLogInput').value);
+  if(!raw || raw < 20 || raw > 500) { showToast('⚠️ Please enter a valid weight'); return; }
+  const dateVal = document.getElementById('bwLogDate').value;
+  if(!dateVal) { showToast('⚠️ Please pick a date'); return; }
+  // Store in kg internally
+  const weightKg = _bwUnit === 'lbs' ? Math.round(raw / 2.205 * 100) / 100 : raw;
+  // Replace any entry for the same date
+  const idx = bodyWeightLog.findIndex(e => e.date === dateVal);
+  if(idx >= 0) {
+    bodyWeightLog[idx] = { date: dateVal, weight: weightKg, unit: 'kg', displayWeight: raw, displayUnit: _bwUnit };
+  } else {
+    bodyWeightLog.push({ date: dateVal, weight: weightKg, unit: 'kg', displayWeight: raw, displayUnit: _bwUnit });
+  }
+  bodyWeightLog.sort((a,b) => a.date.localeCompare(b.date));
+  // Also update userProfile.bodyWeight so BW exercise calc stays fresh
+  userProfile.bodyWeight = weightKg;
+  userProfile.bodyWeightUnit = 'kg';
+  saveLocalCache();
+  cloudSaveProfile();
+  renderBWRecentList();
+  renderBWChart();
+  showToast('✅ Weight logged!');
+}
+
+function deleteBWEntry(date) {
+  bodyWeightLog = bodyWeightLog.filter(e => e.date !== date);
+  saveLocalCache();
+  cloudSaveProfile();
+  renderBWRecentList();
+  renderBWChart();
+}
+
+function renderBWRecentList() {
+  const el = document.getElementById('bwRecentList');
+  if(!el) return;
+  const sorted = [...bodyWeightLog].sort((a,b) => b.date.localeCompare(a.date)).slice(0, 5);
+  if(!sorted.length) { el.innerHTML = ''; return; }
+  const dispUnit = userProfile.bodyWeightUnit || _bwUnit || 'kg';
+  el.innerHTML = `
+    <div style="border-top:0.5px solid var(--border);padding-top:12px;margin-top:4px;">
+      <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Recent Entries</div>
+      ${sorted.map(e => {
+        const disp = dispUnit === 'lbs' ? Math.round(e.weight * 2.205 * 10) / 10 : Math.round(e.weight * 10) / 10;
+        const d = new Date(e.date + 'T12:00:00');
+        const label = d.toLocaleDateString('en-GB', {day:'numeric', month:'short', year:'numeric'});
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:0.5px solid var(--border);">
+          <div style="font-size:13px;color:var(--text2);">${label}</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div style="font-size:14px;font-weight:700;">${disp} ${dispUnit}</div>
+            <button onclick="deleteBWEntry('${e.date}')" style="background:rgba(255,77,106,0.1);border:0.5px solid rgba(255,77,106,0.25);border-radius:6px;padding:2px 8px;font-size:11px;color:var(--red);cursor:pointer;">✕</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
+function renderBWChart() {
+  const chartEl = document.getElementById('bwChart');
+  const yAxisEl = document.getElementById('bwYAxis');
+  const xEl     = document.getElementById('bwChartX');
+  const currentEl = document.getElementById('bwCurrentVal');
+  const labelEl   = document.getElementById('bwCurrentLabel');
+  const subEl     = document.getElementById('bwSubLabel');
+  const trendEl   = document.getElementById('bwTrend');
+  if(!chartEl) return;
+
+  const dispUnit = userProfile.bodyWeightUnit || 'kg';
+  const toDisp = kg => dispUnit === 'lbs' ? Math.round(kg * 2.205 * 10) / 10 : Math.round(kg * 10) / 10;
+
+  let data = [...bodyWeightLog].sort((a,b) => a.date.localeCompare(b.date));
+  if(_bwRangeDays > 0) {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - _bwRangeDays);
+    const cutStr = cutoff.toISOString().split('T')[0];
+    data = data.filter(e => e.date >= cutStr);
+  }
+
+  if(!data.length) {
+    chartEl.innerHTML = '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text2);font-size:13px;">No data — tap + Log weight</div>';
+    if(yAxisEl) yAxisEl.innerHTML = '';
+    if(xEl) xEl.innerHTML = '';
+    if(currentEl) currentEl.textContent = '–';
+    if(labelEl) labelEl.textContent = 'No entries yet';
+    if(subEl) subEl.textContent = 'Tap + Log weight to start tracking';
+    if(trendEl) trendEl.textContent = '';
+    return;
+  }
+
+  // Stats
+  const latestEntry = data[data.length - 1];
+  const latestDisp = toDisp(latestEntry.weight);
+  if(currentEl) currentEl.textContent = latestDisp + ' ' + dispUnit;
+  if(labelEl) labelEl.textContent = 'Current weight';
+
+  const d = new Date(latestEntry.date + 'T12:00:00');
+  if(subEl) subEl.textContent = 'Last logged ' + d.toLocaleDateString('en-GB', {day:'numeric', month:'short'});
+
+  // Trend
+  if(trendEl) {
+    if(data.length >= 2) {
+      const firstEntry = data[0];
+      const diff = Math.round((latestEntry.weight - firstEntry.weight) * 10) / 10;
+      const diffDisp = toDisp(Math.abs(latestEntry.weight - firstEntry.weight));
+      const arrow = diff > 0 ? '▲' : diff < 0 ? '▼' : '●';
+      const col = diff > 0 ? '#ff6b6b' : diff < 0 ? '#c8ff00' : 'var(--text2)';
+      trendEl.innerHTML = `<span style="color:${col};font-weight:700;">${arrow} ${diffDisp} ${dispUnit}</span> <span style="color:var(--text2);">vs start</span>`;
+    } else {
+      trendEl.textContent = '';
+    }
+  }
+
+  // Draw chart
+  const vals = data.map(e => toDisp(e.weight));
+  const minV = Math.min(...vals);
+  const maxV = Math.max(...vals);
+  const range = maxV - minV || 1;
+  const pad = range * 0.15;
+  const yMin = minV - pad;
+  const yMax = maxV + pad;
+
+  const W = chartEl.getBoundingClientRect().width || 240;
+  const H = 110;
+  const n = data.length;
+  const xPos = (i) => n === 1 ? W / 2 : (i / (n - 1)) * W;
+  const yPos = (v) => H - ((v - yMin) / (yMax - yMin)) * H;
+
+  // Build polyline path
+  let pathD = '';
+  let areaD = '';
+  data.forEach((e, i) => {
+    const x = xPos(i);
+    const y = yPos(toDisp(e.weight));
+    if(i === 0) { pathD = `M${x},${y}`; areaD = `M${x},${H} L${x},${y}`; }
+    else { pathD += ` L${x},${y}`; areaD += ` L${x},${y}`; }
+  });
+  areaD += ` L${xPos(n-1)},${H} Z`;
+
+  // Y-axis labels
+  const yLabels = [yMin + (yMax - yMin) * 0.1, yMin + (yMax - yMin) * 0.5, yMin + (yMax - yMin) * 0.9];
+  if(yAxisEl) {
+    yAxisEl.innerHTML = yLabels.map(v => {
+      const pct = ((v - yMin) / (yMax - yMin)) * 100;
+      return `<div style="position:absolute;bottom:${pct}%;right:4px;transform:translateY(50%);font-size:9px;color:var(--text2);">${Math.round(v * 10) / 10}</div>`;
+    }).join('');
+  }
+
+  chartEl.innerHTML = `<svg width="100%" height="${H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" overflow="visible">
+    <defs>
+      <linearGradient id="bwGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#c8ff00" stop-opacity="0.25"/>
+        <stop offset="100%" stop-color="#c8ff00" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <path d="${areaD}" fill="url(#bwGrad)"/>
+    <path d="${pathD}" fill="none" stroke="#c8ff00" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    ${data.map((e, i) => {
+      const x = xPos(i);
+      const y = yPos(toDisp(e.weight));
+      const isLast = i === n - 1;
+      return `<circle cx="${x}" cy="${y}" r="${isLast ? 5 : 3}" fill="${isLast ? '#c8ff00' : 'var(--surface)'}" stroke="#c8ff00" stroke-width="2"/>`;
+    }).join('')}
+  </svg>`;
+
+  // X-axis labels (up to 4)
+  if(xEl) {
+    const step = Math.max(1, Math.floor((n - 1) / 3));
+    const indices = [];
+    for(let i = 0; i < n; i += step) indices.push(i);
+    if(indices[indices.length - 1] !== n - 1) indices.push(n - 1);
+    xEl.innerHTML = indices.map(i => {
+      const dd = new Date(data[i].date + 'T12:00:00');
+      return `<span>${dd.toLocaleDateString('en-GB', {day:'numeric', month:'short'})}</span>`;
+    }).join('');
+  }
+}
+
 function renderProgress(){
   renderPBCards();
   renderCalendar();
   selLift('bench',document.querySelector('#liftTabs .chip.active')||document.querySelector('#liftTabs .chip'));
+  renderBWChart();
   renderMuscleBalance();
   const sorted=[...completedSessions].sort((a,b)=>b.date-a.date).slice(0,8);
   if(!sorted.length){document.getElementById('recentSess').innerHTML='<div style="padding:20px;text-align:center;color:var(--text2);font-size:13px;">No sessions yet — start your first workout!</div>';}
