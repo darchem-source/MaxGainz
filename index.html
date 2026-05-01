@@ -11298,10 +11298,13 @@ async function submitFeedback(){
     closeFeedbackModal();
   } else {
     console.warn('[Feedback] Submission failed — detail:', errorDetail);
-    const hint = errorDetail.includes('timed out') ? 'Check your connection and try again'
-                : errorDetail.includes('permission') || errorDetail.includes('policy') ? 'Permission error — please sign in and try again'
-                : 'Please try again';
-    showToast('⚠️ Failed to send — ' + hint);
+    let hint = 'Please try again';
+    if(errorDetail.includes('timed out'))               hint = 'Request timed out — check your connection';
+    else if(errorDetail.includes('does not exist'))      hint = 'Table not set up — run Supabase migration';
+    else if(errorDetail.includes('policy') || errorDetail.includes('permission') || errorDetail.includes('42501')) hint = 'RLS policy blocking insert — check Supabase policies';
+    else if(errorDetail.includes('23502'))               hint = 'Missing required field — ' + errorDetail;
+    else if(errorDetail.length > 0 && errorDetail.length < 120) hint = errorDetail;
+    showToast('⚠️ Feedback failed: ' + hint, 6000);
   }
 }
 
