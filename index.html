@@ -268,12 +268,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
       <div style="margin:0 16px 12px;background:var(--surface);border-radius:16px;padding:16px;border:0.5px solid var(--border);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div>
-            <div style="font-size:15px;font-weight:700;">Training streak</div>
-            <div style="font-size:12px;color:var(--text2);margin-top:2px;" id="streakSubLabel">Consecutive days trained</div>
+            <div style="font-size:15px;font-weight:700;">Weekly streak</div>
+            <div style="font-size:12px;color:var(--text2);margin-top:2px;" id="streakSubLabel">Weeks with 3+ sessions</div>
           </div>
           <div style="text-align:right;">
             <div style="font-size:26px;font-weight:900;color:var(--accent);line-height:1;" id="streakDisplay">–</div>
-            <div style="font-size:11px;color:var(--text2);margin-top:3px;" id="streakBest"></div>
+            <div style="font-size:11px;color:var(--accent2);margin-top:3px;font-weight:600;" id="streakBest"></div>
           </div>
         </div>
         <div style="display:flex;gap:6px;" id="streakRow"></div>
@@ -2322,23 +2322,27 @@ function renderStreakBar(){
   });
   document.getElementById('streakRow').innerHTML=dots.join('');
 
-  // Daily streak as primary display
-  const dayStreak  = calcDayStreak(completedSessions);
-  const bestStreak = calcBestDayStreak(completedSessions);
-  const weekStreak = calcWeekStreak(completedSessions);
+  // Weekly workout streak (3+ sessions/week) as primary
+  const weekStreak     = calcWeekStreak(completedSessions);
+  const activityStreak = calcActivityStreak(completedSessions);
 
   const streakEl = document.getElementById('streakDisplay');
-  if(streakEl) streakEl.textContent = dayStreak > 0 ? '🔥 ' + dayStreak : '–';
-
-  const bestEl = document.getElementById('streakBest');
-  if(bestEl) bestEl.textContent = bestStreak > 1 && bestStreak > dayStreak ? 'Best: ' + bestStreak + ' days' : bestStreak > 1 && bestStreak === dayStreak ? '🏆 Personal best!' : '';
+  if(streakEl) streakEl.textContent = weekStreak > 0 ? '🔥 ' + weekStreak : '–';
 
   const subEl = document.getElementById('streakSubLabel');
   if(subEl){
-    if(dayStreak >= 2)      subEl.textContent = dayStreak + ' consecutive days';
-    else if(dayStreak === 1) subEl.textContent = 'Trained today — keep it up!';
-    else if(weekStreak > 0)  subEl.textContent = weekStreak + '-week streak (3+ sessions/wk)';
-    else                     subEl.textContent = 'Train today to start your streak!';
+    if(weekStreak >= 1) subEl.textContent = weekStreak === 1 ? 'week streak (3+ sessions/wk)' : 'week streak (3+ sessions/wk)';
+    else                subEl.textContent = 'Hit 3 sessions this week to start your streak!';
+  }
+
+  const bestEl = document.getElementById('streakBest');
+  if(bestEl){
+    if(activityStreak > weekStreak)
+      bestEl.textContent = '⚡ ' + activityStreak + '-week activity streak';
+    else if(activityStreak > 0 && weekStreak === 0)
+      bestEl.textContent = '⚡ ' + activityStreak + '-week activity streak';
+    else
+      bestEl.textContent = '';
   }
 }
 
@@ -8753,46 +8757,37 @@ function calcWeekStreak(sessions){
   return streak;
 }
 
-// Returns a YYYY-MM-DD string for any date value (avoids timezone drift)
-function _dayKey(date){
-  const d = new Date(date);
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
-
-// Consecutive calendar days with ≥1 session, counting back from today (or yesterday
-// if the user hasn't trained today yet — streak stays alive until midnight)
-function calcDayStreak(sessions){
+// Consecutive weeks with ≥1 logged activity (gym session OR manual activity).
+// A broader metric than workout streak — rewards any movement, including
+// lighter weeks with walks, sport, or active recovery.
+function calcActivityStreak(sessions){
   if(!sessions.length) return 0;
-  const trained = new Set(sessions.map(s => _dayKey(s.date)));
-  const today = new Date(); today.setHours(12,0,0,0); // noon avoids DST edge cases
-  let check = new Date(today);
+  const weeks = {};
+  sessions.forEach(s => {
+    const d = new Date(s.date);
+    const mon = new Date(d);
+    mon.setDate(d.getDate() - (d.getDay() + 6) % 7);
+    mon.setHours(0,0,0,0);
+    weeks[mon.getTime()] = true;
+  });
+  const now = new Date();
+  const curMon = new Date(now);
+  curMon.setDate(now.getDate() - (now.getDay() + 6) % 7);
+  curMon.setHours(0,0,0,0);
   let streak = 0;
-  for(let i = 0; i < 365; i++){
-    if(trained.has(_dayKey(check))){
+  let check = new Date(curMon);
+  for(let w = 0; w < 52; w++){
+    if(weeks[check.getTime()]){
       streak++;
-      check.setDate(check.getDate() - 1);
-    } else if(i === 0){
-      // Haven't trained today yet — start counting from yesterday
-      check.setDate(check.getDate() - 1);
+      check.setDate(check.getDate() - 7);
+    } else if(w === 0){
+      // Current week not yet active — don't break streak, try previous week
+      check.setDate(check.getDate() - 7);
     } else {
       break;
     }
   }
   return streak;
-}
-
-// Best ever daily streak across all session history
-function calcBestDayStreak(sessions){
-  if(!sessions.length) return 0;
-  const days = [...new Set(sessions.map(s => _dayKey(s.date)))].sort();
-  if(!days.length) return 0;
-  let best = 1, cur = 1;
-  for(let i = 1; i < days.length; i++){
-    const diff = (new Date(days[i]) - new Date(days[i-1])) / 86400000;
-    cur = diff === 1 ? cur + 1 : 1;
-    if(cur > best) best = cur;
-  }
-  return best;
 }
 
 function getXPEvents(){
