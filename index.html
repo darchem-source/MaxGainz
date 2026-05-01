@@ -212,6 +212,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 .celebrate-alert { display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:var(--surface); border:1.5px solid var(--accent); border-radius:20px; padding:28px 32px; text-align:center; z-index:300; box-shadow:0 20px 60px rgba(0,0,0,0.6); max-width:300px; width:90%; }
 .celebrate-alert.show { display:block; animation:popIn 0.3s ease; }
 
+/* PR alert — shown mid-session when a personal record is broken */
+.pr-alert { display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:var(--surface); border:2px solid #ffd700; border-radius:20px; padding:24px 28px; text-align:center; z-index:310; box-shadow:0 20px 60px rgba(0,0,0,0.7),0 0 40px rgba(255,215,0,0.15); max-width:300px; width:90%; }
+.pr-alert.show { display:block; animation:popIn 0.35s cubic-bezier(0.175,0.885,0.32,1.275); }
+
 /* Session detail modal */
 .sess-detail-row { display:flex; align-items:center; padding:10px 16px; border-top:0.5px solid var(--border); gap:10px; }
 
@@ -1030,6 +1034,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
   <div style="font-size:20px;font-weight:900;color:var(--accent2);margin-bottom:4px;">Rest complete!</div>
   <div style="font-size:14px;color:var(--text2);margin-bottom:16px;">Time for your next set</div>
   <button onclick="dismissRestAlert()" class="btn-p" style="width:100%;">Let's go 💪</button>
+</div>
+
+<!-- PR ALERT -->
+<div class="pr-alert" id="prAlert" onclick="dismissPRAlert()">
+  <div style="font-size:48px;margin-bottom:6px;">🏆</div>
+  <div style="font-size:13px;font-weight:800;color:#ffd700;text-transform:uppercase;letter-spacing:2px;margin-bottom:4px;">New Personal Record!</div>
+  <div style="font-size:22px;font-weight:900;color:var(--text);margin-bottom:4px;" id="prAlertExName"></div>
+  <div style="font-size:28px;font-weight:900;color:#ffd700;margin-bottom:6px;" id="prAlertWeight"></div>
+  <div style="font-size:12px;color:var(--text2);" id="prAlertPrev"></div>
 </div>
 
 <!-- CELEBRATE ALERT -->
@@ -2446,6 +2459,7 @@ function beginSession(){
 
 function startSessionULF(day){
   stopRest(); window._restStoppedManually=false; // clean slate before new session
+  window._prShownThisSession = new Set();
   const exs=getULFDay(day);
   sessDay=day; sessExs=exs;
   curIdx=0;setsDone={};repsLogged={};totalSets=0;sessTimeSec=0;
@@ -2562,6 +2576,7 @@ let supersetBuilder = { exercises: [], sets: 3 };  // Builder for creating super
 
 function startSession(day,prog){
   stopRest(); window._restStoppedManually=false; // clean slate before new session
+  window._prShownThisSession = new Set();
   sessDay=day; sessExs=prog[day].map(e=>({...e}));
   curIdx=0; setsDone={}; repsLogged={}; totalSets=0; sessTimeSec=0;
   sessStartTime=Date.now();
@@ -4705,6 +4720,18 @@ function confirmReps(){
   if(!setWeights[curIdx])setWeights[curIdx]={};
   repsLogged[curIdx][pendingRepSetIdx]=val;
   setWeights[curIdx][pendingRepSetIdx]=sw;
+  // PR check — only for weighted exercises, once per exercise per session
+  if(sw > 0 && sessExs[curIdx] && !sessExs[curIdx].bw){
+    const _prExName = sessExs[curIdx].name;
+    const _prevPB = getPB(_prExName);
+    if(_prevPB === null || sw > _prevPB){
+      if(!window._prShownThisSession) window._prShownThisSession = new Set();
+      if(!window._prShownThisSession.has(_prExName)){
+        window._prShownThisSession.add(_prExName);
+        showPRAlert(_prExName, sw, _prevPB);
+      }
+    }
+  }
   document.getElementById('repMod').classList.remove('open');
   
   // Cancel rest timer if it's running — this is a programmatic cancel (not user-initiated),
@@ -5570,6 +5597,31 @@ function dismissRestAlert(){
   // move to next set bubble
   const ex=sessExs[curIdx];
   renderBubbles(ex);updNextBtn();
+}
+
+// ── PR ALERT ──
+let _prAlertTimer = null;
+function showPRAlert(exName, weight, prevPB){
+  clearTimeout(_prAlertTimer);
+  const el = document.getElementById('prAlert');
+  if(!el) return;
+  document.getElementById('prAlertExName').textContent = exName;
+  document.getElementById('prAlertWeight').textContent = weight + 'kg';
+  if(prevPB !== null && prevPB > 0){
+    const diff = Math.round((weight - prevPB) * 10) / 10;
+    document.getElementById('prAlertPrev').textContent = '+' + diff + 'kg above your previous best of ' + prevPB + 'kg';
+  } else {
+    document.getElementById('prAlertPrev').textContent = 'First time logging this lift!';
+  }
+  el.classList.add('show');
+  haptic([80, 60, 80, 60, 200]); // celebratory pulse
+  _prAlertTimer = setTimeout(dismissPRAlert, 4000);
+}
+function dismissPRAlert(){
+  clearTimeout(_prAlertTimer);
+  _prAlertTimer = null;
+  const el = document.getElementById('prAlert');
+  if(el) el.classList.remove('show');
 }
 
 // ── CELEBRATE (with superset support) ──
@@ -6471,6 +6523,7 @@ function renderHIITProg(){
 function startHIIT(idx){
   const w=HIIT[idx];
   if(!w) return;
+  window._prShownThisSession = new Set();
   // console.log('[HIIT] Starting HIIT session:', w.name);
   sessDay=w.name;
   
