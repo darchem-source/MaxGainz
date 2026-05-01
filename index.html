@@ -9570,25 +9570,56 @@ function _renderPathTabActive() {
   const adherencePct = plannedSoFar > 0 ? Math.min(100, Math.round((pathSessions.length / plannedSoFar) * 100)) : 100;
   const adherence = getPathAdherenceThisWeek();
 
-  // Upcoming schedule (2 days past + today + 9 future = 12 days)
+  // Upcoming schedule — today + next 6 days (7 days total)
+  // ── Core workout rotation ──
+  const _ulfDays = ['Upper','Lower','Full Body'];
+  const _pplVariant = userPath.coreSchedule?.variant;
+  const _pplCycle = _pplVariant === '6day'
+    ? ['Push A','Pull A','Legs A','Push B','Pull B','Legs B']
+    : ['Push A','Pull A','Legs A'];
+  let _coreWorkoutCycle = [];
+  let _baseCoreSessionsDone = 0;
+  if(userPath.programme === 'ULF'){
+    _coreWorkoutCycle = _ulfDays;
+    _baseCoreSessionsDone = completedSessions.filter(s => !s.adhoc && _ulfDays.includes(s.day)).length;
+  } else if(userPath.programme === 'PPL'){
+    _coreWorkoutCycle = _pplCycle;
+    _baseCoreSessionsDone = completedSessions.filter(s => !s.adhoc && Object.keys(PPL).includes(s.day)).length;
+  }
+  // ── HIIT add-on recommendation via muscle imbalance ──
+  const _schedBalance = calcMuscleImbalance(4);
+  const _hiitRecs = getAddOnRecommendations('HIIT', _schedBalance);
+  const _topHIITName = _hiitRecs[0]?.name || null;
+
+  let _coreIdx = _baseCoreSessionsDone;
   const scheduleDays = [];
-  for(let d = -2; d <= 9; d++){
+  for(let d = 0; d <= 6; d++){
     const date = new Date(); date.setDate(date.getDate() + d); date.setHours(0,0,0,0);
     const dayName = date.toLocaleDateString('en-GB', { weekday:'long' });
     const isToday = d === 0;
-    const isPast = d < 0;
     const isCoreDay = userPath.coreSchedule.preferredDays.includes(dayName);
     const addOnForDay = userPath.addOns.find(a => a.preferredDays.includes(dayName));
     const isRest = !isCoreDay && !addOnForDay;
     let completed = false;
-    if(isPast || isToday){
+    if(isToday){
       completed = completedSessions.some(s => {
         const sd = new Date(s.date);
         return sd.toDateString() === date.toDateString() && !s.adhoc && !s.manualActivity;
       });
     }
+    // Specific workout name from rotation
+    let specificWorkout = null;
+    if(isCoreDay && _coreWorkoutCycle.length > 0){
+      specificWorkout = _coreWorkoutCycle[_coreIdx % _coreWorkoutCycle.length];
+      _coreIdx++;
+    }
+    // Add-on specific name — HIIT gets muscle-imbalance recommendation
+    let addOnSpecific = null;
+    if(addOnForDay){
+      if(addOnForDay.type === 'HIIT') addOnSpecific = _topHIITName;
+    }
     const dayLabel = date.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' });
-    scheduleDays.push({ date, dayName, dayLabel, isToday, isPast, isCoreDay, addOnForDay, isRest, completed });
+    scheduleDays.push({ date, dayName, dayLabel, isToday, isPast:false, isCoreDay, addOnForDay, isRest, completed, specificWorkout, addOnSpecific });
   }
 
   const scheduleHtml = scheduleDays.map(d => {
@@ -9599,13 +9630,10 @@ function _renderPathTabActive() {
 
     if(d.isToday){ bg = 'rgba(200,255,0,0.06)'; border = 'rgba(200,255,0,0.4)'; }
 
-    if(d.isPast){
+    if(d.isToday){
       indicator = d.completed
         ? `<div style="width:22px;height:22px;border-radius:50%;background:var(--green);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;">✓</div>`
-        : (d.isRest ? `<div style="width:22px;height:22px;border-radius:50%;background:var(--surface3);display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0;color:var(--text2);">–</div>`
-          : `<div style="width:22px;height:22px;border-radius:50%;background:rgba(255,77,106,0.15);border:1px solid rgba(255,77,106,0.3);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;">✗</div>`);
-    } else if(d.isToday){
-      indicator = `<div style="width:22px;height:22px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0;color:#000;font-weight:800;">▶</div>`;
+        : `<div style="width:22px;height:22px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0;color:#000;font-weight:800;">▶</div>`;
     } else {
       indicator = d.isRest
         ? `<div style="width:22px;height:22px;border-radius:50%;background:var(--surface3);display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0;color:var(--text2);">–</div>`
@@ -9615,11 +9643,17 @@ function _renderPathTabActive() {
     if(d.isRest){
       workoutLabel = `<span style="font-size:11px;color:var(--text2);">Rest day</span>`;
     } else if(d.isCoreDay && d.addOnForDay){
-      workoutLabel = `<span style="font-size:11px;color:var(--accent);font-weight:700;">${userPath.programme}</span><span style="font-size:11px;color:#00d4ff;margin-left:6px;">+ ${d.addOnForDay.type}</span>`;
+      const coreLabel = d.specificWorkout || userPath.programme;
+      const addOnLabel = d.addOnSpecific || d.addOnForDay.type;
+      const addOnSub = d.addOnSpecific ? `<div style="font-size:10px;color:rgba(0,212,255,0.7);margin-top:1px;">📊 Based on muscle balance</div>` : '';
+      workoutLabel = `<div><span style="font-size:11px;color:var(--accent);font-weight:700;">${coreLabel}</span><span style="font-size:11px;color:#00d4ff;margin-left:6px;">+ ${addOnLabel}</span>${addOnSub}</div>`;
     } else if(d.isCoreDay){
-      workoutLabel = `<span style="font-size:11px;color:var(--accent);font-weight:700;">${userPath.programme}</span>`;
+      const coreLabel = d.specificWorkout || userPath.programme;
+      workoutLabel = `<span style="font-size:11px;color:var(--accent);font-weight:700;">${coreLabel}</span>`;
     } else if(d.addOnForDay){
-      workoutLabel = `<span style="font-size:11px;color:#00d4ff;font-weight:700;">${d.addOnForDay.type} <span style="background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.3);border-radius:4px;padding:1px 5px;font-size:9px;">ADD-ON</span></span>`;
+      const addOnLabel = d.addOnSpecific || d.addOnForDay.type;
+      const addOnSub = d.addOnSpecific ? `<div style="font-size:10px;color:rgba(0,212,255,0.7);margin-top:1px;">📊 Based on muscle balance</div>` : '';
+      workoutLabel = `<div><span style="font-size:11px;color:#00d4ff;font-weight:700;">${addOnLabel} <span style="background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.3);border-radius:4px;padding:1px 5px;font-size:9px;">ADD-ON</span></span>${addOnSub}</div>`;
     }
 
     return `
