@@ -10976,7 +10976,18 @@ function saveProfile(){
   userProfile.dob = document.getElementById('profileDOB').value;
   userProfile.heightCM = parseInt(document.getElementById('profileHeightCM').value) || 180;
   userProfile.weight = parseInt(document.getElementById('profileWeight').value) || 80;
-  
+  userProfile.bodyWeight = userProfile.weight;
+  userProfile.bodyWeightUnit = 'kg';
+
+  // Seed bodyWeightLog from profile weight — add/replace today's entry if it differs
+  const _bwTodayStr = new Date().toISOString().split('T')[0];
+  const _bwExisting = bodyWeightLog.find(e => e.date === _bwTodayStr);
+  if(!_bwExisting || Math.abs(_bwExisting.weight - userProfile.weight) > 0.05) {
+    bodyWeightLog = bodyWeightLog.filter(e => e.date !== _bwTodayStr);
+    bodyWeightLog.push({ date: _bwTodayStr, weight: userProfile.weight, unit: 'kg', displayWeight: userProfile.weight, displayUnit: 'kg' });
+    bodyWeightLog.sort((a,b) => a.date.localeCompare(b.date));
+  }
+
   // Save to cloud + local cache
   saveLocalCache();
   cloudSaveProfile();
@@ -10984,6 +10995,7 @@ function saveProfile(){
   // Show confirmation
   alert('✅ Profile saved!');
   renderToday(); // Update greeting if name changed
+  renderBWChart(); // Reflect new weight in body weight graph
 }
 
 // ── ABDOMINAL WORK MODAL ──
