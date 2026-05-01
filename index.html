@@ -1654,6 +1654,7 @@ async function cloudSaveProfile() {
     customWorkouts,
     customHIITs: cHIITs,
     userPath,
+    onboarded: !!localStorage.getItem('maxgainz_onboarded'),
     prefs: {
       speedUnit:    localStorage.getItem('userSpeedUnit')    || 'mph',
       weightUnit:   localStorage.getItem('userWeightUnit')   || 'kg',
@@ -1767,6 +1768,10 @@ async function cloudLoadAll() {
             // Cloud has no path — ensure local state matches
             userPath = null;
             localStorage.removeItem('maxgainz_path');
+          }
+          // Restore onboarded flag from cloud so it survives new devices/browsers
+          if (blob.onboarded) {
+            localStorage.setItem('maxgainz_onboarded', '1');
           }
         } catch(e) { console.warn('Profile blob parse error:', e); }
       } else {
@@ -7754,7 +7759,7 @@ function _obComplete(skipSetup) {
 }
 
 function checkOnboarding() {
-  if(!localStorage.getItem('maxgainz_onboarded') && completedSessions.length === 0 && isAuthenticated()) {
+  if(!localStorage.getItem('maxgainz_onboarded') && isAuthenticated()) {
     renderOnboardStep(0);
     document.getElementById('onboardMod').classList.add('open');
   }
