@@ -9140,20 +9140,143 @@ const RANKS=[
   {name:'Immortal',emoji:'⚡',min:10000,max:Infinity,color:'#ff4d6a'},
 ];
 
+// ── Achievement helper functions ──────────────────────────────────────────
+function getMaxWeeklyVolume(sessions){
+  const weeks={};
+  sessions.forEach(s=>{
+    const d=new Date(s.date), mon=new Date(d);
+    mon.setDate(d.getDate()-(d.getDay()+6)%7); mon.setHours(0,0,0,0);
+    const k=mon.toISOString().slice(0,10);
+    weeks[k]=(weeks[k]||0)+(s.volume||0);
+  });
+  return Object.values(weeks).length?Math.max(...Object.values(weeks)):0;
+}
+function getUniqueProgrammes(sessions){
+  const ulfDays=['Upper','Lower','Full Body'];
+  const pplDays=Object.keys(PPL||{});
+  const types=new Set();
+  sessions.filter(s=>!s.manualActivity).forEach(s=>{
+    if(ulfDays.includes(s.day)) types.add('ULF');
+    else if(pplDays.includes(s.day)) types.add('PPL');
+    else if(HIIT&&HIIT.some(h=>h.name===s.day)) types.add('HIIT');
+  });
+  return types.size;
+}
+function getUniqueExerciseCount(sessions){
+  const ex=new Set();
+  sessions.filter(s=>!s.manualActivity).forEach(s=>Object.keys(s.setLog||{}).forEach(n=>ex.add(n)));
+  return ex.size;
+}
+function hasSessionUnder(sessions, minutes){
+  return sessions.filter(s=>!s.manualActivity).some(s=>s.durationMin>0&&s.durationMin<=minutes);
+}
+function hasSessionOver(sessions, minutes){
+  return sessions.filter(s=>!s.manualActivity).some(s=>s.durationMin>=minutes);
+}
+function hasSessionAtHour(sessions, hMin, hMax){
+  return sessions.some(s=>{const h=new Date(s.date).getHours();return h>=hMin&&h<hMax;});
+}
+function hadBreakThenReturn(sessions){
+  const gym=sessions.filter(s=>!s.manualActivity).sort((a,b)=>new Date(a.date)-new Date(b.date));
+  for(let i=1;i<gym.length;i++){
+    const gap=(new Date(gym[i].date)-new Date(gym[i-1].date))/(1000*60*60*24);
+    if(gap>=30) return true;
+  }
+  return false;
+}
+function getPathCoreSessions(sessions){
+  return sessions.filter(s=>!s.manualActivity&&!s.adhoc);
+}
+function getPathWeeksCompleted(){
+  if(!isPathActive()) return 0;
+  return Math.max(0, getPathCurrentWeek()-1);
+}
+function getPRsFromSessions(sessions){
+  // Count how many exercises have a setLog entry that beats anything before it
+  const prs=new Set();
+  const byEx={};
+  const sorted=[...sessions].filter(s=>!s.manualActivity).sort((a,b)=>new Date(a.date)-new Date(b.date));
+  sorted.forEach(s=>{
+    Object.entries(s.setLog||{}).forEach(([name,data])=>{
+      const w=data.weight||0;
+      if(w>0){
+        if(!byEx[name]||w>byEx[name]){byEx[name]=w;prs.add(name+':'+w);}
+      }
+    });
+  });
+  return prs.size;
+}
+function getFormGuideUseCount(){
+  try{return JSON.parse(localStorage.getItem('maxgainz_fg_seen')||'[]').length;}catch(e){return 0;}
+}
+// ─────────────────────────────────────────────────────────────────────────
+
 const ACHIEVEMENTS=[
-  {id:'first_session',name:'First Blood',desc:'Complete your first session',emoji:'🩸',xp:50,check:s=>s.length>=1},
-  {id:'sessions_5',name:'Getting Started',desc:'Complete 5 sessions',emoji:'🔥',xp:100,check:s=>s.length>=5},
-  {id:'sessions_10',name:'Double Digits',desc:'Complete 10 sessions',emoji:'💪',xp:200,check:s=>s.length>=10},
-  {id:'sessions_25',name:'Quarter Century',desc:'Complete 25 sessions',emoji:'🎯',xp:400,check:s=>s.length>=25},
-  {id:'sessions_50',name:'Dedicated',desc:'Complete 50 sessions',emoji:'🏅',xp:750,check:s=>s.length>=50},
-  {id:'week_3',name:'3-a-Week',desc:'Complete 3 sessions in a week',emoji:'📅',xp:150,check:s=>getMaxWeeklySessions(s)>=3},
-  {id:'week_5',name:'5-a-Week',desc:'Complete 5 sessions in one week',emoji:'🗓️',xp:300,check:s=>getMaxWeeklySessions(s)>=5},
-  {id:'streak_2',name:'Back to Back',desc:'Achieve a 2-week streak (3+ sessions/week)',emoji:'🔗',xp:200,check:s=>calcWeekStreak(s)>=2},
-  {id:'streak_4',name:'Monthly Grind',desc:'Achieve a 4-week streak',emoji:'📈',xp:400,check:s=>calcWeekStreak(s)>=4},
-  {id:'streak_8',name:'Unstoppable',desc:'Achieve an 8-week streak',emoji:'🌊',xp:800,check:s=>calcWeekStreak(s)>=8},
-  {id:'volume_100k',name:'100k Club',desc:'Lift 100,000kg total volume',emoji:'💯',xp:500,check:s=>s.reduce((a,x)=>a+x.volume,0)>=100000},
-  {id:'pb_bench',name:'Bench Beast',desc:'Bench press 100kg+',emoji:'🦁',xp:300,check:()=>getPB('bench')>=100},
-  {id:'pb_dead',name:'Iron Pull',desc:'Deadlift 150kg+',emoji:'⚓',xp:400,check:()=>getPB('deadlift')>=150},
+  // ── SESSION MILESTONES ────────────────────────────────────────────────
+  {id:'first_session',cat:'Sessions',name:'First Blood',desc:'Complete your first session',emoji:'🩸',xp:50,check:s=>s.filter(x=>!x.manualActivity).length>=1},
+  {id:'sessions_5',cat:'Sessions',name:'Getting Started',desc:'Complete 5 sessions',emoji:'🔥',xp:100,check:s=>s.filter(x=>!x.manualActivity).length>=5},
+  {id:'sessions_10',cat:'Sessions',name:'Double Digits',desc:'Complete 10 sessions',emoji:'💪',xp:200,check:s=>s.filter(x=>!x.manualActivity).length>=10},
+  {id:'sessions_25',cat:'Sessions',name:'Quarter Century',desc:'Complete 25 sessions',emoji:'🎯',xp:400,check:s=>s.filter(x=>!x.manualActivity).length>=25},
+  {id:'sessions_50',cat:'Sessions',name:'Dedicated',desc:'Complete 50 sessions',emoji:'🏅',xp:750,check:s=>s.filter(x=>!x.manualActivity).length>=50},
+  {id:'sessions_100',cat:'Sessions',name:'Centurion',desc:'Complete 100 sessions',emoji:'💎',xp:1200,check:s=>s.filter(x=>!x.manualActivity).length>=100},
+  {id:'sessions_250',cat:'Sessions',name:'Veteran',desc:'Complete 250 sessions',emoji:'🫡',xp:2500,check:s=>s.filter(x=>!x.manualActivity).length>=250},
+
+  // ── WEEKLY CONSISTENCY ────────────────────────────────────────────────
+  {id:'week_3',cat:'Consistency',name:'3-a-Week',desc:'Train 3+ times in a single week',emoji:'📅',xp:150,check:s=>getMaxWeeklySessions(s)>=3},
+  {id:'week_5',cat:'Consistency',name:'5-a-Week',desc:'Train 5+ times in a single week',emoji:'🗓️',xp:300,check:s=>getMaxWeeklySessions(s)>=5},
+  {id:'week_6',cat:'Consistency',name:'Active Week',desc:'Train 6+ times in a single week',emoji:'🏋️',xp:450,check:s=>getMaxWeeklySessions(s)>=6},
+  {id:'weekend',cat:'Consistency',name:'Weekend Warrior',desc:'Train on both Saturday and Sunday',emoji:'🌅',xp:60,check:s=>s.some(x=>{const d=new Date(x.date).getDay();return d===6;})&&s.some(x=>{const d=new Date(x.date).getDay();return d===0;})},
+
+  // ── STREAK ACHIEVEMENTS ───────────────────────────────────────────────
+  {id:'streak_2',cat:'Streaks',name:'Back to Back',desc:'2-week training streak (3+ sessions/week)',emoji:'🔗',xp:200,check:s=>calcWeekStreak(s)>=2},
+  {id:'streak_4',cat:'Streaks',name:'Monthly Grind',desc:'4-week training streak',emoji:'📈',xp:400,check:s=>calcWeekStreak(s)>=4},
+  {id:'streak_8',cat:'Streaks',name:'Unstoppable',desc:'8-week training streak',emoji:'🌊',xp:800,check:s=>calcWeekStreak(s)>=8},
+  {id:'streak_12',cat:'Streaks',name:'Iron Commitment',desc:'12-week training streak',emoji:'⛓️',xp:1500,check:s=>calcWeekStreak(s)>=12},
+  {id:'activity_streak_4',cat:'Streaks',name:'Always Moving',desc:'4-week activity streak (any workout)',emoji:'🚶',xp:200,check:s=>calcActivityStreak(s)>=4},
+  {id:'activity_streak_8',cat:'Streaks',name:'Lifestyle',desc:'8-week activity streak',emoji:'🌿',xp:400,check:s=>calcActivityStreak(s)>=8},
+
+  // ── VOLUME ACHIEVEMENTS ───────────────────────────────────────────────
+  {id:'volume_100k',cat:'Volume',name:'100k Club',desc:'Lift 100,000kg total volume',emoji:'💯',xp:500,check:s=>s.reduce((a,x)=>a+(x.volume||0),0)>=100000},
+  {id:'volume_500k',cat:'Volume',name:'Half Million',desc:'Lift 500,000kg total volume',emoji:'🏗️',xp:1000,check:s=>s.reduce((a,x)=>a+(x.volume||0),0)>=500000},
+  {id:'volume_1m',cat:'Volume',name:'1M Club',desc:'Lift 1,000,000kg total volume',emoji:'🌍',xp:2000,check:s=>s.reduce((a,x)=>a+(x.volume||0),0)>=1000000},
+  {id:'week_volume_50k',cat:'Volume',name:'Heavy Week',desc:'50,000kg volume in a single week',emoji:'🔩',xp:300,check:s=>getMaxWeeklyVolume(s)>=50000},
+  {id:'week_volume_100k',cat:'Volume',name:'Volume King',desc:'100,000kg volume in a single week',emoji:'👑',xp:600,check:s=>getMaxWeeklyVolume(s)>=100000},
+
+  // ── PERSONAL RECORDS ─────────────────────────────────────────────────
+  {id:'pb_bench',cat:'Strength',name:'Bench Beast',desc:'Bench press 100kg+',emoji:'🦁',xp:300,check:()=>getPB('bench')>=100},
+  {id:'pb_squat',cat:'Strength',name:'Squat Master',desc:'Squat 150kg+',emoji:'🦵',xp:350,check:()=>getPB('squat')>=150},
+  {id:'pb_dead',cat:'Strength',name:'Deadlift King',desc:'Deadlift 200kg+',emoji:'⚓',xp:400,check:()=>getPB('deadlift')>=200},
+  {id:'big_three',cat:'Strength',name:'Big Three',desc:'Bench 100kg, Squat 150kg & Deadlift 200kg',emoji:'🔱',xp:600,check:()=>getPB('bench')>=100&&getPB('squat')>=150&&getPB('deadlift')>=200},
+  {id:'bench_80',cat:'Strength',name:'Solid Press',desc:'Bench press 80kg+',emoji:'💪',xp:150,check:()=>getPB('bench')>=80},
+  {id:'ohp_60',cat:'Strength',name:'Overhead Strong',desc:'Overhead press 60kg+',emoji:'🙌',xp:200,check:()=>getPB('ohp')>=60},
+  {id:'pr_collector',cat:'Strength',name:'PR Collector',desc:'Set personal records on 10+ exercises',emoji:'🏆',xp:300,check:s=>getPRsFromSessions(s)>=10},
+
+  // ── PATH ACHIEVEMENTS ─────────────────────────────────────────────────
+  {id:'path_week1',cat:'Path',name:'Week 1 Done',desc:'Complete your first week on a Path',emoji:'🎯',xp:75,check:()=>getPathWeeksCompleted()>=1},
+  {id:'path_halfway',cat:'Path',name:'Halfway There',desc:'Reach the halfway point of your Path',emoji:'🏁',xp:150,check:()=>isPathActive()&&getPathCurrentWeek()>=Math.ceil((userPath?.duration||8)/2)},
+  {id:'path_workouts_10',cat:'Path',name:'Path Builder',desc:'Complete 10 workouts on your Path',emoji:'🧱',xp:150,check:s=>getPathCoreSessions(s).length>=10},
+  {id:'path_workouts_25',cat:'Path',name:'Path Devotee',desc:'Complete 25 path workouts',emoji:'🛤️',xp:300,check:s=>getPathCoreSessions(s).length>=25},
+  {id:'hybrid_trainer',cat:'Path',name:'Hybrid Trainer',desc:'Complete 5 add-on sessions alongside your Path',emoji:'⚡',xp:150,check:s=>{const addon=s.filter(x=>x.adhoc&&!x.manualActivity);return addon.length>=5;}},
+  {id:'all_programmes',cat:'Path',name:'Jack of All Trades',desc:'Train with ULF, PPL and HIIT programmes',emoji:'🃏',xp:200,check:s=>getUniqueProgrammes(s)>=3},
+
+  // ── VARIETY & EXPLORATION ─────────────────────────────────────────────
+  {id:'exercise_30',cat:'Exploration',name:'Exercise Explorer',desc:'Do 30 different exercises',emoji:'🗺️',xp:200,check:s=>getUniqueExerciseCount(s)>=30},
+  {id:'exercise_50',cat:'Exploration',name:'Full Spectrum',desc:'Do 50 different exercises',emoji:'🔭',xp:400,check:s=>getUniqueExerciseCount(s)>=50},
+  {id:'form_guide',cat:'Exploration',name:'Always Learning',desc:'View the form guide for 10 different exercises',emoji:'📖',xp:100,check:()=>getFormGuideUseCount()>=10},
+  {id:'custom_creator',cat:'Exploration',name:'Creator',desc:'Create your first custom workout',emoji:'🎨',xp:75,check:()=>(customWorkouts||[]).length>=1},
+  {id:'custom_master',cat:'Exploration',name:'Custom Master',desc:'Create 5 custom workouts',emoji:'🖌️',xp:200,check:()=>(customWorkouts||[]).length>=5},
+  {id:'log_activity',cat:'Exploration',name:'Active Lifestyle',desc:'Log 10 activities outside the gym',emoji:'🌳',xp:150,check:s=>s.filter(x=>x.manualActivity).length>=10},
+
+  // ── SPEED & DURATION ─────────────────────────────────────────────────
+  {id:'quick_session',cat:'Special',name:'Speed Run',desc:'Complete a session in under 30 minutes',emoji:'⚡',xp:75,check:s=>hasSessionUnder(s,30)},
+  {id:'epic_session',cat:'Special',name:'Epic Session',desc:'Complete a 90-minute workout',emoji:'🦾',xp:100,check:s=>hasSessionOver(s,90)},
+  {id:'endurance',cat:'Special',name:'Endurance Beast',desc:'Complete a 2-hour workout',emoji:'🐢',xp:200,check:s=>hasSessionOver(s,120)},
+
+  // ── HIDDEN / SPECIAL ─────────────────────────────────────────────────
+  {id:'night_owl',cat:'Special',name:'Night Owl',desc:'Complete a workout after 10pm',emoji:'🦉',xp:50,check:s=>hasSessionAtHour(s,22,24)},
+  {id:'early_bird',cat:'Special',name:'Early Bird',desc:'Complete a workout before 7am',emoji:'🐦',xp:50,check:s=>hasSessionAtHour(s,0,7)},
+  {id:'comeback',cat:'Special',name:'Comeback Kid',desc:'Return to training after a 30-day break',emoji:'🔄',xp:150,check:s=>hadBreakThenReturn(s)},
+  {id:'one_rep',cat:'Special',name:'One Rep Max',desc:'Log exactly 1 rep on a lift',emoji:'☝️',xp:30,check:s=>s.filter(x=>!x.manualActivity).some(x=>Object.values(x.setLog||{}).some(v=>(v.reps||[]).includes(1)))},
 ];
 
 function getMaxWeeklySessions(sessions){
@@ -9274,15 +9397,24 @@ function calcSessionReward(){
   const parts = ['💪 Session +100'];
   if(volume >= 5000){ xp += 50; parts.push('📊 High volume +50'); }
   if(volume >= 10000){ xp += 50; parts.push('🔥 Elite volume +50'); }
+  if(totalSets >= 20){ xp += 25; parts.push('📦 20+ sets +25'); }
+  const dMin = Math.max(1,Math.round(sessTimeSec/60));
+  if(dMin >= 60){ xp += 30; parts.push('⏱ 60min+ session +30'); }
 
   // Which achievements were already unlocked before this session
   const prevUnlocked = new Set(ACHIEVEMENTS.filter(a => a.check(completedSessions)).map(a => a.id));
 
-  // Virtual session to test new achievements
+  // Virtual session to test new achievements (mirrors finishSession object shape)
+  const _vsSetLog = {};
+  sessExs.forEach((ex,i)=>{
+    const done=(setsDone[i]||[]).length;
+    if(done>0) _vsSetLog[ex.name]={sets:done,reps:Object.values(repsLogged[i]||{}),weight:ex.weight,setWeights:Object.values(setWeights[i]||{})};
+  });
   const virtualSessions = [...completedSessions, {
     date: new Date(), day: sessDay,
-    exercises: sessExs.length, durationMin: Math.round(sessTimeSec/60),
-    volume: Math.round(volume), topLifts: [], setLog: {}, manualActivity: false
+    exercises: sessExs.length, durationMin: Math.max(1,Math.round(sessTimeSec/60)),
+    volume: Math.round(volume), topLifts: [], setLog: _vsSetLog,
+    manualActivity: false, adhoc: window._currentSessionIsAdhoc||false
   }];
 
   const newAchievements = ACHIEVEMENTS.filter(a =>
@@ -10678,32 +10810,39 @@ function renderGame(){
     <div class="xp-bar-wrap"><div class="xp-bar-fill" style="width:${wPct}%;background:${wPct>=100?'var(--green)':'linear-gradient(90deg,var(--accent),var(--accent2));'}"></div></div>
     ${wPct>=100?'<div style="font-size:12px;color:var(--green);margin-top:6px;font-weight:700;">✅ Challenge complete! +150 XP earned</div>':''}`;
 
-  // Achievements — unlocked first, then locked
-  const unlockedList = [];
-  const lockedList = [];
-  ACHIEVEMENTS.forEach(a=>{
-    const unlocked = a.check(completedSessions);
-    if(unlocked) unlockedList.push(a); else lockedList.push(a);
-  });
-  
-  const renderAch = (a, unlocked) => `<div style="display:flex;align-items:center;padding:12px 16px;border-top:0.5px solid var(--border);gap:10px;${unlocked?'':'opacity:0.5;'}">
-    <div style="font-size:24px;width:36px;text-align:center;${unlocked?'':'filter:grayscale(1);'}">${unlocked ? a.emoji : '🔒'}</div>
-    <div style="flex:1;">
-      <div style="font-size:13px;font-weight:700;color:${unlocked?'var(--text)':'var(--text2)'};">${a.name}${unlocked?' <span style="font-size:10px;color:var(--green);font-weight:800;">✓ UNLOCKED</span>':''}</div>
-      <div style="font-size:11px;color:var(--text2);">${a.desc}</div>
+  // Achievements — grouped by category, unlocked first within each
+  const renderAch = (a, unlocked) => `<div style="display:flex;align-items:center;padding:12px 16px;border-top:0.5px solid var(--border);gap:10px;${unlocked?'':'opacity:0.45;'}">
+    <div style="font-size:24px;width:36px;text-align:center;flex-shrink:0;${unlocked?'':'filter:grayscale(1);'}">${unlocked?a.emoji:'🔒'}</div>
+    <div style="flex:1;min-width:0;">
+      <div style="font-size:13px;font-weight:700;color:${unlocked?'var(--text)':'var(--text2)'};display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+        ${a.name}${unlocked?'<span style="font-size:9px;background:rgba(76,255,145,0.15);color:#4cff91;font-weight:800;padding:1px 5px;border-radius:4px;letter-spacing:0.5px;">✓ DONE</span>':''}
+      </div>
+      <div style="font-size:11px;color:var(--text2);margin-top:1px;">${a.desc}</div>
     </div>
-    <div style="font-size:13px;font-weight:800;color:${unlocked?'var(--accent)':'var(--text2)'};">+${a.xp}</div>
+    <div style="font-size:13px;font-weight:800;color:${unlocked?'var(--accent)':'var(--text2)'};flex-shrink:0;">+${a.xp}</div>
   </div>`;
-  
-  let achHTML = '';
-  if(unlockedList.length){
-    achHTML += `<div style="padding:8px 16px;font-size:10px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1.5px;background:var(--surface2);">⭐ EARNED (${unlockedList.length}/${ACHIEVEMENTS.length})</div>`;
-    achHTML += unlockedList.map(a => renderAch(a, true)).join('');
-  }
-  if(lockedList.length){
-    achHTML += `<div style="padding:8px 16px;font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;background:var(--surface2);">🔒 LOCKED — KEEP GOING</div>`;
-    achHTML += lockedList.map(a => renderAch(a, false)).join('');
-  }
+
+  const catOrder=['Sessions','Consistency','Streaks','Volume','Strength','Path','Exploration','Special'];
+  const catEmoji={'Sessions':'💪','Consistency':'📅','Streaks':'🔥','Volume':'📊','Strength':'🏋️','Path':'🎯','Exploration':'🗺️','Special':'✨'};
+  let totalUnlocked=0;
+  let achHTML='';
+  catOrder.forEach(cat=>{
+    const inCat=ACHIEVEMENTS.filter(a=>a.cat===cat);
+    if(!inCat.length) return;
+    const unl=inCat.filter(a=>a.check(completedSessions));
+    const lkd=inCat.filter(a=>!a.check(completedSessions));
+    totalUnlocked+=unl.length;
+    achHTML+=`<div style="padding:8px 16px 6px;font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;background:var(--surface2);display:flex;justify-content:space-between;">
+      <span>${catEmoji[cat]||'⭐'} ${cat}</span>
+      <span style="color:${unl.length?'var(--accent)':'var(--text2)'};">${unl.length}/${inCat.length}</span>
+    </div>`;
+    achHTML+=unl.map(a=>renderAch(a,true)).join('');
+    achHTML+=lkd.map(a=>renderAch(a,false)).join('');
+  });
+  // Prepend overall header
+  achHTML=`<div style="padding:10px 16px;font-size:11px;font-weight:700;color:var(--accent);background:rgba(200,255,0,0.06);border-bottom:0.5px solid rgba(200,255,0,0.2);">
+    ⭐ ${totalUnlocked} of ${ACHIEVEMENTS.length} achievements unlocked
+  </div>`+achHTML;
   document.getElementById('achievementsList').innerHTML=achHTML;
 
   // XP history (most recent first)
