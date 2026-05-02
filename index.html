@@ -2749,14 +2749,22 @@ function updateSessUI(){
     _currNameEl.innerHTML =
       ex.name.replace(/'/g,"&#39;") +
       `<span class="exercise-info-icon" onclick="event.stopPropagation();openFormGuide()" title="Form guide">ⓘ</span>`;
-    // Apply pulse only on genuine first encounter; mark seen after animation finishes
+    // Always remove the class first so the animation restarts cleanly when
+    // moving to a new exercise (adding a class that's already present is a no-op
+    // and the browser won't restart the animation).
+    _currNameEl.classList.remove('pulse-first-time');
     if(shouldShowFormGuidePulse(ex.name)){
-      _currNameEl.classList.add('pulse-first-time');
-      // Mark seen after 2 full cycles (1.4s × 2 = 2.8s) so subsequent exercises
-      // that share the same name still get their own pulse this session if needed.
-      setTimeout(() => markExerciseFormGuideSeen(ex.name), 2900);
-    } else {
-      _currNameEl.classList.remove('pulse-first-time');
+      // Defer by ~350ms so the session screen has finished its tab transition and
+      // the user can actually see the animation from the start.
+      const _pulseEx = ex.name;
+      setTimeout(() => {
+        // Only apply if user is still on this exercise
+        if(_currNameEl.dataset.exName !== _pulseEx) return;
+        void _currNameEl.offsetWidth; // force reflow so animation restarts from 0
+        _currNameEl.classList.add('pulse-first-time');
+        // Mark seen after 2 full cycles (1.4s × 2 = 2.8s)
+        setTimeout(() => markExerciseFormGuideSeen(_pulseEx), 2900);
+      }, 350);
     }
   }
   
@@ -4845,7 +4853,7 @@ function confirmReps(){
     const _prExName = sessExs[curIdx].name;
     const _prevPB = getPB(_prExName);
     if(_prevPB === null || sw > _prevPB){
-      if(!window._prShownThisSession) window._prShownThisSession = new Set(); const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
+      if(!window._prShownThisSession) window._prShownThisSession = new Set();
       if(!window._prShownThisSession.has(_prExName)){
         window._prShownThisSession.add(_prExName);
         showPRAlert(_prExName, sw, _prevPB);
