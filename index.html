@@ -1518,6 +1518,7 @@ const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 let currentUser = null;
 let authToken = null;
 let authRefreshToken = null;
+let _authExpiredToastShown = false; // debounce the "session expired" toast across concurrent requests
 
 // Load auth state from localStorage
 function loadAuthState(){
@@ -1549,28 +1550,37 @@ function saveAuthState(user, token, refreshToken){
 }
 
 // Silently refresh the JWT using the stored refresh token.
-// Returns true on success, false on failure (caller should sign the user out).
+// Returns true on success, false on failure.
+// Uses a shared promise so concurrent callers never race (only one refresh fires).
+let _tokenRefreshPromise = null;
 async function refreshAuthToken(){
+  // If a refresh is already in flight, share its result rather than firing another.
+  if(_tokenRefreshPromise) return _tokenRefreshPromise;
   if(!authRefreshToken) return false;
-  try{
-    const res = await fetch(SB_URL + '/auth/v1/token?grant_type=refresh_token', {
-      method: 'POST',
-      headers: { 'apikey': SB_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: authRefreshToken })
-    });
-    if(!res.ok) return false;
-    const data = await res.json();
-    const newToken = data.access_token;
-    const newRefresh = data.refresh_token;
-    if(!newToken) return false;
-    // Update in-memory and persisted state, keep the same user object
-    saveAuthState(currentUser, newToken, newRefresh);
-    console.log('🔑 JWT refreshed successfully');
-    return true;
-  }catch(e){
-    console.warn('Token refresh failed:', e);
-    return false;
-  }
+  _tokenRefreshPromise = (async () => {
+    try{
+      const res = await fetch(SB_URL + '/auth/v1/token?grant_type=refresh_token', {
+        method: 'POST',
+        headers: { 'apikey': SB_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: authRefreshToken })
+      });
+      if(!res.ok) return false;
+      const data = await res.json();
+      const newToken = data.access_token;
+      const newRefresh = data.refresh_token;
+      if(!newToken) return false;
+      // Update in-memory and persisted state, keep the same user object
+      saveAuthState(currentUser, newToken, newRefresh);
+      console.log('🔑 JWT refreshed successfully');
+      return true;
+    }catch(e){
+      console.warn('Token refresh failed:', e);
+      return false;
+    }finally{
+      _tokenRefreshPromise = null;
+    }
+  })();
+  return _tokenRefreshPromise;
 }
 
 // Check if user is authenticated
@@ -1637,9 +1647,17 @@ async function sbFetch(path, options = {}, _isRetry = false) {
       if(refreshed){
         return sbFetch(path, options, true); // retry with new token
       } else {
-        // Refresh failed — token is dead, sign the user out silently
-        console.warn('Token refresh failed after 401 — signing out');
-        authLogout();
+        // Refresh failed — token is dead. Show a non-disruptive prompt rather than
+        // force-logging out (which would destroy in-progress sessions / race with
+        // other concurrent sbFetch calls all hitting 401 simultaneously).
+        console.warn('Token refresh failed after 401 — session data saved locally');
+        setSyncStatus('offline');
+        if(!_authExpiredToastShown){
+          _authExpiredToastShown = true;
+          showToast('⚠️ Session expired — please sign in again to sync', 5000);
+          // Reset flag after a delay so toast can re-appear if user ignores it for a while
+          setTimeout(() => { _authExpiredToastShown = false; }, 30000);
+        }
         return null;
       }
     }
