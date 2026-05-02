@@ -1053,6 +1053,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
         <div class="dp-chip" id="int-hard" onclick="setIntensity('hard')">🔥 Hard</div>
       </div>
     </div>
+    <!-- Custom name (shown only for 'other') -->
+    <div id="actCustomNameWrap" style="display:none;margin-bottom:14px;">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Activity Name</div>
+      <input id="actCustomName" type="text" placeholder="e.g. Paddleboarding" maxlength="40"
+        style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:14px;color:var(--text);box-sizing:border-box;" />
+    </div>
+    <!-- Notes -->
+    <div style="margin-bottom:16px;">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Notes <span style="font-weight:400;text-transform:none;letter-spacing:0;opacity:0.6;">(optional)</span></div>
+      <input id="actNotes" type="text" placeholder="e.g. 5km around the park" maxlength="100"
+        style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:14px;color:var(--text);box-sizing:border-box;" />
+    </div>
     <button class="btn-p" style="width:100%;" onclick="saveActivity()">Save Activity</button>
     <button onclick="document.getElementById('activityMod').classList.remove('open')" style="width:100%;margin-top:8px;background:transparent;border:none;color:var(--text2);font-size:13px;padding:8px;cursor:pointer;">Cancel</button>
   </div>
@@ -9396,10 +9408,24 @@ function renderTodayWithPath() {
         <div style="font-size:36px;margin-bottom:8px;">😴</div>
         <div style="font-size:18px;font-weight:800;color:var(--text);margin-bottom:4px;">Rest Day</div>
         <div style="font-size:13px;color:var(--text2);margin-bottom:16px;">Recovery is part of the programme. Eat well, sleep well.</div>
-        <button onclick="openAdhocModal()"
-          style="background:transparent;border:1px dashed var(--border);border-radius:12px;padding:12px 20px;font-size:13px;font-weight:700;color:var(--text2);cursor:pointer;">
-          + Add extra session anyway
-        </button>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <button onclick="openActivityLog()"
+            style="background:rgba(200,255,0,0.08);border:1px solid rgba(200,255,0,0.3);border-radius:12px;padding:13px 16px;font-size:14px;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;display:flex;align-items:center;gap:10px;">
+            <span style="font-size:20px;">🏃</span>
+            <div>
+              <div>Log a different workout</div>
+              <div style="font-size:11px;font-weight:500;color:rgba(200,255,0,0.7);margin-top:1px;">Run, yoga, tennis, cycling…</div>
+            </div>
+          </button>
+          <button onclick="openAdhocModal()"
+            style="background:transparent;border:1px dashed var(--border);border-radius:12px;padding:13px 16px;font-size:13px;font-weight:700;color:var(--text2);cursor:pointer;text-align:left;display:flex;align-items:center;gap:10px;">
+            <span style="font-size:18px;">＋</span>
+            <div>
+              <div>Add structured session</div>
+              <div style="font-size:11px;font-weight:500;color:var(--text2);margin-top:1px;opacity:0.7;">Full ULF / PPL / HIIT workout</div>
+            </div>
+          </button>
+        </div>
       </div>`;
   } else {
     // ── CORE PATH WORKOUT ──
@@ -9474,14 +9500,24 @@ function renderTodayWithPath() {
     }
   }
 
-  // ── AD-HOC BUTTON (always visible) ──
-  html += `
-    <div style="margin:12px 16px 0;">
-      <button onclick="openAdhocModal()"
-        style="width:100%;background:transparent;border:1px dashed var(--border);border-radius:14px;padding:13px;font-size:13px;font-weight:700;color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
-        <span style="font-size:16px;">＋</span> Add extra session
-      </button>
-    </div>`;
+  // ── EXTRA BUTTONS (non-rest days only — rest day has its own buttons above) ──
+  if(!todayInfo.isRestDay){
+    html += `
+      <div style="margin:12px 16px 0;display:flex;flex-direction:column;gap:8px;">
+        <button onclick="openActivityLog()"
+          style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:12px 16px;font-size:13px;font-weight:700;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:8px;">
+          <span style="font-size:16px;">🏃</span>
+          <div style="text-align:left;">
+            <div>Log a different workout</div>
+            <div style="font-size:11px;font-weight:500;opacity:0.7;margin-top:1px;">In addition to or instead of your path workout</div>
+          </div>
+        </button>
+        <button onclick="openAdhocModal()"
+          style="width:100%;background:transparent;border:1px dashed var(--border);border-radius:12px;padding:11px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
+          <span style="font-size:15px;">＋</span> Add extra structured session
+        </button>
+      </div>`;
+  }
 
   // Write HTML
   if(tcEl) tcEl.innerHTML = html;
@@ -10688,11 +10724,16 @@ function confirmClear(){
 // ── MANUAL ACTIVITY ──
 const ACTIVITY_TYPES=[
   {id:'run',label:'Run',emoji:'🏃',xp:80},
-  {id:'tennis',label:'Tennis',emoji:'🎾',xp:90},
+  {id:'walk',label:'Walk',emoji:'🚶',xp:40},
   {id:'cycle',label:'Cycling',emoji:'🚴',xp:70},
   {id:'swim',label:'Swimming',emoji:'🏊',xp:80},
-  {id:'hike',label:'Hike',emoji:'🥾',xp:60},
+  {id:'tennis',label:'Tennis',emoji:'🎾',xp:90},
+  {id:'basketball',label:'Basketball',emoji:'🏀',xp:85},
+  {id:'football',label:'Football',emoji:'⚽',xp:85},
+  {id:'boxing',label:'Boxing',emoji:'🥊',xp:95},
   {id:'yoga',label:'Yoga',emoji:'🧘',xp:40},
+  {id:'stretch',label:'Stretching',emoji:'🤸',xp:30},
+  {id:'hike',label:'Hike',emoji:'🥾',xp:60},
   {id:'golf',label:'Golf',emoji:'⛳',xp:50},
   {id:'other',label:'Other',emoji:'🏅',xp:50},
 ];
@@ -10713,6 +10754,13 @@ function openActivityLog(){
     </div>`).join('');
   document.getElementById('actDurVal').textContent=activityDur;
   setIntensity('moderate');
+  // Reset notes and custom name
+  const notesEl=document.getElementById('actNotes');
+  if(notesEl) notesEl.value='';
+  const customWrap=document.getElementById('actCustomNameWrap');
+  if(customWrap) customWrap.style.display='none';
+  const customNameEl=document.getElementById('actCustomName');
+  if(customNameEl) customNameEl.value='';
   document.getElementById('activityMod').classList.add('open');
 }
 
@@ -10722,6 +10770,9 @@ function selectActivity(id){
     const el=document.getElementById('act-'+a.id);
     if(el) el.style.borderColor=a.id===id?'var(--accent)':'var(--border)';
   });
+  // Show custom name input only for 'other'
+  const customWrap=document.getElementById('actCustomNameWrap');
+  if(customWrap) customWrap.style.display=id==='other'?'block':'none';
 }
 
 function adjActDur(d){activityDur=Math.max(5,Math.min(300,activityDur+d));document.getElementById('actDurVal').textContent=activityDur;}
@@ -10735,10 +10786,18 @@ function setIntensity(level){
 }
 
 function saveActivity(){
-  const xp=Math.round(selectedActivity.xp*intensityXpMulti[activityIntensity]*(activityDur/30));
+  if(activityDur < 1){ showToast('⚠️ Please set a duration'); return; }
+  // Custom label for 'other'
+  let label = selectedActivity.label;
+  if(selectedActivity.id === 'other'){
+    const custom = (document.getElementById('actCustomName')?.value || '').trim();
+    if(custom) label = custom;
+  }
+  const notes = (document.getElementById('actNotes')?.value || '').trim();
+  const xp = Math.round(selectedActivity.xp * intensityXpMulti[activityIntensity] * (activityDur / 30));
   const sess={
     date:new Date(),
-    day:selectedActivity.label,
+    day:label,
     exercises:0,
     durationMin:activityDur,
     volume:0,
@@ -10748,6 +10807,8 @@ function saveActivity(){
     activityEmoji:selectedActivity.emoji,
     intensity:activityIntensity,
     manualActivity:true,
+    custom_activity:true,
+    notes:notes||null,
     xpAwarded:xp
   };
   completedSessions.push(sess);
@@ -10756,6 +10817,7 @@ function saveActivity(){
   document.getElementById('activityMod').classList.remove('open');
   renderToday();
   renderProgress();
+  showToast(`${selectedActivity.emoji} ${label} logged · +${xp} XP`, 3000);
 }
 
 // ── USER PROFILE ──
