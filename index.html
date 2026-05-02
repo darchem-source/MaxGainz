@@ -2562,7 +2562,7 @@ function beginSession(){
 
 function startSessionULF(day){
   stopRest(); window._restStoppedManually=false; // clean slate before new session
-  window._prShownThisSession = new Set(); const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
+  window._prShownThisSession = new Set(); clearTimeout(window._pulsePendingTimer); window._pulsePendingTimer = null; const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
   const exs=getULFDay(day);
   sessDay=day; sessExs=exs;
   curIdx=0;setsDone={};repsLogged={};totalSets=0;sessTimeSec=0;
@@ -2679,7 +2679,7 @@ let supersetBuilder = { exercises: [], sets: 3 };  // Builder for creating super
 
 function startSession(day,prog){
   stopRest(); window._restStoppedManually=false; // clean slate before new session
-  window._prShownThisSession = new Set(); const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
+  window._prShownThisSession = new Set(); clearTimeout(window._pulsePendingTimer); window._pulsePendingTimer = null; const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
   sessDay=day; sessExs=prog[day].map(e=>({...e}));
   curIdx=0; setsDone={}; repsLogged={}; totalSets=0; sessTimeSec=0;
   sessStartTime=Date.now();
@@ -2742,29 +2742,33 @@ function updateSessUI(){
     document.getElementById('progPct').textContent=pct+'%';
   }
   const _currNameEl = document.getElementById('currName');
-  // Only rewrite innerHTML when the exercise actually changes — avoids killing
-  // the pulse animation on every set-logged / weight-adjusted updateSessUI call.
+  // Only rewrite when the exercise actually changes — don't disrupt a running
+  // animation on every set-logged / weight-adjusted updateSessUI call.
   if(_currNameEl.dataset.exName !== ex.name) {
     _currNameEl.dataset.exName = ex.name;
     _currNameEl.innerHTML =
       ex.name.replace(/'/g,"&#39;") +
       `<span class="exercise-info-icon" onclick="event.stopPropagation();openFormGuide()" title="Form guide">ⓘ</span>`;
-    // Always remove the class first so the animation restarts cleanly when
-    // moving to a new exercise (adding a class that's already present is a no-op
-    // and the browser won't restart the animation).
+
+    // Cancel any pending pulse timeout from the previous exercise
+    clearTimeout(window._pulsePendingTimer);
+    window._pulsePendingTimer = null;
+    // Remove class immediately so the animation can restart cleanly
     _currNameEl.classList.remove('pulse-first-time');
+
     if(shouldShowFormGuidePulse(ex.name)){
-      // Defer by ~350ms so the session screen has finished its tab transition and
-      // the user can actually see the animation from the start.
+      // Mark as seen right away — the "seen" state means "has been shown",
+      // not "animation completed". This also prevents double-pulsing if
+      // updateSessUI fires again for the same exercise before the timeout.
+      markExerciseFormGuideSeen(ex.name);
       const _pulseEx = ex.name;
-      setTimeout(() => {
-        // Only apply if user is still on this exercise
-        if(_currNameEl.dataset.exName !== _pulseEx) return;
-        void _currNameEl.offsetWidth; // force reflow so animation restarts from 0
+      // Short delay so the tab-transition is done and the user sees the full animation
+      window._pulsePendingTimer = setTimeout(() => {
+        window._pulsePendingTimer = null;
+        if(_currNameEl.dataset.exName !== _pulseEx) return; // user moved on
+        void _currNameEl.offsetWidth; // force reflow so animation always starts at frame 0
         _currNameEl.classList.add('pulse-first-time');
-        // Mark seen after 2 full cycles (1.4s × 2 = 2.8s)
-        setTimeout(() => markExerciseFormGuideSeen(_pulseEx), 2900);
-      }, 350);
+      }, 300);
     }
   }
   
@@ -6651,7 +6655,7 @@ function renderHIITProg(){
 function startHIIT(idx){
   const w=HIIT[idx];
   if(!w) return;
-  window._prShownThisSession = new Set(); const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
+  window._prShownThisSession = new Set(); clearTimeout(window._pulsePendingTimer); window._pulsePendingTimer = null; const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
   // console.log('[HIIT] Starting HIIT session:', w.name);
   sessDay=w.name;
   
@@ -8141,12 +8145,14 @@ async function shareCardNative(){
 }
 
 // ── FORM GUIDE ──
+// v2 key — old 'maxgainz_form_guide_seen' was polluted by the first buggy
+// implementation that marked every exercise as seen immediately on render.
 function getSeenFormGuideExercises(){
-  try{ return JSON.parse(localStorage.getItem('maxgainz_form_guide_seen') || '[]'); }catch(e){ return []; }
+  try{ return JSON.parse(localStorage.getItem('maxgainz_fg_seen') || '[]'); }catch(e){ return []; }
 }
 function markExerciseFormGuideSeen(name){
   const seen = getSeenFormGuideExercises();
-  if(!seen.includes(name)){ seen.push(name); localStorage.setItem('maxgainz_form_guide_seen', JSON.stringify(seen)); }
+  if(!seen.includes(name)){ seen.push(name); localStorage.setItem('maxgainz_fg_seen', JSON.stringify(seen)); }
 }
 function shouldShowFormGuidePulse(name){
   return !getSeenFormGuideExercises().includes(name);
