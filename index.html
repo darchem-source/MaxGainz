@@ -260,7 +260,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
         <div style="font-size:13px;color:var(--text2);margin-top:2px;" id="todayMeta"></div>
       </div>
       <!-- Dynamic programme toggle — rebuilt by renderTodayToggle() -->
-      <div id="todayToggleWrap" style="padding:0 16px 8px;overflow-x:auto;display:flex;gap:6px;"></div>
+      <div id="todayToggleWrap" style="padding:0 16px 8px;overflow-x:auto;display:none;gap:6px;"></div>
       <!-- Path view content (shown when path is active, replaces legacy elements) -->
       <div id="todayContent" style="display:none;"></div>
       <!-- Day picker: which session to do today -->
@@ -1993,9 +1993,14 @@ let userProfile = stored && stored.userProfile ? stored.userProfile : {
 let todayProg = stored ? (stored.todayProg || 'ULF') : 'ULF';
 
 // ── PATH ──
-// Never load userPath from localStorage at startup — cloud is the source of truth.
-// cloudLoadAll() will set this from the profile blob (or leave null if the user has no path).
-let userPath = null;
+// Load userPath from localStorage immediately for instant first render (no pill flash).
+// cloudLoadAll() will authoratively replace this with the server copy once loaded.
+let userPath = (function(){
+  try {
+    const raw = localStorage.getItem('maxgainz_path');
+    return raw ? JSON.parse(raw) : null;
+  } catch(e) { return null; }
+})();
 let _pathWizard = { step:1, programme:null, duration:8, variant:'standard', daysPerWeek:3, coreDays:[], addOns:[] };
 let _pathWizardAutoOpened = false; // tracks whether wizard was auto-triggered (shows Skip btn)
 let selectedDay = null;
