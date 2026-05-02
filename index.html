@@ -111,6 +111,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 .curr-lbl { font-size:11px; font-weight:700; color:var(--accent); text-transform:uppercase; letter-spacing:1px; margin-bottom:4px; }
 .curr-name { font-size:20px; font-weight:900; letter-spacing:-0.3px; margin-bottom:2px; }
 .curr-meta { font-size:13px; color:var(--text2); margin-bottom:12px; }
+.exercise-info-icon { display:inline-block; margin-left:7px; font-size:15px; color:var(--text2); opacity:0.65; cursor:pointer; transition:opacity 0.2s, transform 0.2s; user-select:none; vertical-align:middle; line-height:1; font-weight:400; }
+.exercise-info-icon:hover { opacity:1; transform:scale(1.15); }
+@keyframes iconPulse { 0%,100%{opacity:0.65;} 50%{opacity:1;filter:drop-shadow(0 0 4px var(--accent));} }
+.exercise-info-icon.pulse-first-time { animation:iconPulse 1.4s ease-in-out 2; }
 .toast { position:fixed; bottom:100px; left:50%; transform:translateX(-50%) translateY(20px); background:#1e1e2a; border:0.5px solid rgba(255,77,106,0.4); color:#ff4d6a; font-size:13px; font-weight:700; padding:10px 18px; border-radius:20px; z-index:9999; opacity:0; transition:opacity 0.2s, transform 0.2s; pointer-events:none; white-space:nowrap; }
 .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
 #offlineBanner { position:fixed; bottom:68px; left:50%; transform:translateX(-50%) translateY(20px); width:100%; max-width:420px; z-index:99; background:#1a1a1a; border:1px solid rgba(255,140,66,0.35); border-radius:10px 10px 0 0; color:#ff8c42; font-size:12px; font-weight:700; text-align:center; padding:8px 16px; opacity:0; transition:opacity 0.25s ease, transform 0.25s ease; pointer-events:none; }
@@ -2737,7 +2741,11 @@ function updateSessUI(){
     document.getElementById('progLbl').textContent=progressLabel;
     document.getElementById('progPct').textContent=pct+'%';
   }
-  document.getElementById('currName').textContent=ex.name;
+  const _pulse = shouldShowFormGuidePulse(ex.name);
+  markExerciseFormGuideSeen(ex.name);
+  document.getElementById('currName').innerHTML =
+    ex.name.replace(/'/g,"&#39;") +
+    `<span class="exercise-info-icon${_pulse?' pulse-first-time':''}" onclick="event.stopPropagation();openFormGuide()" title="Form guide">ⓘ</span>`;
   
   // Dynamic activity label based on block type
   const actLbl = document.getElementById('currActivityLbl');
@@ -8112,6 +8120,17 @@ async function shareCardNative(){
 }
 
 // ── FORM GUIDE ──
+function getSeenFormGuideExercises(){
+  try{ return JSON.parse(localStorage.getItem('maxgainz_form_guide_seen') || '[]'); }catch(e){ return []; }
+}
+function markExerciseFormGuideSeen(name){
+  const seen = getSeenFormGuideExercises();
+  if(!seen.includes(name)){ seen.push(name); localStorage.setItem('maxgainz_form_guide_seen', JSON.stringify(seen)); }
+}
+function shouldShowFormGuidePulse(name){
+  return !getSeenFormGuideExercises().includes(name);
+}
+
 function openFormGuide(){
   const ex = sessExs[curIdx];
   if(!ex) return;
