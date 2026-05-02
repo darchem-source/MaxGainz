@@ -2562,7 +2562,7 @@ function beginSession(){
 
 function startSessionULF(day){
   stopRest(); window._restStoppedManually=false; // clean slate before new session
-  window._prShownThisSession = new Set();
+  window._prShownThisSession = new Set(); const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
   const exs=getULFDay(day);
   sessDay=day; sessExs=exs;
   curIdx=0;setsDone={};repsLogged={};totalSets=0;sessTimeSec=0;
@@ -2679,7 +2679,7 @@ let supersetBuilder = { exercises: [], sets: 3 };  // Builder for creating super
 
 function startSession(day,prog){
   stopRest(); window._restStoppedManually=false; // clean slate before new session
-  window._prShownThisSession = new Set();
+  window._prShownThisSession = new Set(); const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
   sessDay=day; sessExs=prog[day].map(e=>({...e}));
   curIdx=0; setsDone={}; repsLogged={}; totalSets=0; sessTimeSec=0;
   sessStartTime=Date.now();
@@ -2741,13 +2741,24 @@ function updateSessUI(){
     document.getElementById('progLbl').textContent=progressLabel;
     document.getElementById('progPct').textContent=pct+'%';
   }
-  const _pulse = shouldShowFormGuidePulse(ex.name);
-  markExerciseFormGuideSeen(ex.name);
   const _currNameEl = document.getElementById('currName');
-  _currNameEl.classList.toggle('pulse-first-time', _pulse);
-  _currNameEl.innerHTML =
-    ex.name.replace(/'/g,"&#39;") +
-    `<span class="exercise-info-icon" onclick="event.stopPropagation();openFormGuide()" title="Form guide">ⓘ</span>`;
+  // Only rewrite innerHTML when the exercise actually changes — avoids killing
+  // the pulse animation on every set-logged / weight-adjusted updateSessUI call.
+  if(_currNameEl.dataset.exName !== ex.name) {
+    _currNameEl.dataset.exName = ex.name;
+    _currNameEl.innerHTML =
+      ex.name.replace(/'/g,"&#39;") +
+      `<span class="exercise-info-icon" onclick="event.stopPropagation();openFormGuide()" title="Form guide">ⓘ</span>`;
+    // Apply pulse only on genuine first encounter; mark seen after animation finishes
+    if(shouldShowFormGuidePulse(ex.name)){
+      _currNameEl.classList.add('pulse-first-time');
+      // Mark seen after 2 full cycles (1.4s × 2 = 2.8s) so subsequent exercises
+      // that share the same name still get their own pulse this session if needed.
+      setTimeout(() => markExerciseFormGuideSeen(ex.name), 2900);
+    } else {
+      _currNameEl.classList.remove('pulse-first-time');
+    }
+  }
   
   // Dynamic activity label based on block type
   const actLbl = document.getElementById('currActivityLbl');
@@ -4834,7 +4845,7 @@ function confirmReps(){
     const _prExName = sessExs[curIdx].name;
     const _prevPB = getPB(_prExName);
     if(_prevPB === null || sw > _prevPB){
-      if(!window._prShownThisSession) window._prShownThisSession = new Set();
+      if(!window._prShownThisSession) window._prShownThisSession = new Set(); const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
       if(!window._prShownThisSession.has(_prExName)){
         window._prShownThisSession.add(_prExName);
         showPRAlert(_prExName, sw, _prevPB);
@@ -6632,7 +6643,7 @@ function renderHIITProg(){
 function startHIIT(idx){
   const w=HIIT[idx];
   if(!w) return;
-  window._prShownThisSession = new Set();
+  window._prShownThisSession = new Set(); const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
   // console.log('[HIIT] Starting HIIT session:', w.name);
   sessDay=w.name;
   
