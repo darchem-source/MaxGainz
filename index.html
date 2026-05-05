@@ -393,7 +393,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
           <button onclick="sessRemoveExercise()" style="flex:1;background:transparent;border:0.5px solid rgba(255,77,106,0.35);border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;color:var(--red);cursor:pointer;">✕ Remove this</button>
         </div>
         <div class="rest-bar-wrap" id="restWrap">
-          <div><div style="font-size:10px;color:var(--text2);font-weight:700;text-transform:uppercase;letter-spacing:1px;">Rest</div><div class="rest-num" id="restNum">90</div></div>
+          <div><div style="font-size:10px;color:var(--text2);font-weight:700;text-transform:uppercase;letter-spacing:1px;" id="restLabel">Rest</div><div class="rest-num" id="restNum">90</div></div>
           <div style="flex:1;"><div class="rest-track"><div class="rest-fill" id="restFill" style="width:100%;"></div></div><div style="font-size:11px;color:var(--text2);margin-top:4px;">Tap to skip</div></div>
           <button onclick="skipRest()" style="background:var(--surface3);border:none;color:var(--text2);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;">Skip</button>
         </div>
@@ -2562,7 +2562,7 @@ function beginSession(){
 
 function startSessionULF(day){
   stopRest(); window._restStoppedManually=false; // clean slate before new session
-  window._prShownThisSession = new Set(); clearTimeout(window._pulsePendingTimer); window._pulsePendingTimer = null; const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
+  window._prShownThisSession = new Map(); clearTimeout(window._pulsePendingTimer); window._pulsePendingTimer = null; const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
   const exs=getULFDay(day);
   sessDay=day; sessExs=exs;
   curIdx=0;setsDone={};repsLogged={};totalSets=0;sessTimeSec=0;
@@ -2679,7 +2679,7 @@ let supersetBuilder = { exercises: [], sets: 3 };  // Builder for creating super
 
 function startSession(day,prog){
   stopRest(); window._restStoppedManually=false; // clean slate before new session
-  window._prShownThisSession = new Set(); clearTimeout(window._pulsePendingTimer); window._pulsePendingTimer = null; const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
+  window._prShownThisSession = new Map(); clearTimeout(window._pulsePendingTimer); window._pulsePendingTimer = null; const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
   sessDay=day; sessExs=prog[day].map(e=>({...e}));
   curIdx=0; setsDone={}; repsLogged={}; totalSets=0; sessTimeSec=0;
   sessStartTime=Date.now();
@@ -3068,22 +3068,14 @@ function showWeightSuggestion(ex){
   const sw = setWeights[curIdx] || {};
   const rl = repsLogged[curIdx] || {};
 
-  // ── Before any sets: show first-time or deload message ──────────────────
+  // ── Before any sets: first-time hint only (deload/normal handled by lastTimeRef) ──
   if(doneCount === 0){
     const editInfo = getWeightEditability(ex.name);
     if(editInfo.status === 'first'){
       el.style.display='block';
       el.className='wt-suggest hold';
       el.textContent='✨ First time doing this exercise · Adjust the weight as needed';
-    } else if(editInfo.status === 'deload'){
-      const pct = Math.round(editInfo.deloadPct * 100);
-      const unit = getEquipType(ex)==='dumbbell' ? 'kg/h' : 'kg';
-      el.style.display='block';
-      el.className='wt-suggest down';
-      el.innerHTML=`⏳ Haven't done this in ${editInfo.weeksAway} week${editInfo.weeksAway!==1?'s':''} · Last weight: ${editInfo.lastWeight}${unit}<br>`+
-        `<span style="font-size:11px;opacity:0.85;">Reduced by ${pct}% to allow for reaccommodation · Adjust as needed</span>`;
     }
-    // status === 'normal': no message — weight is shown as last-session, read-only
     return;
   }
 
@@ -3113,21 +3105,6 @@ function showWeightSuggestion(ex){
     return;
   }
 
-  // ── Fallback: no reps logged yet but sets exist — show history-based hint ─
-  const history = getLastSessionData(ex.name);
-  if(!history) return;
-  const avgReps2 = history.reps.length ? history.reps.reduce((a,b)=>a+b,0)/history.reps.length : 0;
-  const hiRep2 = parseInt((ex.reps||'8').split('–')[1])||12;
-  const loRep2 = parseInt((ex.reps||'5').split('–')[0])||5;
-  let msg2='', cls2='hold';
-  if(avgReps2 > hiRep2+1){
-    const steps=getWeightSteps(ex,equipOverride[curIdx]);
-    const next=stepWeight(ex.weight,1,steps);
-    msg2=`💪 Last session avg ${Math.round(avgReps2)} reps — above target. Try ${next}kg today`; cls2='up';
-  } else if(avgReps2>=loRep2&&avgReps2<=hiRep2){
-    msg2=`✅ On track at ${history.weight}kg — keep it`; cls2='hold';
-  }
-  if(msg2){ el.style.display='block'; el.className='wt-suggest '+cls2; el.textContent=msg2; }
 }
 
 function getLastSessionData(exName){
@@ -3178,7 +3155,7 @@ function _setWeightAdjEditable(editable){
   });
 }
 
-// Render "Last time" reference panel for current exercise
+// Render "Last time" reference panel for current exercise (consolidated: last data + recommendation)
 function renderLastTimeRef(ex){
   const panel = document.getElementById('lastTimeRef');
   if(!panel) return;
@@ -3201,14 +3178,34 @@ function renderLastTimeRef(ex){
   else if(daysAgo < 14) dateStr = '1 week ago';
   else if(daysAgo < 30) dateStr = `${Math.floor(daysAgo/7)} weeks ago`;
   else dateStr = `${Math.floor(daysAgo/30)} mo ago`;
-  // Build sets summary
-  const wt = last.weight ? `${last.weight}kg × ` : '';
-  const repsStr = last.reps.join(', ');
-  panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-    <div>
-      <div style="font-size:10px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:3px;">⏱ Last time · ${dateStr}</div>
-      <div style="font-size:14px;font-weight:700;color:var(--text);">${wt}${repsStr}</div>
-    </div>
+
+  const unit = getEquipType(ex) === 'dumbbell' ? 'kg/h' : 'kg';
+  const wt = last.weight ? `${last.weight}${unit} × ` : '';
+  const avgReps = last.reps.length ? Math.round(last.reps.reduce((a,b)=>a+b,0)/last.reps.length) : null;
+  const repsDisplay = avgReps ? `${avgReps} reps` : last.reps.join(', ');
+
+  // Build recommendation line
+  const editInfo = getWeightEditability(ex.name);
+  let recHtml = '';
+  if(editInfo.status === 'deload'){
+    const pct = Math.round(editInfo.deloadPct * 100);
+    recHtml = `<div style="margin-top:6px;font-size:12px;color:var(--text2);">📉 Try <strong style="color:var(--text);">${editInfo.suggestedWeight}${unit}</strong> <span style="opacity:0.7;">(−${pct}% · ${editInfo.weeksAway}w gap)</span></div>`;
+  } else if(!ex.bw && last.weight){
+    const hiRep = parseInt((ex.reps||'8').split('–')[1])||12;
+    if(avgReps && avgReps > hiRep + 1){
+      const steps = getWeightSteps(ex, equipOverride[curIdx]);
+      const next = stepWeight(ex.weight, 1, steps);
+      if(next !== ex.weight){
+        const diff = +(next - ex.weight).toFixed(1);
+        recHtml = `<div style="margin-top:6px;font-size:12px;color:var(--accent);">↑ Try <strong>${next}${unit}</strong> <span style="opacity:0.7;">(+${diff}${unit})</span></div>`;
+      }
+    }
+  }
+
+  panel.innerHTML = `<div>
+    <div style="font-size:10px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:3px;">⏱ Last time · ${dateStr}</div>
+    <div style="font-size:14px;font-weight:700;color:var(--text);">${wt}${repsDisplay}</div>
+    ${recHtml}
   </div>`;
   panel.style.display = 'block';
 }
@@ -4852,16 +4849,17 @@ function confirmReps(){
   if(!setWeights[curIdx])setWeights[curIdx]={};
   repsLogged[curIdx][pendingRepSetIdx]=val;
   setWeights[curIdx][pendingRepSetIdx]=sw;
-  // PR check — only for weighted exercises, once per exercise per session
+  // PR check — celebrate every new in-session high (allows multiple PBs per exercise per session)
   if(sw > 0 && sessExs[curIdx] && !sessExs[curIdx].bw){
     const _prExName = sessExs[curIdx].name;
     const _prevPB = getPB(_prExName);
-    if(_prevPB === null || sw > _prevPB){
-      if(!window._prShownThisSession) window._prShownThisSession = new Set();
-      if(!window._prShownThisSession.has(_prExName)){
-        window._prShownThisSession.add(_prExName);
-        showPRAlert(_prExName, sw, _prevPB);
-      }
+    if(!window._prShownThisSession) window._prShownThisSession = new Map();
+    const _sessionBest = window._prShownThisSession.has(_prExName) ? window._prShownThisSession.get(_prExName) : null;
+    // Threshold = highest weight already celebrated (session or all-time)
+    const _threshold = _sessionBest !== null ? _sessionBest : _prevPB;
+    if(_threshold === null ? (sw > 0) : (sw > _threshold)){
+      window._prShownThisSession.set(_prExName, sw);
+      showPRAlert(_prExName, sw, _sessionBest !== null ? _sessionBest : _prevPB);
     }
   }
   document.getElementById('repMod').classList.remove('open');
@@ -4923,19 +4921,12 @@ function markSet(i){
         return;
       }
       
-      // More rounds - start 90 second rest
+      // More rounds - start 90 second rest, then scroll curr-card into view
       // console.log('[SUPERSET] ⏱️  STARTING 90 SECOND REST!');
-      startRest(90);
-      
-      // Reset to first exercise (in order) after rest
-      const restTimeout = setTimeout(() => {
-        if(!document.getElementById('restAlert').classList.contains('show')) return;
-        stopRest();
-        const sortedIndices = group.exerciseIndices.slice().sort((a,b) => a - b);
-        curIdx = sortedIndices[0];
-        updateSessUI();
-        scrollToActiveEx();
-      }, 90000);
+      const _ssRound = group.completedRounds; // already incremented above
+      const _ssTot   = group.sets;
+      startRest(90, 'Round ' + (_ssRound) + '/' + _ssTot + ' — rest');
+      scrollToActiveEx(); // bring curr-card + rest bar into view if user scrolled down
       return;
     }
     
@@ -4947,12 +4938,11 @@ function markSet(i){
     const nextExIdx = sortedIndices[nextPos];
     // console.log('[SUPERSET]   Jumping to: ' + sessExs[nextExIdx].name);
     
-    setTimeout(() => {
-      stopRest();
-      curIdx = nextExIdx;
-      updateSessUI();
-      scrollToActiveEx();
-    }, 300);
+    // Advance immediately so the card flip feels instant; only defer the scroll
+    stopRest();
+    curIdx = nextExIdx;
+    updateSessUI();
+    scrollToActiveEx();
     return;
   }
   
@@ -5610,7 +5600,7 @@ function dismissHIITDisplay(){
   if(display) display.innerHTML = '';
 }
 
-function startRest(duration = 90){
+function startRest(duration = 90, label = 'REST'){
   // console.log('[REST] Starting rest timer for', duration, 'seconds');
   stopRest(); // always clear any existing timer first
   window._restStoppedManually = false; // Reset flag when starting new rest
@@ -5618,6 +5608,8 @@ function startRest(duration = 90){
   restTotalSecs = duration;
   restSec = duration; // set immediately so confirmReps check works right away
   restStartTime = Date.now();
+  const labelEl = document.getElementById('restLabel');
+  if(labelEl) labelEl.textContent = label;
   const w = document.getElementById('restWrap');
   // console.log('[REST] restWrap element:', w);
   if(w) {
@@ -5669,10 +5661,12 @@ function stopRest(){
   }
   restStartTime=null;
   restSec=0;
-  
-  // Hide the rest timer bar
+
+  // Hide the rest timer bar and reset label
   const w=document.getElementById('restWrap');
   if(w) w.classList.remove('show');
+  const labelEl=document.getElementById('restLabel');
+  if(labelEl) labelEl.textContent='REST';
   
   // Also hide the rest alert modal if showing
   const alert = document.getElementById('restAlert');
@@ -5726,7 +5720,21 @@ function showRestAlert(){
 
 function dismissRestAlert(){
   document.getElementById('restAlert').classList.remove('show');
-  // move to next set bubble
+
+  // For supersets: advance to first exercise of the next round
+  const ssId = supersets[curIdx];
+  if(ssId){
+    const group = supersetGroups.find(g => g.id === ssId);
+    if(group && group.completedRounds < group.sets){
+      const sortedIndices = group.exerciseIndices.slice().sort((a,b) => a - b);
+      curIdx = sortedIndices[0];
+      updateSessUI();
+      scrollToActiveEx();
+      return;
+    }
+  }
+
+  // Normal: re-render bubbles for current exercise
   const ex=sessExs[curIdx];
   renderBubbles(ex);updNextBtn();
 }
@@ -6059,6 +6067,21 @@ function jumpTo(i){
   scrollToActiveEx();
 }
 
+// Smart superset tap handler from the exercise queue.
+// • If curIdx is already inside the superset → just scroll curr-card into view
+// • Otherwise → jump to the first incomplete exercise in sorted order
+function jumpToSuperset(groupId){
+  const group = supersetGroups.find(g => g.id === groupId);
+  if(!group) return;
+  if(group.exerciseIndices.includes(curIdx)){
+    scrollToActiveEx(); // already here — just scroll the card into view
+    return;
+  }
+  const sorted = group.exerciseIndices.slice().sort((a,b) => a - b);
+  const nextIdx = sorted.find(idx => (setsDone[idx]||[]).length < group.sets);
+  jumpTo(nextIdx !== undefined ? nextIdx : sorted[0]);
+}
+
 function renderQueue(){ renderSessionExerciseList(); } // redirect old call-sites
 
 function renderSessionExerciseList(){
@@ -6116,12 +6139,15 @@ function renderSessionExerciseList(){
         const hColor = allDone   ? 'var(--green)' : isActive ? 'var(--accent)' : anyStarted ? 'var(--accent)' : 'var(--text2)';
         const badge  = isActive  ? '<span style="font-size:9px;font-weight:800;background:var(--accent);color:#000;border-radius:4px;padding:1px 5px;margin-left:4px;">NOW</span>' : '';
 
-        html += `<div style="padding:8px 10px;background:${bg};border:${border};border-radius:8px;font-size:11px;cursor:pointer;" onclick="jumpTo(${group.exerciseIndices[0]})">
-          <div style="color:${hColor};font-weight:700;margin-bottom:4px;">⚡ Superset${badge} ${allDone ? '<span style="float:right;color:var(--green);">✓ Done</span>' : `<span style="float:right;color:var(--text2);">Round ${(setsDone[group.exerciseIndices[0]]||[]).length}/${group.sets}</span>`}</div>
+        // Round progress: use min sets across group (reflects the true completed rounds)
+        const _ssMinDone = Math.min(...group.exerciseIndices.map(idx => (setsDone[idx]||[]).length));
+        html += `<div style="padding:8px 10px;background:${bg};border:${border};border-radius:8px;font-size:11px;cursor:pointer;" onclick="jumpToSuperset('${group.id}')">
+          <div style="color:${hColor};font-weight:700;margin-bottom:4px;">⚡ Superset${badge} ${allDone ? '<span style="float:right;color:var(--green);">✓ Done</span>' : `<span style="float:right;color:var(--text2);">Round ${_ssMinDone}/${group.sets}</span>`}</div>
           ${group.exerciseIndices.map((idx,pos) => {
             const done = (setsDone[idx]||[]).length;
-            const c = (setsDone[idx]||[]).length >= group.sets ? 'var(--green)' : done > 0 ? 'var(--accent)' : 'var(--text2)';
-            return `<div style="color:${c};padding:2px 0 2px 8px;">${pos+1}. ${sessExs[idx].name}${done >= group.sets ? ' ✓' : done > 0 ? ` (${done}/${group.sets})` : ''}</div>`;
+            const isCur = idx === curIdx;
+            const c = done >= group.sets ? 'var(--green)' : isCur ? 'var(--accent)' : done > 0 ? 'var(--orange)' : 'var(--text2)';
+            return `<div style="color:${c};padding:2px 0 2px 8px;font-weight:${isCur?'700':'400'};">${isCur?'▶ ':''  }${pos+1}. ${sessExs[idx].name}${done >= group.sets ? ' ✓' : done > 0 ? ` (${done}/${group.sets})` : ''}</div>`;
           }).join('')}
         </div>`;
       }
@@ -6655,7 +6681,7 @@ function renderHIITProg(){
 function startHIIT(idx){
   const w=HIIT[idx];
   if(!w) return;
-  window._prShownThisSession = new Set(); clearTimeout(window._pulsePendingTimer); window._pulsePendingTimer = null; const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
+  window._prShownThisSession = new Map(); clearTimeout(window._pulsePendingTimer); window._pulsePendingTimer = null; const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
   // console.log('[HIIT] Starting HIIT session:', w.name);
   sessDay=w.name;
   
@@ -9011,7 +9037,7 @@ function getSplits(exName){
   if(/deadlift/.test(l)) return [{cat:'pull',f:0.6},{cat:'legs',f:0.4}];
   if(/row|pull|chin|curl|lat|pulldown/.test(l)) return [{cat:'pull',f:1}];
   if(/press|fly|dip|push|tricep|shoulder|pec/.test(l)) return [{cat:'push',f:1}];
-  if(/plank|crunch|ab |core|sit.?up|v.up|pallof/.test(l)) return [{cat:'core',f:1}];
+  if(/plank|crunch|ab |abdominal|core|sit.?up|v.?up|pallof|russian.?twist|leg.raise|hollow|bicycle/.test(l)) return [{cat:'core',f:1}];
   return null;
 }
 
@@ -9048,8 +9074,17 @@ function renderMuscleBalance(){
       const repsArr=Array.isArray(data.reps)?data.reps:(data.reps?[data.reps]:[]);
       const repsSum=repsArr.reduce((a,r)=>a+(parseInt(r)||0),0);
       let ew=data.weight||0;
-      if(!ew&&data.bw) ew=userProfile.weight||80;
-      const vol=ew*repsSum;
+      // Bodyweight volume: data.bw is not persisted in setLog, so look it up via EXDB.
+      // "Abdominal Work" is the ULF/PPL core-circuit placeholder (not in EXDB) — treat as bw.
+      let isBW=false;
+      if(!ew){
+        const dbEx=EXDB.find(e=>e.name===exName);
+        if((dbEx&&dbEx.bw)||exName==='Abdominal Work'){ew=userProfile.weight||80;isBW=true;}
+      }
+      // If no reps were logged (e.g. core circuit sets stored via markCoreRound),
+      // estimate 10 reps per set so bodyweight exercises still contribute volume.
+      const effectiveReps=repsSum>0?repsSum:(isBW?(sets*10):0);
+      const vol=ew*effectiveReps;
       splits.forEach(({cat,f})=>{
         setCounts[cat]+=sets*f*w;
         muscleVol[cat]+=vol*f*w;
@@ -9543,6 +9578,30 @@ function getAddOnCompletionTime(addOnType) {
   return match ? new Date(match.date) : null;
 }
 
+// Returns completion info for today's core path workout, or null if not yet done.
+function hasCorePathWorkoutBeenCompletedToday(programme) {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+  const ulfDays = ['Upper','Lower','Full Body'];
+  const pplDays = Object.keys(PPL);
+  const match = completedSessions.find(s => {
+    if(s.adhoc) return false; // core path sessions are non-adhoc
+    const sd = s.date instanceof Date ? s.date : new Date(s.date);
+    if(sd < today || sd >= tomorrow) return false;
+    if(programme === 'ULF') return ulfDays.includes(s.day);
+    if(programme === 'PPL') return pplDays.includes(s.day);
+    return false;
+  });
+  if(!match) return null;
+  return {
+    dayName:    match.day,
+    date:       match.date instanceof Date ? match.date : new Date(match.date),
+    durationMin: match.durationMin || 0,
+    volume:     match.volume || 0,
+    exercises:  match.exercises || 0
+  };
+}
+
 function renderTodayWithPath() {
   const todayInfo = getTodayPathWorkout();
   const week = getPathCurrentWeek();
@@ -9614,35 +9673,71 @@ function renderTodayWithPath() {
     // ── CORE PATH WORKOUT ──
     if(todayInfo.coreWorkout){
       const prog = todayInfo.coreWorkout;
-      const dayName = getNextPathDay(prog);
-      const exs = dayName ? getExercisesForPathDay(prog, dayName) : [];
-      const estMin = Math.max(20, exs.length * 9);
+      const completion = hasCorePathWorkoutBeenCompletedToday(prog);
 
-      html += `
-        <div style="margin:16px 16px 0;">
-          <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">TODAY'S PATH WORKOUT</div>
-          <div style="background:var(--surface2);border:1px solid rgba(200,255,0,0.3);border-radius:16px;padding:18px;">
-            <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
-              <div style="background:rgba(200,255,0,0.1);border-radius:12px;padding:10px 14px;font-size:22px;font-weight:900;color:var(--accent);">${prog}</div>
-              <div>
-                <div style="font-size:18px;font-weight:800;">${dayName || prog}</div>
-                <div style="font-size:12px;color:var(--text2);">${exs.length} exercises · ~${estMin} min</div>
+      if(completion){
+        // ── Already completed today: show completion badge ──
+        const timeStr = completion.date.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+        const volStr = completion.volume >= 1000
+          ? (Math.round(completion.volume / 100) / 10) + 'k kg'
+          : completion.volume ? completion.volume + 'kg' : '';
+        const nextDay = getNextPathDay(prog);
+        const nextExs = nextDay ? getExercisesForPathDay(prog, nextDay) : [];
+        const statBlocks = [
+          completion.durationMin ? `<div style="flex:1;background:var(--surface3);border-radius:10px;padding:10px;text-align:center;"><div style="font-size:16px;font-weight:800;">${completion.durationMin}m</div><div style="font-size:10px;color:var(--text2);">Duration</div></div>` : '',
+          volStr                  ? `<div style="flex:1;background:var(--surface3);border-radius:10px;padding:10px;text-align:center;"><div style="font-size:16px;font-weight:800;">${volStr}</div><div style="font-size:10px;color:var(--text2);">Volume</div></div>` : '',
+          completion.exercises    ? `<div style="flex:1;background:var(--surface3);border-radius:10px;padding:10px;text-align:center;"><div style="font-size:16px;font-weight:800;">${completion.exercises}</div><div style="font-size:10px;color:var(--text2);">Exercises</div></div>` : ''
+        ].filter(Boolean).join('');
+        html += `
+          <div style="margin:16px 16px 0;">
+            <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">TODAY'S PATH WORKOUT</div>
+            <div style="background:rgba(57,224,155,0.04);border:1px solid rgba(57,224,155,0.35);border-radius:16px;padding:18px;">
+              <div style="display:flex;align-items:center;gap:12px;margin-bottom:${statBlocks ? '14px' : '0'};">
+                <div style="font-size:28px;">✅</div>
+                <div>
+                  <div style="font-size:18px;font-weight:800;color:var(--green);">${completion.dayName} Done!</div>
+                  <div style="font-size:12px;color:var(--text2);">Completed at ${timeStr}</div>
+                </div>
               </div>
+              ${statBlocks ? `<div style="display:flex;gap:8px;margin-bottom:${nextDay ? '14px' : '0'};">${statBlocks}</div>` : ''}
+              ${nextDay ? `
+              <div style="padding-top:12px;border-top:0.5px solid var(--border);">
+                <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Next scheduled</div>
+                <div style="font-size:14px;font-weight:700;">${nextDay}${nextExs.length ? ' · ' + nextExs.length + ' exercises' : ''}</div>
+              </div>` : ''}
             </div>
-            <!-- Exercise preview -->
-            <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px;">
-              ${exs.slice(0,4).map(e =>
-                `<span style="background:var(--surface3);border-radius:6px;padding:4px 8px;font-size:11px;color:var(--text2);">${e.name}</span>`
-              ).join('')}
-              ${exs.length > 4 ?
-                `<span style="background:var(--surface3);border-radius:6px;padding:4px 8px;font-size:11px;color:var(--text2);">+${exs.length - 4} more</span>` : ''}
+          </div>`;
+      } else {
+        // ── Not done yet: show start session button ──
+        const dayName = getNextPathDay(prog);
+        const exs = dayName ? getExercisesForPathDay(prog, dayName) : [];
+        const estMin = Math.max(20, exs.length * 9);
+        html += `
+          <div style="margin:16px 16px 0;">
+            <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">TODAY'S PATH WORKOUT</div>
+            <div style="background:var(--surface2);border:1px solid rgba(200,255,0,0.3);border-radius:16px;padding:18px;">
+              <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+                <div style="background:rgba(200,255,0,0.1);border-radius:12px;padding:10px 14px;font-size:22px;font-weight:900;color:var(--accent);">${prog}</div>
+                <div>
+                  <div style="font-size:18px;font-weight:800;">${dayName || prog}</div>
+                  <div style="font-size:12px;color:var(--text2);">${exs.length} exercises · ~${estMin} min</div>
+                </div>
+              </div>
+              <!-- Exercise preview -->
+              <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px;">
+                ${exs.slice(0,4).map(e =>
+                  `<span style="background:var(--surface3);border-radius:6px;padding:4px 8px;font-size:11px;color:var(--text2);">${e.name}</span>`
+                ).join('')}
+                ${exs.length > 4 ?
+                  `<span style="background:var(--surface3);border-radius:6px;padding:4px 8px;font-size:11px;color:var(--text2);">+${exs.length - 4} more</span>` : ''}
+              </div>
+              <button class="btn-p" style="width:100%;font-size:15px;padding:14px;"
+                      onclick="startPathSession('${prog}','${dayName || ''}')">
+                ▶ Start Session
+              </button>
             </div>
-            <button class="btn-p" style="width:100%;font-size:15px;padding:14px;"
-                    onclick="startPathSession('${prog}','${dayName || ''}')">
-              ▶ Start Session
-            </button>
-          </div>
-        </div>`;
+          </div>`;
+      }
     }
 
     // ── ADD-ON WORKOUT ──
