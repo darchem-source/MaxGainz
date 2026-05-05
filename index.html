@@ -338,6 +338,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
         <span id="progLbl">Exercise 1 of 7</span>
         <span style="color:var(--accent);font-weight:700;" id="progPct">0%</span>
       </div>
+      </div><!-- /sticky-hdr -->
       <div class="curr-card">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
           <div class="curr-lbl" id="currActivityLbl">NOW LIFTING</div>
@@ -423,7 +424,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
           <button class="btn-next" id="nextBtn" onclick="advance()">Log set ✓</button>
         </div>
       </div>
-      </div><!-- /sticky-hdr -->
       <!-- HIIT/Tabata Timer Display -->
       <div id="hiitDisplay" style="margin:0 12px 16px;"></div>
       <!-- AMRAP / EMOM workout-level countdown banner -->
@@ -9635,9 +9635,9 @@ function renderTodayWithPath() {
 
   let html = '';
 
-  // ── PATH HEADER ──
+  // ── PATH HEADER — sticky below the greeting ──
   html += `
-    <div style="padding:16px 16px 0;">
+    <div style="padding:16px 16px 0;position:sticky;top:0;z-index:49;background:#0a0a0f;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
         <div style="font-size:11px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:1.5px;">
           🎯 YOUR PATH · WEEK ${week} OF ${userPath.duration}
@@ -10331,8 +10331,8 @@ function _renderPathTabActive() {
   }).join('');
 
   return `
-    <!-- Path Header -->
-    <div style="padding:16px 16px 0;">
+    <!-- Path Header — sticky so week badge stays visible while scrolling -->
+    <div style="padding:16px 16px 0;position:sticky;top:0;z-index:50;background:#0a0a0f;">
       <!-- Week badge — centered at top so profile icon can't overlap it -->
       <div style="text-align:center;margin-bottom:14px;">
         <div style="display:inline-flex;flex-direction:column;align-items:center;background:rgba(200,255,0,0.08);border:1px solid rgba(200,255,0,0.3);border-radius:14px;padding:10px 24px;">
