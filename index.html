@@ -9622,31 +9622,52 @@ function startAdhocSession(type, day) {
 // PATH SYSTEM — Phase 3: Today Tab
 // ─────────────────────────────────────────────
 
-// Returns true if the user completed an add-on session of the given type today.
-// addOnType: 'HIIT' | 'ULF' | 'PPL' (the add-on programme type from userPath)
-function hasAddOnBeenCompletedToday(addOnType) {
-  return !!getAddOnCompletionTime(addOnType);
-}
-
-// Returns the Date of the completed add-on session for today, or null.
-function getAddOnCompletionTime(addOnType) {
+// Core session finder — shared by hasAddOnBeenCompletedToday and getAddOnCompletionTime.
+// Only falls back to the adhoc flag when core programme == add-on programme (same type),
+// so HIIT sessions started from the Programme tab still count for a HIIT add-on.
+function _findTodayAddOnSession(addOnType) {
   const today = new Date(); today.setHours(0,0,0,0);
   const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
   const ulfDays  = ['Upper','Lower','Full Body'];
   const pplDays  = Object.keys(PPL);
   const hiitNames = new Set(HIIT.map(w => w.name));
   if(typeof customHIITs !== 'undefined') customHIITs.forEach(w => hiitNames.add(w.name));
-  const match = completedSessions.find(s => {
-    if(!s.adhoc) return false;
-    const sd = new Date(s.date);
+  const coreProg = userPath ? userPath.programme : null;
+
+  return completedSessions.find(s => {
+    if(s.manualActivity) return false;
+    const sd = s.date instanceof Date ? s.date : new Date(s.date);
     if(sd < today || sd >= tomorrow) return false;
-    if(addOnType === 'HIIT')      return hiitNames.has(s.day);
-    if(addOnType === 'ULF')       return ulfDays.includes(s.day);
-    if(addOnType === 'PPL')       return pplDays.includes(s.day);
-    // Custom add-on type: match by programme name stored in day
+    if(addOnType === 'HIIT') {
+      if(!hiitNames.has(s.day)) return false;
+      // If core path is also HIIT, use adhoc flag to distinguish core vs. add-on
+      if(coreProg === 'HIIT' && !s.adhoc) return false;
+      return true;
+    }
+    if(addOnType === 'ULF') {
+      if(!ulfDays.includes(s.day)) return false;
+      if(coreProg === 'ULF' && !s.adhoc) return false;
+      return true;
+    }
+    if(addOnType === 'PPL') {
+      if(!pplDays.includes(s.day)) return false;
+      if(coreProg === 'PPL' && !s.adhoc) return false;
+      return true;
+    }
     return s.day === addOnType;
-  });
-  return match ? new Date(match.date) : null;
+  }) || null;
+}
+
+// Returns true if the user completed an add-on session of the given type today.
+function hasAddOnBeenCompletedToday(addOnType) {
+  return !!_findTodayAddOnSession(addOnType);
+}
+
+// Returns the Date of the completed add-on session for today, or null.
+function getAddOnCompletionTime(addOnType) {
+  const sess = _findTodayAddOnSession(addOnType);
+  if(!sess) return null;
+  return sess.date instanceof Date ? sess.date : new Date(sess.date);
 }
 
 // Returns completion info for today's core path workout, or null if not yet done.
@@ -9815,11 +9836,13 @@ function renderTodayWithPath() {
     if(todayInfo.addOnWorkout){
       const addOnProg = todayInfo.addOnWorkout;
       const isHIIT = addOnProg === 'HIIT';
-      const addOnDone = hasAddOnBeenCompletedToday(addOnProg);
-      const addOnTime = addOnDone ? getAddOnCompletionTime(addOnProg) : null;
+      const addOnSess = _findTodayAddOnSession(addOnProg);
+      const addOnDone = !!addOnSess;
+      const addOnTime = addOnSess ? (addOnSess.date instanceof Date ? addOnSess.date : new Date(addOnSess.date)) : null;
       const timeStr = addOnTime
         ? addOnTime.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})
         : '';
+      const addOnName = addOnSess ? addOnSess.day : (addOnProg + ' Add-On');
       html += `
         <div style="margin:12px 16px 0;">
           <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">TODAY'S ADD-ON</div>
@@ -9828,7 +9851,7 @@ function renderTodayWithPath() {
               <div style="display:flex;align-items:center;gap:10px;">
                 <div style="font-size:22px;">${addOnDone ? '✅' : (isHIIT ? '⚡' : '🏋️')}</div>
                 <div>
-                  <div style="font-size:15px;font-weight:800;">${addOnProg} Add-On</div>
+                  <div style="font-size:15px;font-weight:800;">${addOnDone ? addOnName : (addOnProg + ' Add-On')}</div>
                   <div style="font-size:11px;color:var(--text2);">${addOnDone ? 'Completed today' : 'Optional extra session'}</div>
                 </div>
               </div>
@@ -9838,7 +9861,7 @@ function renderTodayWithPath() {
             </div>
             ${addOnDone
               ? `<div style="text-align:center;padding:10px;background:rgba(76,255,145,0.07);border:1px solid rgba(76,255,145,0.2);border-radius:12px;font-size:13px;font-weight:700;color:#4cff91;">
-                  ✓ Completed at ${timeStr}
+                  ✓ ${addOnName} completed at ${timeStr}
                 </div>`
               : `<button onclick="openAddOnSelector('${addOnProg}')"
                   style="width:100%;background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.3);border-radius:12px;padding:12px;font-size:14px;font-weight:700;color:#00d4ff;cursor:pointer;">
