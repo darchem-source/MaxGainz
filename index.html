@@ -10,16 +10,17 @@
 <title>Max Gainz</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #f0f0f0; min-height: 100vh; overflow-x: hidden; }
+html { height: 100%; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #f0f0f0; height: 100%; overflow: hidden; }
 :root {
   --accent: #c8ff00; --accent2: #00d4ff;
   --surface: #14141c; --surface2: #1e1e2a; --surface3: #252535;
   --border: rgba(255,255,255,0.08); --text: #f0f0f0; --text2: #8888aa;
   --red: #ff4d6a; --orange: #ff8c42; --green: #39e09b; --purple: #9d7bff;
 }
-.app { max-width: 420px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; background: #0a0a0f; opacity: 1; z-index: 1; }
+.app { max-width: 420px; margin: 0 auto; height: 100vh; height: 100dvh; display: flex; flex-direction: column; background: #0a0a0f; opacity: 1; z-index: 1; }
 .app.hidden { display: none !important; }
-.tab-content { flex: 1; overflow-y: auto; padding-bottom: 90px; }
+.tab-content { flex: 1; overflow-y: auto; padding-bottom: 90px; min-height: 0; }
 .tab-content::-webkit-scrollbar { display: none; }
 .nav { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 420px; background: rgba(10,10,15,0.97); backdrop-filter: blur(20px); border-top: 0.5px solid var(--border); display: flex; padding: 8px 0 20px; z-index: 100; }
 .nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; padding: 4px; }
