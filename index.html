@@ -28,7 +28,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 .screen { display: none; }
 .screen.active { display: block; animation: fadeIn 0.2s ease; }
 @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
-.page-header { padding: 16px 20px 12px; }
+.page-header { padding: 16px 20px 12px; position: sticky; top: 0; z-index: 50; background: #0a0a0f; }
+/* Sticky wrapper for multi-element headers (session, programme) */
+.sticky-hdr { position: sticky; top: 0; z-index: 50; background: #0a0a0f; }
+.sticky-hdr .page-header { position: static; } /* avoid double-sticky inside wrapper */
 .page-title { font-size: 26px; font-weight: 800; letter-spacing: -0.5px; }
 .ac { color: var(--accent); }
 .section-label { font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text2); padding: 14px 20px 8px; }
@@ -235,6 +238,22 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 .path-duration-btn { background:var(--surface2); border:1px solid var(--border); border-radius:12px; padding:14px; text-align:center; cursor:pointer; transition:all 0.15s; }
 .path-duration-btn.selected { border-color:var(--accent); background:rgba(200,255,0,0.06); }
 
+/* ── LANDSCAPE MODE ── */
+@media (orientation: landscape) {
+  .app { max-width: 100%; }
+  .nav { max-width: 100%; }
+  .modal { max-width: 600px; }
+  #offlineBanner { max-width: 100%; }
+}
+
+/* Phone landscape: tighten vertical spacing since height is limited */
+@media (orientation: landscape) and (max-height: 500px) {
+  .nav { padding: 6px 0 env(safe-area-inset-bottom, 8px); }
+  .tab-content { padding-bottom: 68px; }
+  .page-header { padding: 10px 20px 8px; }
+  .section-label { padding: 8px 20px 4px; }
+}
+
 </style>
 </head>
 <body>
@@ -299,6 +318,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 
     <!-- ACTIVE SESSION -->
     <div class="screen" id="s-active">
+      <div class="sticky-hdr">
       <div class="sess-header">
         <div class="day-badge" id="sessBadge">UPPER DAY</div>
         <div style="display:flex;align-items:center;gap:8px;">
@@ -402,6 +422,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
           <button class="btn-next" id="nextBtn" onclick="advance()">Log set ✓</button>
         </div>
       </div>
+      </div><!-- /sticky-hdr -->
       <!-- HIIT/Tabata Timer Display -->
       <div id="hiitDisplay" style="margin:0 12px 16px;"></div>
       <!-- AMRAP / EMOM workout-level countdown banner -->
@@ -472,16 +493,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 
     <!-- PROGRAMME -->
     <div class="screen" id="s-workout">
-      <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;padding-right:16px;">
-        <div class="page-title">My <span class="ac">Programme</span></div>
-        <button onclick="openCreateChooser()" style="background:var(--accent);color:#000;border:none;border-radius:10px;padding:8px 14px;font-size:12px;font-weight:800;cursor:pointer;">+ Create</button>
-        <div style="width:44px;"></div>
-      </div>
-      <div style="display:flex;background:var(--surface);border-radius:12px;padding:3px;margin:0 16px 12px;gap:2px;overflow-x:auto;" id="progTabs">
-        <div style="flex:1;min-width:50px;padding:8px;text-align:center;font-size:11px;font-weight:600;border-radius:9px;cursor:pointer;background:var(--surface3);color:var(--text);" id="ptab0" onclick="swProg(0,this)">ULF</div>
-        <div style="flex:1;min-width:50px;padding:8px;text-align:center;font-size:11px;font-weight:600;border-radius:9px;cursor:pointer;color:var(--text2);" id="ptab1" onclick="swProg(1,this)">PPL</div>
-        <div style="flex:1;min-width:50px;padding:8px;text-align:center;font-size:11px;font-weight:600;border-radius:9px;cursor:pointer;color:var(--text2);" id="ptab2" onclick="swProg(2,this)">HIIT</div>
-      </div>
+      <div class="sticky-hdr">
+        <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;padding-right:16px;">
+          <div class="page-title">My <span class="ac">Programme</span></div>
+          <button onclick="openCreateChooser()" style="background:var(--accent);color:#000;border:none;border-radius:10px;padding:8px 14px;font-size:12px;font-weight:800;cursor:pointer;">+ Create</button>
+          <div style="width:44px;"></div>
+        </div>
+        <div style="display:flex;background:var(--surface);border-radius:12px;padding:3px;margin:0 16px 12px;gap:2px;overflow-x:auto;" id="progTabs">
+          <div style="flex:1;min-width:50px;padding:8px;text-align:center;font-size:11px;font-weight:600;border-radius:9px;cursor:pointer;background:var(--surface3);color:var(--text);" id="ptab0" onclick="swProg(0,this)">ULF</div>
+          <div style="flex:1;min-width:50px;padding:8px;text-align:center;font-size:11px;font-weight:600;border-radius:9px;cursor:pointer;color:var(--text2);" id="ptab1" onclick="swProg(1,this)">PPL</div>
+          <div style="flex:1;min-width:50px;padding:8px;text-align:center;font-size:11px;font-weight:600;border-radius:9px;cursor:pointer;color:var(--text2);" id="ptab2" onclick="swProg(2,this)">HIIT</div>
+        </div>
+      </div><!-- /sticky-hdr -->
       <div id="progContent"></div>
     </div>
 
@@ -2474,7 +2497,7 @@ const BARBELL_STEPS = BARBELL_PLATES.reduce((acc,p)=>{
 const DB_STEPS = [2.5,5,7.5,10,12.5,15,17.5,20,22.5,25,27.5,30]; // dumbbell per hand
 const CABLE_STEPS = [2.5,5,7.5,10,12.5,15,17.5,20,22.5,25,27.5,30,32.5,35]; // standard cable up to 35kg
 const CABLE_STEPS_WIDE = [2.5,5,7.5,10,12.5,15,17.5,20,22.5,25,27.5,30,32.5,35,37.5,40,42.5,45,47.5,50,52.5,55,57.5,60,62.5,65,67.5,70]; // Lat Pulldown up to 70kg
-const LEG_MACHINE_STEPS = [10,15,20,25,30,35,40,45,50,55,60,65,70,75,80,90,100,110,120,130,140,150,160,170,180,200]; // leg press/curl/extension
+const LEG_MACHINE_STEPS = [10,15,20,25,30,35,40,45,50,55,60,65,70,75,80,90,100,110,120,130,140,150,160,170,180,200]; // all machines: 5kg steps
 const BW_EXTRA_STEPS = [0,2.5,5,7.5,10,12.5,15,17.5,20,22.5,25,30,35,40,45,50]; // added weight on BW exercises
 
 function getWeightSteps(ex, equipOverride) {
@@ -2487,9 +2510,7 @@ function getWeightSteps(ex, equipOverride) {
     return CABLE_STEPS;
   }
   if (equip === 'machine') {
-    const name = (ex.name||'').toLowerCase();
-    if (name.includes('leg curl')||name.includes('leg extension')||name.includes('leg curls')||name.includes('leg extensions')) return LEG_MACHINE_STEPS;
-    return [10,20,30,40,50,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200,210,220];
+    return LEG_MACHINE_STEPS; // all machines: 5kg steps
   }
   return BARBELL_STEPS;
 }
@@ -2535,6 +2556,12 @@ function getEquipType(ex) {
 }
 
 function isCable(ex) { return EX_META[ex.name]?.cable || false; }
+
+// Snap a calculated weight to the nearest valid value in a steps array
+function snapToSteps(weight, steps){
+  if(!steps || !steps.length) return Math.round(weight * 2) / 2;
+  return steps.reduce((best, s) => Math.abs(s - weight) < Math.abs(best - weight) ? s : best);
+}
 
 function stepWeight(current, dir, steps) {
   const idx = steps.findIndex(s => s >= current);
@@ -2822,24 +2849,34 @@ function updateSessUI(){
     document.getElementById('currWtUnit').textContent='recommended';
   } else {
     // Pre-session: apply smart editability logic based on history
-    const editInfo = getWeightEditability(ex.name);
+    const editInfo = getWeightEditability(ex.name, parseRepTarget(ex.reps));
+    const unit = (getEquipType(ex)==='dumbbell'?'kg/h':'kg');
     if(editInfo.status === 'normal'){
-      // Done recently — show last session weight, lock buttons
-      if(editInfo.lastWeight) ex.weight = editInfo.lastWeight;
-      _setWeightAdjEditable(false);
-      document.getElementById('currWt').textContent=ex.weight||'–';
-      document.getElementById('currWtUnit').textContent=(getEquipType(ex)==='dumbbell'?'kg/h':'kg')+' last session';
+      if(editInfo.repAdjustedWeight){
+        // Rep target differs from last session — suggest adjusted weight, allow editing
+        const adjSteps = getWeightSteps(ex, equipOverride[curIdx]);
+        ex.weight = snapToSteps(editInfo.repAdjustedWeight, adjSteps);
+        _setWeightAdjEditable(true);
+        document.getElementById('currWt').textContent=ex.weight||'–';
+        document.getElementById('currWtUnit').textContent=unit+' adjusted';
+      } else {
+        // Same rep target — lock to last session weight
+        if(editInfo.lastWeight) ex.weight = editInfo.lastWeight;
+        _setWeightAdjEditable(false);
+        document.getElementById('currWt').textContent=ex.weight||'–';
+        document.getElementById('currWtUnit').textContent=unit+' last session';
+      }
     } else if(editInfo.status === 'deload'){
       // Long layoff — preset to deload weight, enable editing
       if(editInfo.suggestedWeight) ex.weight = editInfo.suggestedWeight;
       _setWeightAdjEditable(true);
       document.getElementById('currWt').textContent=ex.weight||'–';
-      document.getElementById('currWtUnit').textContent=(getEquipType(ex)==='dumbbell'?'kg/h':'kg')+' suggested';
+      document.getElementById('currWtUnit').textContent=unit+' suggested';
     } else {
       // First time ever — keep programme default, enable editing
       _setWeightAdjEditable(true);
       document.getElementById('currWt').textContent=ex.weight||'–';
-      document.getElementById('currWtUnit').textContent=(getEquipType(ex)==='dumbbell'?'kg/h':'kg')+' recommended';
+      document.getElementById('currWtUnit').textContent=unit+' recommended';
     }
   }
 
@@ -3114,21 +3151,53 @@ function getLastSessionData(exName){
   return {date:s.date,weight:s.setLog[exName].weight,reps:s.setLog[exName].reps||[]};
 }
 
+// Epley 1RM estimate: weight × (1 + reps/30)
+function calc1RM(weight, reps){
+  if(!weight || !reps || reps < 1) return weight;
+  return weight * (1 + reps / 30);
+}
+
+// Parse a rep target (midpoint of range, or single value). Returns null for timed/AMRAP strings.
+function parseRepTarget(repsStr){
+  if(!repsStr || typeof repsStr !== 'string') return null;
+  if(/[a-zA-Z]/.test(repsStr)) return null;
+  const parts = repsStr.split('–');
+  if(parts.length === 2){
+    const lo = parseInt(parts[0]), hi = parseInt(parts[1]);
+    if(!isNaN(lo) && !isNaN(hi)) return Math.round((lo + hi) / 2);
+  }
+  const single = parseInt(repsStr);
+  return isNaN(single) ? null : single;
+}
+
 // Track whether the weight adjuster is currently editable
 let _weightEditable = true;
 
 // Return editability state for the recommended-weight widget
 // status: 'first' | 'normal' | 'deload'
-function getWeightEditability(exName){
+// targetReps: parsed integer from today's ex.reps (via parseRepTarget)
+function getWeightEditability(exName, targetReps){
   const history = getLastSessionData(exName);
   if(!history){
-    return { editable:true, status:'first', lastWeight:null, deloadPct:0, suggestedWeight:null, weeksAway:null };
+    return { editable:true, status:'first', lastWeight:null, deloadPct:0, suggestedWeight:null, weeksAway:null, repAdjustedWeight:null };
   }
   const daysSince = Math.floor((Date.now() - history.date) / 86400000);
   const weeksExact = daysSince / 7;
 
+  // Rep-range adjustment: if today's target reps differ from last session average,
+  // estimate 1RM from last session and back-calculate weight for target reps.
+  let repAdjustedWeight = null;
+  if(history.weight && history.reps && history.reps.length && targetReps){
+    const lastAvgReps = history.reps.reduce((a,b)=>a+b,0) / history.reps.length;
+    if(Math.round(lastAvgReps) !== targetReps){
+      const oneRM = calc1RM(history.weight, lastAvgReps);
+      repAdjustedWeight = oneRM / (1 + targetReps / 30); // caller snaps to equipment steps
+    }
+  }
+
   if(weeksExact < 4){
-    return { editable:false, status:'normal', lastWeight:history.weight, deloadPct:0, suggestedWeight:history.weight, weeksAway:Math.round(weeksExact*10)/10 };
+    const suggestedWeight = repAdjustedWeight || history.weight;
+    return { editable:!!repAdjustedWeight, status:'normal', lastWeight:history.weight, deloadPct:0, suggestedWeight, repAdjustedWeight, weeksAway:Math.round(weeksExact*10)/10 };
   }
 
   // 4+ weeks → deload
@@ -3137,9 +3206,10 @@ function getWeightEditability(exName){
   else if(weeksExact < 8)  deloadPct = 0.20;  // 6–8 weeks
   else                     deloadPct = 0.25;  // 8+ weeks
 
-  const suggestedWeight = history.weight ? Math.round(history.weight * (1 - deloadPct) * 10) / 10 : null;
+  const baseWeight = repAdjustedWeight || history.weight;
+  const suggestedWeight = baseWeight ? Math.round(baseWeight * (1 - deloadPct) * 10) / 10 : null;
   const weeksRounded = Math.round(weeksExact);
-  return { editable:true, status:'deload', lastWeight:history.weight, deloadPct, suggestedWeight, weeksAway:weeksRounded };
+  return { editable:true, status:'deload', lastWeight:history.weight, deloadPct, suggestedWeight, repAdjustedWeight, weeksAway:weeksRounded };
 }
 
 // Enable or disable the weight adjuster +/− buttons
