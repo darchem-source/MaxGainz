@@ -4801,9 +4801,11 @@ function quickLogSet(setIdx){
   if(!setWeights[curIdx]) setWeights[curIdx]={};
   repsLogged[curIdx][setIdx]=defaultReps;
   setWeights[curIdx][setIdx]=sw;
-  // Cancel running rest (same as confirmReps)
+  // Cancel running rest and always clear the manual-stop flag so the next set
+  // gets its rest regardless of whether the user previously skipped a rest.
   const restIsRunning=(restSec>0)||(typeof restStartTime!=='undefined'&&restStartTime!==null);
-  if(restIsRunning){ stopRest(); window._restStoppedManually=false; }
+  if(restIsRunning){ stopRest(); }
+  window._restStoppedManually=false;
   markSet(setIdx);
 }
 
@@ -5788,6 +5790,7 @@ function stopRest(){
 
 function skipRest(){
   stopRest();
+  window._restStoppedManually = false; // skip is a navigation action, not a "suppress next rest" signal
   const ex=sessExs[curIdx],done=(setsDone[curIdx]||[]).length;
   
   // Check if we're in a superset
