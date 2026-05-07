@@ -1924,6 +1924,23 @@ async function cloudLoadAll() {
   return true;
 }
 
+// ── LOCALSTORAGE HELPERS ──
+function lsGet(key, fallback = null) {
+  try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); } catch(e) { return fallback; }
+}
+function lsSet(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch(e) {}
+}
+function lsRemove(key) {
+  try { localStorage.removeItem(key); } catch(e) {}
+}
+function lsGetRaw(key, fallback = null) {
+  try { const v = localStorage.getItem(key); return v === null ? fallback : v; } catch(e) { return fallback; }
+}
+function lsSetRaw(key, value) {
+  try { localStorage.setItem(key, value); } catch(e) {}
+}
+
 // ── LOCAL CACHE (fast startup & offline fallback) ──
 const STORAGE_KEY = 'maxgainz_v1';
 
@@ -2556,8 +2573,6 @@ function getEquipType(ex) {
   return ex.bw ? 'bw' : 'barbell';
 }
 
-function isCable(ex) { return EX_META[ex.name]?.cable || false; }
-
 // Snap a calculated weight to the nearest valid value in a steps array
 function snapToSteps(weight, steps){
   if(!steps || !steps.length) return Math.round(weight * 2) / 2;
@@ -2620,6 +2635,12 @@ function cancelSession(){
   if(window._floorTransitionInterval){ clearInterval(window._floorTransitionInterval); window._floorTransitionInterval=null; }
   clearInterval(exSetTimerInterval); timedSetRunning=false;
   window._nonTabataSessionStarted=false;
+  window._amrapConfirmed=false;
+  window._currentSessionIsAdhoc=false;
+  window._prShownThisSession=null;
+  _hiitDisplayEl=null;
+  _restNumEl=null;
+  _restFillEl=null;
   // Fully reset rest timer via stopRest() — clears interval, nulls restStartTime, hides UI
   stopRest();
   
@@ -5168,6 +5189,9 @@ function adjW(d){
 // ── HIIT/TABATA SYSTEM GLOBALS ──
 let hiitState = null;
 let hiitIntervalId = null;
+let _hiitDisplayEl = null;  // cached DOM ref — populated on first use, cleared on dismiss/cancel
+let _restNumEl = null;      // cached DOM ref for rest countdown digit
+let _restFillEl = null;     // cached DOM ref for rest progress bar fill
 
 // ── AUDIO SYSTEM FOR HIIT ──
 function playHIITAudio(type){
@@ -5583,7 +5607,8 @@ function showHIITDisplay(){
     return;
   }
   const block = hiitState.blocks[hiitState.currentBlockIdx];
-  const display = document.getElementById('hiitDisplay');
+  if(!_hiitDisplayEl) _hiitDisplayEl = document.getElementById('hiitDisplay');
+  const display = _hiitDisplayEl;
   if(!display) {
     // console.log('[DISPLAY] showHIITDisplay: hiitDisplay element not found!');
     return;
@@ -5643,7 +5668,8 @@ function showHIITDisplay(){
 
 function showHIITBlockRestDisplay(){
   if(!hiitState) return;
-  const display = document.getElementById('hiitDisplay');
+  if(!_hiitDisplayEl) _hiitDisplayEl = document.getElementById('hiitDisplay');
+  const display = _hiitDisplayEl;
   if(!display) return;
   
   const nextBlock = hiitState.blocks[hiitState.currentBlockIdx];
@@ -5667,8 +5693,9 @@ function showHIITBlockRestDisplay(){
 }
 
 function dismissHIITDisplay(){
-  const display = document.getElementById('hiitDisplay');
+  const display = _hiitDisplayEl || document.getElementById('hiitDisplay');
   if(display) display.innerHTML = '';
+  _hiitDisplayEl = null;
 }
 
 function startRest(duration = 90, label = 'REST'){
@@ -5700,9 +5727,11 @@ function updateRestTimer(){
   if(!restStartTime) return;
   const elapsed=Math.floor((Date.now()-restStartTime)/1000);
   restSec=Math.max(0,restTotalSecs-elapsed);
-  if(document.getElementById('restNum')){
-    document.getElementById('restNum').textContent=restSec;
-    document.getElementById('restFill').style.width=(restSec/restTotalSecs*100)+'%';
+  if(!_restNumEl) _restNumEl = document.getElementById('restNum');
+  if(!_restFillEl) _restFillEl = document.getElementById('restFill');
+  if(_restNumEl){
+    _restNumEl.textContent=restSec;
+    if(_restFillEl) _restFillEl.style.width=(restSec/restTotalSecs*100)+'%';
   }
 
   // Voice countdown for final 3 seconds (each number spoken exactly once)
@@ -5713,8 +5742,8 @@ function updateRestTimer(){
 
   if(restSec<=0){
     restStartTime=null;
-    document.getElementById('restNum').textContent='0';
-    document.getElementById('restFill').style.width='0%';
+    if(_restNumEl) _restNumEl.textContent='0';
+    if(_restFillEl) _restFillEl.style.width='0%';
     window._restStoppedManually = false; // Reset flag since rest completed naturally
     showRestAlert(); // fires once, timer stops permanently
   }else{
@@ -5744,11 +5773,11 @@ function stopRest(){
   if(alert) alert.classList.remove('show');
   
   // Reset display values
-  if(document.getElementById('restNum')){
-    document.getElementById('restNum').textContent='0';
-    document.getElementById('restFill').style.width='0%';
-  }
-  
+  if(!_restNumEl) _restNumEl = document.getElementById('restNum');
+  if(!_restFillEl) _restFillEl = document.getElementById('restFill');
+  if(_restNumEl) _restNumEl.textContent='0';
+  if(_restFillEl) _restFillEl.style.width='0%';
+
   // Mark that rest was manually stopped (prevents restart in markSet)
   window._restStoppedManually = true;
 }
@@ -6008,11 +6037,6 @@ function confirmSuperset(){
 function cancelSuperset(){
   supersetBuilder = { exercises: [], sets: 3 };
   document.getElementById('supersetMod').classList.remove('open');
-}
-
-function linkSuperset(targetIdx){
-  // Legacy function - kept for compatibility but not used
-  // New system uses confirmSuperset instead
 }
 
 // ── CELEBRATE (superset-aware) ──
@@ -6594,56 +6618,6 @@ const HIIT_MUSCLE_FOCUS = {
   "Core & Lower Back – 25 min":       ['core','legs'],
 };
 
-// ── HIIT DURATION SELF-AUDIT (runs once at startup, logs to console) ──
-(function auditHIITDurations(){
-  const issues = [];
-
-  HIIT.forEach(w => {
-    const name = w.name;
-    const stated = w.duration; // minutes
-
-    if(w.format === "Garry's Style" && w.blocks){
-      // Garry's: sum of block.duration must equal workout.duration
-      const blockSum = w.blocks.reduce((s, b) => s + (b.duration || 0), 0);
-      if(blockSum !== stated){
-        issues.push(`  ✗ "${name}": stated ${stated}min, block sum ${blockSum}min (off by ${stated - blockSum}min)`);
-      }
-    } else if(w.format === 'AMRAP'){
-      if(w.amrapMinutes !== stated){
-        issues.push(`  ✗ "${name}": stated ${stated}min but amrapMinutes=${w.amrapMinutes}`);
-      }
-    } else if(w.format === 'EMOM'){
-      if(w.emomMinutes !== stated){
-        issues.push(`  ✗ "${name}": stated ${stated}min but emomMinutes=${w.emomMinutes}`);
-      }
-      // EMOM: total minutes = sum of all exercise sets (each set = 1 minute)
-      const totalMinutes = (w.exercises||[]).reduce((s, ex) => s + (ex.sets||0), 0);
-      if(totalMinutes !== stated){
-        issues.push(`  ✗ "${name}": stated ${stated}min, exercise sets sum to ${totalMinutes}min`);
-      }
-    } else if(w.format === 'Core/Timed' && w.exercises){
-      // Core/Timed: each exercise = (work+rest) per set; approximate rest=20s for reps like "40s"
-      let totalSecs = 0;
-      w.exercises.forEach(ex => {
-        const workSecs = parseInt(ex.reps) || 40;
-        const restSecs = 20;
-        totalSecs += (workSecs + restSecs) * (ex.sets || 1);
-      });
-      const calcMin = Math.round(totalSecs / 60);
-      if(Math.abs(calcMin - stated) > 2){ // allow 2-min tolerance
-        issues.push(`  ✗ "${name}": stated ${stated}min, calculated ~${calcMin}min`);
-      }
-    }
-    // AMRAP / Complex / Tabata: duration is a guide/constraint not derived from exercises
-  });
-
-  if(issues.length === 0){
-    console.log('✓ All HIIT durations verified — no mismatches found');
-  } else {
-    console.warn(`⚠ HIIT duration audit: found ${issues.length} mismatch(es):\n` + issues.join('\n'));
-  }
-})();
-
 const HIIT_FORMAT_COLORS={
   'Tabata':'var(--accent)',
   "Garry's Style":'var(--red)',
@@ -6970,7 +6944,7 @@ function renderProg(){
 
 // ── CUSTOM PROGRAMMES (max 3, each with subcategories) ──
 // Structure: [{name, subcategories:[{name, exercises:[{name,sets,reps,weight,bw}]}]}]
-let customWorkouts=JSON.parse(localStorage.getItem('maxgainz_custom')||'[]');
+let customWorkouts=lsGet('maxgainz_custom', []);
 let editingCustomIdx=-1;
 let editingSubIdx=-1; // which subcategory is being built
 let pendingCustomExs=[];
@@ -8367,7 +8341,7 @@ function renderExerciseNote(){
 }
 
 // ── CUSTOM HIIT WORKOUTS ──
-let customHIITs = JSON.parse(localStorage.getItem('maxgainz_custom_hiits') || '[]');
+let customHIITs = lsGet('maxgainz_custom_hiits', []);
 let buildingHIIT = null;
 
 // Register all stored custom HIITs into the main HIIT array on load
@@ -8524,7 +8498,7 @@ function startCustomHIIT(idx){
 }
 
 // ── PLATE CALCULATOR ──
-let _barWeight = parseInt(localStorage.getItem('plateBarWt') || '20');
+let _barWeight = parseInt(lsGetRaw('plateBarWt', '20'));
 const PLATES_KG = [25, 20, 15, 10, 5, 2.5, 1.25]; // standard plates
 
 function openPlateCalc(){
@@ -9609,13 +9583,6 @@ function checkPathWeekProgression() {
     userPath.status = 'completed';
     savePathLocal();
   }
-}
-
-function startAdhocSession(type, day) {
-  window._currentSessionIsAdhoc = true;
-  if (type === 'ULF') startSessionULF(day);
-  else if (type === 'PPL') startSession(day, PPL);
-  else if (type === 'HIIT') startHIIT(HIIT.findIndex(h => h.name === day));
 }
 
 // ─────────────────────────────────────────────
@@ -11073,7 +11040,6 @@ function openSessDetail(idx){
 }
 
 function togDay(id){const el=document.getElementById('dd-'+id),arr=document.getElementById('arr-'+id);if(!el)return;const open=el.style.display==='block';el.style.display=open?'none':'block';arr.textContent=open?'▼':'▲';}
-function togEx(id,arrid){const el=document.getElementById(id),arr=document.getElementById(arrid);if(!el)return;const open=el.style.display==='block';el.style.display=open?'none':'block';arr.textContent=open?'▼':'▲';}
 function exportData(){
   const payload={
     exportDate: new Date().toISOString(),
@@ -11249,15 +11215,6 @@ function selectProfileIcon(iconId){
   userProfile.iconId = iconId;
   userProfile.photoData = icon.src;
   userProfile.avatar = null;
-  saveLocalCache();
-  cloudSaveProfile();
-  renderProfile();
-  updateProfileButton();
-}
-
-function selectAvatar(emoji){
-  userProfile.avatar=emoji;
-  userProfile.photoData=null;
   saveLocalCache();
   cloudSaveProfile();
   renderProfile();
@@ -11471,94 +11428,6 @@ const ABDOMINAL_EXERCISES=[
   {name:'Pallof Press', reps:'10 per side'}
 ];
 
-function openAbdominalWork(){
-  const modal=document.createElement('div');
-  modal.id='abdominalModal';
-  modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:flex-end;z-index:10000;';
-  modal.onclick=()=>modal.remove();
-  
-  const selected=[null,null,null];
-  let addWeight=false;
-  let weight=0;
-  
-  const content=document.createElement('div');
-  content.style.cssText='background:var(--bg);border-radius:16px 16px 0 0;padding:20px;max-height:80vh;overflow-y:auto;width:100%;';
-  content.onclick=e=>e.stopPropagation();
-  
-  content.innerHTML=`
-    <div style="font-size:18px;font-weight:800;margin-bottom:16px;">Select 3 Abdominal Exercises</div>
-    <div id="abEx" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;"></div>
-    <div style="background:var(--surface2);border-radius:10px;padding:12px;margin-bottom:16px;">
-      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:700;">
-        <input type="checkbox" id="abAddWeight" style="cursor:pointer;">
-        Add weight to exercises
-      </label>
-      <div id="abWeightInput" style="display:none;margin-top:8px;">
-        <input type="number" id="abWeight" placeholder="Weight in kg" value="0" style="width:100%;padding:8px;background:var(--surface);border:0.5px solid var(--border);border-radius:6px;font-size:13px;">
-      </div>
-    </div>
-    <button onclick="confirmAbdominal()" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:12px;font-weight:700;cursor:pointer;margin-bottom:8px;">Confirm Selection</button>
-    <button onclick="document.getElementById('abdominalModal').remove()" style="width:100%;background:var(--surface2);color:var(--text);border:0.5px solid var(--border);border-radius:10px;padding:12px;font-weight:700;cursor:pointer;">Cancel</button>
-  `;
-  
-  modal.appendChild(content);
-  document.body.appendChild(modal);
-  
-  const exList=document.getElementById('abEx');
-  exList.innerHTML=ABDOMINAL_EXERCISES.map((ex,i)=>`
-    <div onclick="selectAbEx(${i})" style="padding:10px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;cursor:pointer;transition:all 0.2s;" id="abex-${i}">
-      <div style="font-size:13px;font-weight:700;">${ex.name}</div>
-      <div style="font-size:11px;color:var(--text2);">${ex.reps}</div>
-    </div>
-  `).join('');
-  
-  const weightCheckbox=document.getElementById('abAddWeight');
-  weightCheckbox.addEventListener('change',()=>{
-    document.getElementById('abWeightInput').style.display=weightCheckbox.checked?'block':'none';
-  });
-  
-  window.selectAbEx=(idx)=>{
-    const slot=selected.indexOf(null);
-    if(slot===-1&&!selected.includes(idx)){
-      selected[2]=idx; // replace last if all full
-    }else if(!selected.includes(idx)){
-      selected[slot]=idx;
-    }else{
-      selected[selected.indexOf(idx)]=null;
-    }
-    updateAbDisplay();
-  };
-  
-  window.updateAbDisplay=()=>{
-    ABDOMINAL_EXERCISES.forEach((ex,i)=>{
-      const el=document.getElementById(`abex-${i}`);
-      el.style.background=selected.includes(i)?'var(--accent)22':'var(--surface)';
-      el.style.borderColor=selected.includes(i)?'var(--accent)':'var(--border)';
-      el.style.color=selected.includes(i)?'var(--accent)':'var(--text)';
-    });
-  };
-  
-  window.confirmAbdominal=()=>{
-    if(!selected.filter(s=>s!==null).length===3){
-      alert('Select 3 exercises');
-      return;
-    }
-    const wt=document.getElementById('abAddWeight').checked?parseInt(document.getElementById('abWeight').value)||0:0;
-    const exs=selected.filter(s=>s!==null).map(idx=>ABDOMINAL_EXERCISES[idx].name);
-    sessExs[curIdx]={
-      name:'Abdominal Work',
-      exercises:exs,
-      weight:wt,
-      bw:wt===0,
-      sets:3,
-      reps:'3 rounds',
-      muscles:['core']
-    };
-    document.getElementById('abdominalModal').remove();
-    updateSessUI();
-  };
-}
-
 // ── INIT ──
 // Today toggle rendered dynamically by renderTodayToggle()
 
@@ -11624,15 +11493,6 @@ function showPasswordReset(){
   document.getElementById('authResendForm').style.display = 'none';
   document.getElementById('authError').style.display = 'none';
   document.getElementById('resetEmail').focus();
-}
-
-function showResendConfirmation(){
-  document.getElementById('authForm').style.display = 'none';
-  document.getElementById('authLoginForm').style.display = 'none';
-  document.getElementById('authResetForm').style.display = 'none';
-  document.getElementById('authResendForm').style.display = 'block';
-  document.getElementById('authError').style.display = 'none';
-  document.getElementById('resendEmail').focus();
 }
 
 function showAuthError(msg){
@@ -11724,14 +11584,6 @@ async function authSignup(){
     console.error('Signup error:', e);
     showAuthError(e.message);
   }
-}
-
-function showEmailConfirmationScreen(email){
-  // Replace the form content with a confirmation message
-  document.getElementById('authForm').style.display = 'none';
-  document.getElementById('authError').style.display = 'none';
-  document.getElementById('authConfirm').style.display = 'block';
-  document.getElementById('authConfirmEmail').textContent = email;
 }
 
 // Sign in with email and password
