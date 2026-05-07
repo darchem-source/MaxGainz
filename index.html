@@ -3959,7 +3959,8 @@ function startTimedSetBarry(ex){
       // Find next exercise
       const nextIdx = findNextIncompleteEx(curIdx);
       if(nextIdx === -1){
-        // Session complete
+        // Session complete — ding already played above; add voice cue
+        speakCountdown('Done');
         const display = document.getElementById('hiitDisplay');
         if(display) display.innerHTML = '<div style="text-align:center;padding:20px;font-size:18px;font-weight:800;color:var(--green);">🏁 Workout Complete!</div>';
         return;
@@ -4117,7 +4118,7 @@ function startAmrapTimer(totalSecs){
     if(remaining <= 0){
       clearInterval(_amrapInterval);
       playCompletionDing();
-      speakCountdown('Go');
+      speakCountdown('Done'); // AMRAP expiry = session end, not "go again"
       const live = document.getElementById('amrapLiveCountdown');
       if(live){ live.textContent = '0:00'; live.style.color = 'var(--green)'; }
       banner.innerHTML = '<div style="text-align:center;font-size:13px;font-weight:800;color:var(--green);">⏱ Time\'s up! Finish your current round.</div>';
@@ -4190,6 +4191,8 @@ function startEmomAutoTimer(w){
 
     if(currentMinute > totalMinutes){
       clearInterval(_emomInterval);
+      playCompletionDing();
+      speakCountdown('Done'); // EMOM session end
       display.style.display = 'block';
       display.innerHTML = '<div style="text-align:center;padding:28px;font-size:18px;font-weight:800;color:var(--green);">✅ EMOM Complete!</div>';
       if(banner) banner.style.display = 'none';
@@ -4365,12 +4368,13 @@ function startCoreTimedAutoTimer(w){
   _coreTimedInterval = setInterval(()=>{
     remaining--;
     if(remaining <= 0){
-      // Ding + "Go" at step transition
-      playCompletionDing();
-      speakCountdown('Go');
       _coreSpoken.clear();
       seqIdx++;
-      if(seqIdx < sequence.length){
+      const isSessionEnd = seqIdx >= sequence.length;
+      // "Done" on the final step; "Go" on all intermediate transitions
+      playCompletionDing();
+      speakCountdown(isSessionEnd ? 'Done' : 'Go');
+      if(!isSessionEnd){
         remaining = sequence[seqIdx].duration;
       }
     } else if(remaining <= 3 && !_coreSpoken.has(remaining)){
