@@ -103,12 +103,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 .event-pts { font-size:16px; font-weight:900; min-width:52px; text-align:right; }
 .pts-pos { color:var(--accent); }
 .pts-neg { color:var(--red); }
-.sess-header { padding:12px 16px 0; display:flex; align-items:center; justify-content:space-between; }
+.sess-header { padding:10px 16px 6px; display:flex; align-items:center; justify-content:space-between; }
 .day-badge { font-size:11px; font-weight:700; letter-spacing:1px; text-transform:uppercase; padding:5px 12px; border-radius:20px; }
 .badge-u { background:rgba(200,255,0,0.15); color:var(--accent); }
 .badge-l { background:rgba(0,212,255,0.15); color:var(--accent2); }
 .badge-f { background:rgba(157,123,255,0.15); color:var(--purple); }
-.timer-pill { background:var(--surface); border-radius:20px; padding:5px 14px; font-size:18px; font-weight:900; border:0.5px solid var(--border); }
+.timer-pill { background:var(--surface); border-radius:20px; padding:3px 10px; font-size:14px; font-weight:900; border:0.5px solid var(--border); flex-shrink:0; }
 .prog-strip { margin:10px 16px 0; height:4px; background:var(--surface3); border-radius:2px; overflow:hidden; }
 .prog-fill { height:100%; background:var(--accent); border-radius:2px; transition:width 0.4s ease; }
 .curr-card { margin:12px 16px 0; background:var(--surface); border-radius:20px; border:1px solid rgba(200,255,0,0.25); padding:16px; }
@@ -319,25 +319,26 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 
     <!-- ACTIVE SESSION -->
     <div class="screen" id="s-active">
-      <div class="sticky-hdr">
+      <!-- Session header — scrolls with content (badge + wake lock visible at session start) -->
       <div class="sess-header">
         <div class="day-badge" id="sessBadge">UPPER DAY</div>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <div onclick="toggleWakeLock()" id="wakeLockBtn" style="font-size:11px;font-weight:700;padding:6px 12px;border-radius:20px;background:var(--surface2);border:0.5px solid var(--border);color:var(--text2);cursor:pointer;white-space:nowrap;">🔒 Auto-lock</div>
-          <div class="timer-pill" id="sessTimer">0:00</div>
-        </div>
+        <div onclick="toggleWakeLock()" id="wakeLockBtn" style="font-size:11px;font-weight:700;padding:6px 12px;border-radius:20px;background:var(--surface2);border:0.5px solid var(--border);color:var(--text2);cursor:pointer;white-space:nowrap;">🔒 Auto-lock</div>
       </div>
-      <!-- Sticky pre-session action bar (HIIT only, shown before Start) -->
-      <div id="hiitPreBar" style="display:none;position:sticky;top:0;z-index:10;background:#0a0a0f;padding:10px 16px 8px;border-bottom:0.5px solid var(--border);">
+      <!-- HIIT pre-session action bar (shown before Start, not sticky) -->
+      <div id="hiitPreBar" style="display:none;padding:10px 16px 8px;border-bottom:0.5px solid var(--border);">
         <button onclick="handleHIITStart()" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:12px;font-size:15px;font-weight:800;padding:14px;cursor:pointer;margin-bottom:8px;">▶ Start Session</button>
         <button onclick="cancelSession()" style="width:100%;background:rgba(255,77,106,0.08);color:var(--red);border:0.5px solid rgba(255,77,106,0.25);border-radius:12px;font-size:13px;font-weight:600;padding:11px;cursor:pointer;">✕ Cancel &amp; discard session</button>
       </div>
-
-      <div class="prog-strip"><div class="prog-fill" id="progFill" style="width:0%"></div></div>
-      <div style="display:flex;justify-content:space-between;margin:6px 16px 0;font-size:11px;color:var(--text2);">
-        <span id="progLbl">Exercise 1 of 7</span>
-        <span style="color:var(--accent);font-weight:700;" id="progPct">0%</span>
-      </div>
+      <!-- Compact sticky bar: exercise counter + timer + progress -->
+      <div class="sticky-hdr">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 16px 2px;gap:6px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex:1;min-width:0;">
+            <span id="progLbl" style="font-size:11px;color:var(--text2);font-weight:600;white-space:nowrap;">Exercise 1 of 7</span>
+            <span style="color:var(--accent);font-weight:700;font-size:11px;margin-right:6px;" id="progPct">0%</span>
+          </div>
+          <div class="timer-pill" id="sessTimer">0:00</div>
+        </div>
+        <div class="prog-strip" style="margin:0 16px 4px;"><div class="prog-fill" id="progFill" style="width:0%"></div></div>
       </div><!-- /sticky-hdr -->
       <div class="curr-card">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
