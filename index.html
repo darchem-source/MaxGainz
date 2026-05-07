@@ -3261,8 +3261,11 @@ function renderLastTimeRef(ex){
     panel.style.display = 'none';
     return;
   }
-  // Format the date
-  const daysAgo = Math.floor((new Date() - new Date(last.date))/(1000*60*60*24));
+  // Format the date — compare calendar days (midnight-to-midnight) to avoid
+  // time-of-day bleeding: e.g. Mon 7 pm → Wed 6 am is 35 h but 2 calendar days.
+  const todayMidnight = new Date(); todayMidnight.setHours(0,0,0,0);
+  const lastMidnight  = new Date(last.date); lastMidnight.setHours(0,0,0,0);
+  const daysAgo = Math.round((todayMidnight - lastMidnight) / (1000*60*60*24));
   let dateStr;
   if(daysAgo === 0) dateStr = 'today';
   else if(daysAgo === 1) dateStr = 'yesterday';
