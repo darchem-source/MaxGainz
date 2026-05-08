@@ -2221,6 +2221,50 @@ function haptic(pattern){
   try{ if(navigator.vibrate) navigator.vibrate(pattern); }catch(e){}
 }
 
+// ── EVENT BUS ──
+// Lightweight pub/sub for cross-cutting concerns. Avoids reaching into other
+// modules' globals directly and lets multiple parts of the app react to the
+// same lifecycle event.
+//
+// Conventions:
+//   bus.emit('event:name', payload)  — fire an event with optional data
+//   bus.on('event:name', handler)    — subscribe; returns an unsubscribe fn
+//   bus.off('event:name', handler)   — explicit unsubscribe
+//
+// Currently emitted events (subscribers can listen at any time):
+//   sync:status         { status: 'syncing'|'synced'|'offline'|'error' }
+//   session:started     { day, exercises:[...] }
+//   session:finished    { sessionRecord }   — after persist
+//   session:cancelled   {}
+//   set:logged          { exerciseIdx, setIdx, weight, reps }
+//   pr:detected         { exName, weight, prevPB }
+//   path:changed        { userPath }
+const bus = (() => {
+  const listeners = new Map();
+  return {
+    on(event, handler){
+      if(typeof handler !== 'function') return () => {};
+      if(!listeners.has(event)) listeners.set(event, new Set());
+      listeners.get(event).add(handler);
+      return () => this.off(event, handler);
+    },
+    off(event, handler){
+      const set = listeners.get(event);
+      if(!set) return;
+      set.delete(handler);
+      if(!set.size) listeners.delete(event);
+    },
+    emit(event, data){
+      const set = listeners.get(event);
+      if(!set) return;
+      // Snapshot so handlers that unsubscribe themselves don't trip iteration
+      [...set].forEach(h => {
+        try { h(data); } catch(err){ console.error('bus['+event+'] handler error:', err); }
+      });
+    },
+  };
+})();
+
 // ── TIMER REGISTRY ──
 // Centralised setInterval bookkeeping. Every session-bound timer goes through
 // startTimer(name, ...) so that stopAllTimers() in cancelSession can nuke them
@@ -3161,30 +3205,38 @@ function _isColdSyncing(){
   return _isCloudSyncing && (typeof completedSessions === 'undefined' || completedSessions.length === 0);
 }
 
-function setSyncStatus(status) {
+function setSyncStatus(status){
   const wasCold = _isColdSyncing();
   _isCloudSyncing = (status === 'syncing');
-  // Update small text indicator (Profile tab)
+  bus.emit('sync:status', { status, wasCold, isCold: _isColdSyncing() });
+}
+
+// ── Sync status subscribers ──
+// Each is a small, focused effect. Adding new reactions is now an `bus.on` away;
+// no need to crack open setSyncStatus to wire them in.
+
+// Profile-tab status text + colour
+bus.on('sync:status', ({ status }) => {
   const el = document.getElementById('syncStatus');
-  if (el) {
-    const states = { syncing:'🔄 Syncing…', synced:'☁️ Synced', offline:'📱 Offline (local)', error:'⚠️ Sync failed' };
-    el.textContent = states[status] || '';
-    el.style.color = status === 'synced' ? 'var(--green)' : status === 'offline' ? 'var(--orange)' : 'var(--text2)';
-  }
-  // Toggle floating sync banner — only when actually cold-syncing (no cached data)
+  if(!el) return;
+  const states = { syncing:'🔄 Syncing…', synced:'☁️ Synced', offline:'📱 Offline (local)', error:'⚠️ Sync failed' };
+  el.textContent = states[status] || '';
+  el.style.color = status === 'synced' ? 'var(--green)' : status === 'offline' ? 'var(--orange)' : 'var(--text2)';
+});
+
+// Floating sync banner — only show during cold-start sync (no cached data)
+bus.on('sync:status', () => {
   const banner = document.getElementById('syncBanner');
   if(banner) banner.classList.toggle('show', _isColdSyncing());
-  // Skeleton transitions: if we WERE cold-syncing and now we're not, refresh active tab so placeholders are replaced
-  if(wasCold && !_isCloudSyncing){
-    if(document.getElementById('s-today')?.classList.contains('active'))    { try{ renderToday();    }catch(e){} }
-    if(document.getElementById('s-progress')?.classList.contains('active')) { try{ renderProgress(); }catch(e){} }
-  }
-  // Initial entry into cold-sync: paint skeletons immediately on the active tab
-  if(!wasCold && _isColdSyncing()){
-    if(document.getElementById('s-today')?.classList.contains('active'))    { try{ renderToday();    }catch(e){} }
-    if(document.getElementById('s-progress')?.classList.contains('active')) { try{ renderProgress(); }catch(e){} }
-  }
-}
+});
+
+// Skeleton ↔ real-data transition: re-render Today/Progress when cold-sync flips
+bus.on('sync:status', ({ wasCold, isCold }) => {
+  const transitioned = wasCold !== isCold;
+  if(!transitioned) return;
+  if(document.getElementById('s-today')?.classList.contains('active'))    { try{ renderToday();    }catch(e){} }
+  if(document.getElementById('s-progress')?.classList.contains('active')) { try{ renderProgress(); }catch(e){} }
+});
 
 function updateStorageBadge() {
   const el = document.getElementById('storageBadge');
@@ -3853,6 +3905,7 @@ function startSessionULF(day){
   document.getElementById('nav-active').style.display='flex';
   updateSessUI();
   goTab('active',document.getElementById('nav-active'));
+  bus.emit('session:started', { day: sessDay, exercises: sessExs.map(e => e.name), kind: 'ulf' });
 }
 
 function cancelSession(){
@@ -3918,6 +3971,7 @@ function cancelSession(){
   // console.log('[CANCEL] Navigating to Today');
   renderToday();
   setTimeout(()=>goTab('today',document.getElementById('nav-today')), 100);
+  bus.emit('session:cancelled', {});
 }
 
 let sessStartTime = null;
@@ -3986,6 +4040,7 @@ function startSession(day,prog){
   document.getElementById('nav-active').style.display='flex';
   updateSessUI();
   goTab('active',document.getElementById('nav-active'));
+  bus.emit('session:started', { day: sessDay, exercises: sessExs.map(e => e.name), kind: 'ppl' });
 }
 
 function updateSessTimer(){ document.getElementById('sessTimer').textContent = formatMMSS(sessTimeSec); }
@@ -6473,6 +6528,12 @@ function markSet(i){
   // Record completion timestamp — used downstream for Rest Time Analysis
   if(!setTimestamps[curIdx]) setTimestamps[curIdx] = {};
   if(setTimestamps[curIdx][i] === undefined) setTimestamps[curIdx][i] = Date.now();
+  if(isNew){
+    const ex = sessExs[curIdx];
+    const reps = (repsLogged[curIdx] || {})[i];
+    const weight = (setWeights[curIdx] || {})[i] || ex?.weight || 0;
+    bus.emit('set:logged', { exerciseIdx: curIdx, exerciseName: ex?.name, setIdx: i, weight, reps });
+  }
   renderBubbles(sessExs[curIdx]);renderQueue();updNextBtn();
   const ex=sessExs[curIdx];
   const allDone=(setsDone[curIdx]||[]).length>=ex.sets;
@@ -7356,6 +7417,7 @@ function showPRAlert(exName, weight, prevPB){
   el.classList.add('show');
   haptic([80, 60, 80, 60, 200]); // celebratory pulse
   _prAlertTimer = setTimeout(dismissPRAlert, 4000);
+  bus.emit('pr:detected', { exName, weight, prevPB });
 }
 function dismissPRAlert(){
   clearTimeout(_prAlertTimer);
@@ -7974,6 +8036,7 @@ function finishSession(){
   const xpAfter = getTotalXP();
   // console.log('finishSession: step 8 - saveStore');
   saveStore(newSess,customWeights);
+  bus.emit('session:finished', { sessionRecord: newSess, volume, sets: totalSets });
   // console.log('finishSession: step 9 - update UI');
   const mm=Math.floor(sessTimeSec/60),ss=sessTimeSec%60;
   document.getElementById('finTime').textContent=mm+'m '+ss+'s';
