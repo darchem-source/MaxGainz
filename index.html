@@ -4934,20 +4934,122 @@ function renderLastTimeRef(ex){
 }
 
 // Auto weight progression — called at session end
+// ── PROGRESSIVE OVERLOAD COACH ──
+// Multi-rule progression engine. Looks at the just-completed session AND
+// recent history for each exercise, then suggests one of:
+//   - increase (with confidence: high|medium)
+//   - hold     (mixed performance / under-performed)
+//   - reps     (push for top of range before adding weight)
+//   - deload   (3+ session stall at same weight)
+// Each suggestion includes a plain-English `reason` and a `confidence` flag
+// so the UI can colour / emphasise differently.
 function computeProgressionSuggestions(){
-  const suggestions=[];
-  sessExs.forEach((ex,i)=>{
-    if(!ex.weight||ex.bw) return;
-    const rl=repsLogged[i]||{};
-    const repsArr=Object.values(rl);
+  const suggestions = [];
+  sessExs.forEach((ex, i) => {
+    if(!ex.weight || ex.bw) return;
+    const rl = repsLogged[i] || {};
+    const repsArr = Object.values(rl).map(r => parseInt(r) || 0).filter(r => r > 0);
     if(!repsArr.length) return;
-    const avg=repsArr.reduce((a,b)=>a+b,0)/repsArr.length;
-    const hi=parseInt((ex.reps||'8').split('–')[1])||12;
-    const lo=parseInt((ex.reps||'5').split('–')[0])||5;
-    const steps=getWeightSteps(ex,equipOverride[i]);
-    if(avg>hi+1){
-      const next=stepWeight(ex.weight,1,steps);
-      if(next!==ex.weight) suggestions.push({name:ex.name,current:ex.weight,suggested:next,reason:`Avg ${Math.round(avg)} reps exceeded target`});
+
+    // Rep range parse: '5–8' → lo=5, hi=8. Single number '8' → lo=hi=8.
+    const repsSpec = String(ex.reps || '8').split('–');
+    const lo = parseInt(repsSpec[0]) || 5;
+    const hi = parseInt(repsSpec[1]) || lo;
+
+    const minSet = Math.min(...repsArr);
+    const maxSet = Math.max(...repsArr);
+    const avgRaw = repsArr.reduce((a, b) => a + b, 0) / repsArr.length;
+    const avg = Math.round(avgRaw * 10) / 10;
+    const allAtOrAboveTop = repsArr.every(r => r >= hi);
+    const allBelowLo      = repsArr.every(r => r <  lo);
+
+    const steps = getWeightSteps(ex, equipOverride[i]);
+    const nextW = stepWeight(ex.weight, 1, steps);
+    const prevW = stepWeight(ex.weight, -1, steps);
+
+    // Cross-session history: last few sessions on this lift (excluding the
+    // one we're currently building, which isn't saved yet).
+    const history = (typeof getLiftHistoryByName === 'function')
+      ? getLiftHistoryByName(ex.name).slice(-4) // last 4 prior sessions
+      : [];
+    // Was the last session also at this weight? Used for confidence boost.
+    const lastSameWeight = history.length && history[history.length - 1].weight === ex.weight;
+    // 3+ sessions stuck at this exact weight (this session + 2 prior)
+    const stalled = history.length >= 2
+      && history.slice(-2).every(h => h.weight === ex.weight);
+
+    // ── Rule 1: All sets at OR above top of range → increase ──
+    if(allAtOrAboveTop && nextW !== ex.weight){
+      const overTop = repsArr.filter(r => r > hi).length;
+      let reason;
+      if(overTop === repsArr.length){
+        reason = `${repsArr.length}/${repsArr.length} sets above ${hi} reps — strong cue to add weight`;
+      } else if(lastSameWeight){
+        reason = `${repsArr.length}/${repsArr.length} sets at top of range, second session in a row — push to ${nextW}kg`;
+      } else {
+        reason = `${repsArr.length}/${repsArr.length} sets at top of range — try ${nextW}kg`;
+      }
+      suggestions.push({
+        name: ex.name,
+        current: ex.weight,
+        suggested: nextW,
+        action: 'increase',
+        confidence: lastSameWeight ? 'high' : 'medium',
+        reason,
+      });
+      return;
+    }
+
+    // ── Rule 2: Avg comfortably above top of range → increase ──
+    if(avgRaw > hi + 1 && nextW !== ex.weight){
+      suggestions.push({
+        name: ex.name,
+        current: ex.weight,
+        suggested: nextW,
+        action: 'increase',
+        confidence: 'medium',
+        reason: `Avg ${avg} reps exceeded ${hi} target — bump to ${nextW}kg`,
+      });
+      return;
+    }
+
+    // ── Rule 3: Stalled at same weight for 3+ sessions → deload ──
+    if(stalled && prevW !== ex.weight){
+      suggestions.push({
+        name: ex.name,
+        current: ex.weight,
+        suggested: prevW,
+        action: 'deload',
+        confidence: 'low',
+        reason: `Stuck at ${ex.weight}kg for 3 sessions — deload to ${prevW}kg and rebuild momentum`,
+      });
+      return;
+    }
+
+    // ── Rule 4: Mixed performance (some at top, some below low) → hold ──
+    if(maxSet >= hi && minSet < lo){
+      suggestions.push({
+        name: ex.name,
+        current: ex.weight,
+        suggested: ex.weight,
+        action: 'hold',
+        confidence: 'medium',
+        reason: `Range ${minSet}–${maxSet} — chase ${hi}+ on every set before adding weight`,
+      });
+      return;
+    }
+
+    // ── Rule 5: All below low end → hold ──
+    if(allBelowLo){
+      suggestions.push({
+        name: ex.name,
+        current: ex.weight,
+        suggested: ex.weight,
+        action: 'hold',
+        confidence: 'medium',
+        reason: `Hit ${avg} reps avg, below the ${lo} target — hold and focus on form / recovery`,
+      });
+      return;
     }
   });
   return suggestions;
@@ -8363,19 +8465,43 @@ function finishSession(){
   document.getElementById('finVol').textContent=volume>=1000?(Math.round(volume/100)/10)+'k':Math.round(volume);
   let progNote='';
   if(progressions.length){
-    const items = progressions.map((p,idx) => 
-      `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;${idx>0?'border-top:0.5px solid rgba(200,255,0,0.15);':''}">
-        <div style="font-size:12px;color:var(--text);"><strong>${p.name}</strong></div>
-        <div style="font-size:12px;color:var(--accent);font-weight:700;">${p.current}kg → ${p.suggested}kg</div>
-      </div>`
-    ).join('');
-    progNote = `<div style="margin-top:12px;background:rgba(200,255,0,0.08);border:0.5px solid rgba(200,255,0,0.3);border-radius:12px;padding:12px;">
-      <div style="font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">⬆ Suggested Progressions</div>
-      ${items}
-      <div style="display:flex;gap:8px;margin-top:10px;">
-        <button onclick="applyProgressions(true)" style="flex:1;background:var(--accent);color:#000;border:none;border-radius:8px;padding:10px;font-size:12px;font-weight:800;cursor:pointer;">✓ Apply All</button>
+    // Group by action type so the user sees increases first, then holds, then deloads
+    const order = { increase:0, hold:1, reps:2, deload:3 };
+    const sorted = [...progressions].sort((a,b) => (order[a.action]??9) - (order[b.action]??9));
+    const ACTION_META = {
+      increase: { icon:'⬆', label:'Increase',     color:'var(--accent)',   bg:'rgba(200,255,0,0.10)',   border:'rgba(200,255,0,0.35)' },
+      hold:     { icon:'⏸', label:'Hold',         color:'var(--accent2)',  bg:'rgba(0,212,255,0.08)',   border:'rgba(0,212,255,0.30)' },
+      reps:     { icon:'🔁', label:'Push reps',    color:'var(--accent2)',  bg:'rgba(0,212,255,0.08)',   border:'rgba(0,212,255,0.30)' },
+      deload:   { icon:'⬇', label:'Deload',       color:'#ff8c42',         bg:'rgba(255,140,66,0.08)',  border:'rgba(255,140,66,0.30)' },
+    };
+    // Are there any actual weight changes to apply?
+    const hasIncrease = sorted.some(p => p.action === 'increase' || p.action === 'deload');
+    const items = sorted.map((p, idx) => {
+      const meta = ACTION_META[p.action] || ACTION_META.hold;
+      const arrow = p.suggested === p.current
+        ? `<span style="color:var(--text2);">${p.current}kg</span>`
+        : `<span>${p.current}kg → <strong style="color:${meta.color};">${p.suggested}kg</strong></span>`;
+      const conf = p.confidence === 'high' ? '· strong' : p.confidence === 'low' ? '· tentative' : '';
+      return `<div style="padding:10px 0;${idx>0?'border-top:0.5px solid rgba(255,255,255,0.06);':''}">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:4px;">
+          <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0;">
+            <span style="font-size:14px;flex-shrink:0;">${meta.icon}</span>
+            <div style="font-size:13px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.name}</div>
+          </div>
+          <div style="font-size:12px;font-weight:700;flex-shrink:0;">${arrow}</div>
+        </div>
+        <div style="font-size:11px;color:var(--text2);line-height:1.45;padding-left:20px;">${meta.label} ${conf} — ${p.reason}</div>
+      </div>`;
+    }).join('');
+    const buttons = hasIncrease ? `
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button onclick="applyProgressions(true)" style="flex:1;background:var(--accent);color:#000;border:none;border-radius:8px;padding:10px;font-size:12px;font-weight:800;cursor:pointer;">✓ Apply weight changes</button>
         <button onclick="applyProgressions(false)" style="flex:1;background:transparent;border:0.5px solid var(--border);color:var(--text2);border-radius:8px;padding:10px;font-size:12px;font-weight:700;cursor:pointer;">Skip</button>
-      </div>
+      </div>` : `
+      <div style="margin-top:10px;font-size:11px;color:var(--text2);text-align:center;">Notes only — no weight changes to apply</div>`;
+    progNote = `<div style="margin-top:12px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:12px;">
+      <div style="font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">📈 Coach's Notes</div>
+      ${items}${buttons}
     </div>`;
   }
   document.getElementById('finSummary').innerHTML=sessDay+' Day · '+sessExs.length+' exercises'+progNote;
@@ -10677,8 +10803,11 @@ let _exerciseNotes = {}; // keyed by exercise name during current session
 
 function applyProgressions(apply){
   const progs = window._pendingProgressions || [];
-  if(apply && progs.length){
-    progs.forEach(p => {
+  // Only the suggestions that actually change weight should mutate state.
+  // 'hold' / 'reps' suggestions are coaching notes, no weight change.
+  const weightChanges = progs.filter(p => p.suggested && p.suggested !== p.current);
+  if(apply && weightChanges.length){
+    weightChanges.forEach(p => {
       customWeights[p.name] = p.suggested;
       [ULF, PPL].forEach(prog => Object.values(prog).forEach(dayExs => dayExs.forEach(ex => {
         if(ex.name === p.name) ex.weight = p.suggested;
@@ -10689,16 +10818,21 @@ function applyProgressions(apply){
     if(lastSess) lastSess.progressions = progs;
     saveLocalCache();
     // Save updated weights to cloud
-    progs.forEach(p => cloudSaveWeight(p.name, p.suggested));
+    weightChanges.forEach(p => cloudSaveWeight(p.name, p.suggested));
   }
   window._pendingProgressions = null;
   // Hide the suggestion panel
   const finSummary = document.getElementById('finSummary');
   if(finSummary){
-    // Remove just the suggestion block by re-rendering without it
     const html = finSummary.innerHTML;
-    const idx = html.indexOf('<div style="margin-top:12px;background:rgba(200,255,0');
-    if(idx > -1) finSummary.innerHTML = html.substring(0, idx) + (apply ? '<div style="margin-top:8px;font-size:12px;color:var(--accent);">✓ Progressions applied</div>' : '<div style="margin-top:8px;font-size:12px;color:var(--text2);">Progressions skipped</div>');
+    // New marker is "📈 Coach's Notes"; legacy was the lime gradient block
+    const idxNew = html.indexOf('<div style="margin-top:12px;background:var(--surface2)');
+    const idxLegacy = html.indexOf('<div style="margin-top:12px;background:rgba(200,255,0');
+    const idx = idxNew > -1 ? idxNew : idxLegacy;
+    const closer = apply
+      ? '<div style="margin-top:8px;font-size:12px;color:var(--accent);">✓ ' + (weightChanges.length ? weightChanges.length + ' weight change' + (weightChanges.length !== 1 ? 's' : '') + ' applied' : 'Notes acknowledged') + '</div>'
+      : '<div style="margin-top:8px;font-size:12px;color:var(--text2);">Suggestions skipped</div>';
+    if(idx > -1) finSummary.innerHTML = html.substring(0, idx) + closer;
   }
 }
 
