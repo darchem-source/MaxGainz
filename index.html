@@ -599,36 +599,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
       <div class="section-label">ESTIMATED 1RM</div>
       <div class="card" style="padding:16px;"><div id="oneRMChart"></div></div>
 
-      <!-- Body Weight Tracker -->
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px 8px;">
-        <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text2);">BODY WEIGHT</div>
-        <button onclick="openBWLog()" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer;">+ Log weight</button>
-      </div>
-      <div class="card" style="padding:16px;" id="bwCard">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-          <div>
-            <div style="font-size:15px;font-weight:700;" id="bwCurrentLabel">–</div>
-            <div style="font-size:12px;color:var(--text2);margin-top:2px;" id="bwSubLabel">No entries yet</div>
-          </div>
-          <div style="text-align:right;">
-            <div style="font-size:26px;font-weight:900;color:var(--accent);line-height:1;" id="bwCurrentVal">–</div>
-            <div style="font-size:11px;color:var(--text2);margin-top:3px;" id="bwTrend"></div>
-          </div>
-        </div>
-        <div style="display:flex;gap:6px;margin-bottom:12px;" id="bwRangeRow">
-          <div class="chip active" onclick="setBWRange(30,this)">1M</div>
-          <div class="chip" onclick="setBWRange(90,this)">3M</div>
-          <div class="chip" onclick="setBWRange(180,this)">6M</div>
-          <div class="chip" onclick="setBWRange(0,this)">All</div>
-        </div>
-        <!-- Chart: Y-axis + SVG -->
-        <div style="display:flex;height:110px;gap:0;">
-          <div id="bwYAxis" style="width:34px;flex-shrink:0;position:relative;"></div>
-          <div id="bwChart" style="flex:1;min-width:0;overflow:visible;"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--text2);margin-left:34px;" id="bwChartX"></div>
-      </div>
-
       <div class="section-label">MUSCLE HEATMAP</div>
       <div class="card" style="padding:16px;"><div id="muscleHeatmap"></div></div>
 
@@ -744,6 +714,37 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
               <input type="number" id="profileWeight" placeholder="80" style="flex:1;padding:10px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:14px;color:var(--text);">
               <div style="padding:10px;background:var(--surface2);border-radius:8px;font-size:12px;font-weight:700;color:var(--text2);">kg</div>
             </div>
+          </div>
+        </div>
+
+        <!-- Body Weight Tracker (history chart) -->
+        <div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <label style="font-size:12px;font-weight:700;color:var(--text2);">Weight History</label>
+            <button onclick="openBWLog()" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer;">+ Log weight</button>
+          </div>
+          <div class="card" style="padding:16px;" id="bwCard">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+              <div>
+                <div style="font-size:15px;font-weight:700;" id="bwCurrentLabel">–</div>
+                <div style="font-size:12px;color:var(--text2);margin-top:2px;" id="bwSubLabel">No entries yet</div>
+              </div>
+              <div style="text-align:right;">
+                <div style="font-size:26px;font-weight:900;color:var(--accent);line-height:1;" id="bwCurrentVal">–</div>
+                <div style="font-size:11px;color:var(--text2);margin-top:3px;" id="bwTrend"></div>
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;margin-bottom:12px;" id="bwRangeRow">
+              <div class="chip active" onclick="setBWRange(30,this)">1M</div>
+              <div class="chip" onclick="setBWRange(90,this)">3M</div>
+              <div class="chip" onclick="setBWRange(180,this)">6M</div>
+              <div class="chip" onclick="setBWRange(0,this)">All</div>
+            </div>
+            <div style="display:flex;height:110px;gap:0;">
+              <div id="bwYAxis" style="width:34px;flex-shrink:0;position:relative;"></div>
+              <div id="bwChart" style="flex:1;min-width:0;overflow:visible;"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--text2);margin-left:34px;" id="bwChartX"></div>
           </div>
         </div>
 
@@ -10753,7 +10754,6 @@ function renderProgress(){
   renderPBCards();
   renderCalendar();
   selLift('bench',document.querySelector('#liftTabs .chip.active')||document.querySelector('#liftTabs .chip'));
-  renderBWChart();
   renderMuscleHeatmap();
   renderMuscleBalance();
   renderStrengthRatios();
@@ -14215,6 +14215,8 @@ const PROFILE_ICONS = [
 const AVATARS=['🏋️','💪','🏆','⚡','🔥','🎯','🚀','💯','😤','🤸'];
 
 function renderProfile(){
+  // Body weight history chart (moved from Progress tab)
+  if(typeof renderBWChart === 'function') renderBWChart();
   document.getElementById('profileFirstName').value=userProfile.firstName||'';
   document.getElementById('profileLastName').value=userProfile.lastName||'';
   // Populate email from authenticated user if not already set
