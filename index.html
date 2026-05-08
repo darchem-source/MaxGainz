@@ -119,7 +119,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 .exercise-info-icon:hover { opacity:1; transform:scale(1.15); }
 @keyframes iconPulse { 0%,100%{opacity:1;} 50%{opacity:0.4;color:var(--accent);} }
 .curr-name.pulse-first-time { animation:iconPulse 1.4s ease-in-out 2; }
-.toast { position:fixed; bottom:100px; left:50%; transform:translateX(-50%) translateY(20px); background:#1e1e2a; border:0.5px solid rgba(255,77,106,0.4); color:#ff4d6a; font-size:13px; font-weight:700; padding:10px 18px; border-radius:20px; z-index:9999; opacity:0; transition:opacity 0.2s, transform 0.2s; pointer-events:none; white-space:nowrap; }
+.toast { position:fixed; bottom:100px; left:50%; transform:translateX(-50%) translateY(20px); background:#1e1e2a; border:0.5px solid var(--border); color:var(--text); font-size:13px; font-weight:700; padding:10px 18px; border-radius:20px; z-index:9999; opacity:0; transition:opacity 0.2s, transform 0.2s; pointer-events:none; white-space:normal; max-width:min(90vw, 360px); text-align:center; line-height:1.4; }
+.toast.tone-info    { border-color:rgba(0,212,255,0.4); color:var(--accent2); }
+.toast.tone-success { border-color:rgba(76,255,145,0.4); color:#4cff91; }
+.toast.tone-warning { border-color:rgba(255,165,0,0.45); color:#ffb547; }
+.toast.tone-error   { border-color:rgba(255,77,106,0.4); color:#ff4d6a; }
 .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
 #offlineBanner { position:fixed; bottom:68px; left:50%; transform:translateX(-50%) translateY(20px); width:100%; max-width:420px; z-index:99; background:#1a1a1a; border:1px solid rgba(255,140,66,0.35); border-radius:10px 10px 0 0; color:#ff8c42; font-size:12px; font-weight:700; text-align:center; padding:8px 16px; opacity:0; transition:opacity 0.25s ease, transform 0.25s ease; pointer-events:none; }
 #offlineBanner.show { opacity:1; transform:translateX(-50%) translateY(0); }
@@ -2042,16 +2046,59 @@ function haptic(pattern){
 }
 
 // ── TOAST NOTIFICATIONS ──
+// Two call shapes (back-compat):
+//   showToast(msg)                                — info, 2200ms
+//   showToast(msg, 4000)                          — info, 4000ms (legacy number arg)
+//   showToast(msg, { tone: 'success', duration }) — explicit tone
+// Tone is auto-detected from common emoji prefixes when not specified.
 let _toastTimer = null;
-function showToast(msg, duration=2200){
+function showToast(msg, opts){
+  let duration = 2200, tone = null;
+  if(typeof opts === 'number') duration = opts;
+  else if(opts && typeof opts === 'object'){
+    if(opts.duration) duration = opts.duration;
+    if(opts.tone) tone = opts.tone;
+  }
+  if(!tone){
+    // Auto-detect tone from emoji prefix (works on first character including multi-codepoint emojis)
+    const m = String(msg).match(/^([\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}✅✔✖⚠️]+)/u);
+    const prefix = m ? m[0] : '';
+    if(/⚠|🚫|🛑/.test(prefix))               tone = 'warning';
+    else if(/❌|💥/.test(prefix))              tone = 'error';
+    else if(/✅|✓|🎉|🏆|💪|🚀|🎯|🔥/.test(prefix)) tone = 'success';
+    else                                       tone = 'info';
+  }
   const el = document.getElementById('appToast');
   if(!el) return;
   if(_toastTimer){ clearTimeout(_toastTimer); el.classList.remove('show'); }
   el.textContent = msg;
+  el.className = 'toast tone-' + tone;
   // Force reflow so transition fires even if toast was just visible
   void el.offsetWidth;
   el.classList.add('show');
   _toastTimer = setTimeout(() => { el.classList.remove('show'); _toastTimer = null; }, duration);
+}
+
+// ── INFO MODAL — for multi-line content that doesn't fit a toast ──
+function showInfoModal(title, body){
+  let m = document.getElementById('infoModalGeneric');
+  if(!m){
+    m = document.createElement('div');
+    m.id = 'infoModalGeneric';
+    m.className = 'modal-ov';
+    m.onclick = (ev) => { if(ev.target === m) m.classList.remove('open'); };
+    m.innerHTML = `
+      <div class="modal" style="max-height:80vh;overflow-y:auto;">
+        <div class="modal-handle"></div>
+        <div id="infoModalGenericTitle" style="font-size:18px;font-weight:800;margin-bottom:10px;"></div>
+        <div id="infoModalGenericBody" style="font-size:13px;color:var(--text);line-height:1.55;white-space:pre-wrap;margin-bottom:14px;"></div>
+        <button class="btn-p" style="width:100%;" onclick="document.getElementById('infoModalGeneric').classList.remove('open')">OK</button>
+      </div>`;
+    document.body.appendChild(m);
+  }
+  document.getElementById('infoModalGenericTitle').textContent = title || '';
+  document.getElementById('infoModalGenericBody').textContent  = body  || '';
+  m.classList.add('open');
 }
 
 async function sbFetch(path, options = {}, _isRetry = false) {
@@ -6800,7 +6847,7 @@ function finishSession(){
   // console.log('finishSession: COMPLETE ✅');
   }catch(e){
     console.error('finishSession crash at:', e.message, e.stack);
-    alert('Error saving session: ' + e.message);
+    showToast('❌ Error saving session: ' + e.message, { tone:'error', duration:5000 });
   }
 }
 
@@ -7555,7 +7602,7 @@ function openCreateChooser(){
 
 function openCreateProgramme(){
   if(customWorkouts.length>=5){
-    alert('You can have a maximum of 5 custom programmes. Delete one to create a new one.');
+    showToast('⚠️ Max 5 custom programmes — delete one to create another', { duration:4000 });
     return;
   }
   editingCustomIdx=-1;
@@ -7765,7 +7812,7 @@ function addExToSession(name){
 
 function sessRemoveExercise(){
   if(sessExs.length<=1){
-    alert('Cannot remove the only exercise in the session.');
+    showToast('⚠️ Need at least one exercise in the session');
     return;
   }
   const name=sessExs[curIdx].name;
@@ -7808,8 +7855,8 @@ function addHIITEx(name){
 
 function saveCustomWorkout(){
   const name=document.getElementById('customProgName').value.trim();
-  if(!name){alert('Please enter a programme name');return;}
-  if(!buildingProg.subcategories.length){alert('Please add at least one day/subcategory');return;}
+  if(!name){showToast('⚠️ Please enter a programme name');return;}
+  if(!buildingProg.subcategories.length){showToast('⚠️ Add at least one day to your programme');return;}
   buildingProg.name=name;
   if(editingCustomIdx>=0) customWorkouts[editingCustomIdx]=buildingProg;
   else customWorkouts.push(buildingProg);
@@ -7949,7 +7996,7 @@ function openChangePB(idx){
 }
 
 function addPBTile(){
-  if(pbLifts.length>=8){alert('Maximum 8 PB tiles reached.');return;}
+  if(pbLifts.length>=8){showToast('⚠️ Max 8 PB tiles — remove one first');return;}
   editingPBIdx=-1;
   document.getElementById('pbPickerTitle').textContent='Add a lift to track';
   openPBPicker();
@@ -8498,9 +8545,9 @@ function _obStep1Next() {
   // Capture body weight from input before navigating away
   const bwEl = document.getElementById('ob_bw');
   if(bwEl && bwEl.value) _ob.bodyWeight = parseFloat(bwEl.value) || null;
-  if(!_ob.experienceLevel) { alert('Please select your experience level.'); return; }
+  if(!_ob.experienceLevel) { showToast('⚠️ Please select your experience level'); return; }
   const bwKg = _ob.bodyWeightUnit === 'lbs' ? (_ob.bodyWeight||0) / 2.205 : (_ob.bodyWeight||0);
-  if(!_ob.bodyWeight || bwKg < 30 || bwKg > 300) { alert('Please enter a valid body weight (30–300 kg).'); return; }
+  if(!_ob.bodyWeight || bwKg < 30 || bwKg > 300) { showToast('⚠️ Enter a valid body weight (30–300 kg)'); return; }
   renderOnboardStep(2);
 }
 
@@ -8510,8 +8557,8 @@ function _obStep4Next() {
 }
 
 function _obStep6Next() {
-  if(!_ob.trainingGoal)     { alert('Please select a training goal.'); return; }
-  if(!_ob.trainingFrequency){ alert('Please select your training frequency.'); return; }
+  if(!_ob.trainingGoal)     { showToast('⚠️ Please select a training goal'); return; }
+  if(!_ob.trainingFrequency){ showToast('⚠️ Please select your training frequency'); return; }
   renderOnboardStep(7);
 }
 
@@ -9011,9 +9058,9 @@ function renderCreateHIITExercises(){
 function saveCustomHIIT(){
   if(!buildingHIIT) return;
   const name = document.getElementById('createHIITName').value.trim();
-  if(!name){ alert('Please enter a workout name'); return; }
-  if(!buildingHIIT.exercises.length){ alert('Please add at least one exercise'); return; }
-  if(buildingHIIT.exercises.some(e => !e.name.trim())){ alert('All exercises need a name'); return; }
+  if(!name){ showToast('⚠️ Please enter a workout name'); return; }
+  if(!buildingHIIT.exercises.length){ showToast('⚠️ Add at least one exercise'); return; }
+  if(buildingHIIT.exercises.some(e => !e.name.trim())){ showToast('⚠️ All exercises need a name'); return; }
   
   const newHIIT = {
     name: name,
@@ -9359,7 +9406,7 @@ function showCalDayDetail(dateStr){
     const vol = s.volume ? ` · ${s.volume}kg vol` : '';
     return `🏋️ ${s.day} · ${s.exercises} exercises · ${s.durationMin}min${vol}`;
   }).join('\n');
-  alert(`${dateLabel}\n\n${lines}`);
+  showInfoModal(dateLabel, lines);
 }
 
 // ── BODY WEIGHT TRACKER ──
@@ -12227,7 +12274,7 @@ function saveProfile(){
   cloudSaveProfile();
   
   // Show confirmation
-  alert('✅ Profile saved!');
+  showToast('✅ Profile saved!');
   renderToday(); // Update greeting if name changed
   renderBWChart(); // Reflect new weight in body weight graph
 }
@@ -12578,7 +12625,7 @@ async function sendPasswordReset(){
     }
     
     document.getElementById('resetEmail').value = '';
-    alert('✅ Password reset link sent to ' + email + '\n\nCheck your email (including spam folder) for a reset link. Click it to create a new password.');
+    showInfoModal('📧 Reset link sent', 'We sent a password reset link to ' + email + '.\n\nCheck your email (including spam folder) and click the link to create a new password.');
     showAuthLogin();
   }catch(e){
     showAuthError(e.message);
@@ -12614,7 +12661,7 @@ async function sendConfirmationEmail(){
     }
 
     document.getElementById('resendEmail').value = '';
-    alert('✅ Confirmation email sent to ' + email + '\n\nCheck your email (including spam folder) for the confirmation link. Click it to activate your account.');
+    showInfoModal('📧 Confirmation email sent', 'We sent a confirmation email to ' + email + '.\n\nCheck your email (including spam folder) and click the link to activate your account.');
     showAuthLogin();
   }catch(e){
     console.error('[RESEND] Error:', e);
@@ -12750,12 +12797,12 @@ async function deleteUserAccount(){
       }
     });
     
-    alert('✅ Your account has been deleted successfully. All your data has been removed.');
+    showToast('✅ Account deleted — all your data has been removed', { duration:4500 });
     saveAuthState(null, null);
     localStorage.clear();
     location.reload();
   }catch(e){
-    alert('Error deleting account: ' + e.message);
+    showToast('❌ Error deleting account: ' + e.message, { tone:'error', duration:5000 });
   }
 }
 
