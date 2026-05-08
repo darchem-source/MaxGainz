@@ -37,7 +37,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 .ac { color: var(--accent); }
 .section-label { font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text2); padding: 14px 20px 8px; }
 .card { background: var(--surface); border: 0.5px solid var(--border); border-radius: 16px; margin: 0 16px 10px; overflow: hidden; }
-.btn-p { background: var(--accent); color: #000; border: none; border-radius: 12px; font-size: 15px; font-weight: 800; padding: 14px; cursor: pointer; transition: all 0.15s; }
+.btn-p { background: var(--accent); color: #000; border: none; border-radius: 12px; font-size: 15px; font-weight: 800; padding: 16px; min-height: 48px; cursor: pointer; transition: all 0.15s; }
 .btn-p:active { transform: scale(0.97); }
 .btn-s { background: var(--surface2); color: var(--text); border: 0.5px solid var(--border); border-radius: 12px; font-size: 13px; font-weight: 600; padding: 12px 16px; cursor: pointer; }
 .tag { font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 6px; }
@@ -159,7 +159,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 .wadj-val { font-size:24px; font-weight:900; color:var(--accent); min-width:80px; text-align:center; }
 .wadj-unit { font-size:12px; color:var(--text2); margin-right:6px; }
 .set-controls { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
-.sc-btn { background:var(--surface2); border:0.5px solid var(--border); border-radius:9px; color:var(--text); font-size:18px; font-weight:700; width:34px; height:34px; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; transition:all 0.12s; }
+.sc-btn { background:var(--surface2); border:0.5px solid var(--border); border-radius:11px; color:var(--text); font-size:20px; font-weight:700; width:44px; height:44px; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; transition:all 0.12s; }
 .bar-btn { background:var(--surface3); border:0.5px solid var(--border); border-radius:8px; color:var(--text2); font-size:11px; font-weight:700; padding:5px 9px; cursor:pointer; transition:all 0.12s; }
 .bar-btn.active { background:var(--accent); color:#000; border-color:var(--accent); }
 .ch-fmt-btn { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:12px; font-size:13px; font-weight:700; color:var(--text2); cursor:pointer; transition:all 0.15s; }
@@ -169,7 +169,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 .sc-btn:active { background:var(--accent); color:#000; }
 .sc-label { font-size:12px; color:var(--text2); flex:1; }
 .sets-row { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:10px; }
-.set-bub { min-width:52px; height:58px; border-radius:14px; border:1.5px solid var(--border); display:flex; flex-direction:column; align-items:center; justify-content:center; cursor:pointer; transition:all 0.15s; background:var(--surface2); padding:0 6px; }
+.set-bub { min-width:60px; height:60px; border-radius:14px; border:1.5px solid var(--border); display:flex; flex-direction:column; align-items:center; justify-content:center; cursor:pointer; transition:all 0.15s; background:var(--surface2); padding:0 8px; }
 .set-bub:active { transform:scale(0.92); }
 .set-bub { touch-action:pan-y; } /* allow vertical scroll but intercept horizontal swipe */
 .set-bub.done { background:var(--accent); border-color:var(--accent); }
@@ -185,9 +185,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 .rest-track { flex:1; height:6px; background:var(--surface3); border-radius:3px; overflow:hidden; }
 .rest-fill { height:100%; background:var(--accent2); border-radius:3px; transition:width 0.1s linear; }
 .act-row { display:flex; gap:8px; margin-top:4px; }
-.btn-swap { flex:1; background:var(--surface2); color:var(--text); border:0.5px solid var(--border); border-radius:12px; font-size:13px; font-weight:700; padding:12px; cursor:pointer; }
-.btn-next { flex:2; background:var(--accent); color:#000; border:none; border-radius:12px; font-size:14px; font-weight:800; padding:12px; cursor:pointer; transition:all 0.15s; }
+.btn-swap { flex:1; background:var(--surface2); color:var(--text); border:0.5px solid var(--border); border-radius:12px; font-size:14px; font-weight:700; padding:16px; min-height:48px; cursor:pointer; }
+.btn-next { flex:2; background:var(--accent); color:#000; border:none; border-radius:12px; font-size:15px; font-weight:800; padding:16px; min-height:48px; cursor:pointer; transition:all 0.15s; }
 .btn-next:active { transform:scale(0.97); }
+/* Larger touch targets in active session — gloves & sweaty hands.
+   Scoped to #s-active button. Excludes already-sized controls (.sc-btn,
+   .wadj-btn, .set-bub, .modal-handle, .chip) so dense rows don't bloat. */
+#s-active button:not(.sc-btn):not(.wadj-btn):not(.set-bub):not(.chip):not(.dp-chip):not(.day-badge) { min-height:44px; }
 .queue-wrap { margin:12px 16px 0; }
 .q-lbl { font-size:11px; font-weight:700; color:var(--text2); text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; }
 .qi { display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:12px; margin-bottom:6px; cursor:pointer; }
