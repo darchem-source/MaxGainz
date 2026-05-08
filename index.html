@@ -633,6 +633,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
       <div class="section-label">STRENGTH RATIOS</div>
       <div class="card" style="padding:16px;"><div id="strengthRatios"></div></div>
 
+      <div class="section-label">COMPOUND vs ISOLATION</div>
+      <div class="card" style="padding:16px;"><div id="compoundIsolation"></div></div>
+
       <div class="section-label">RECENT SESSIONS</div>
       <div class="card" id="recentSess"></div>
     </div>
@@ -10345,6 +10348,7 @@ function renderProgress(){
   renderMuscleHeatmap();
   renderMuscleBalance();
   renderStrengthRatios();
+  renderCompoundIsolation();
   const sorted=[...completedSessions].sort((a,b)=>b.date-a.date).slice(0,8);
   if(!sorted.length){document.getElementById('recentSess').innerHTML='<div style="padding:20px;text-align:center;color:var(--text2);font-size:13px;">No sessions yet — start your first workout!</div>';}
   else {
@@ -10846,6 +10850,202 @@ function renderStrengthRatios(){
       <div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--text2);">
         ${pbList.map(p => `<span><span style="color:var(--text);font-weight:700;">${p.val}kg</span> ${p.name}</span>`).join('')}
       </div>
+    </div>`;
+  }
+
+  el.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// COMPOUND vs ISOLATION — set-count ratio per muscle group
+// Surfaces imbalances like "8 sets curls vs 4 sets rows" so users can
+// rebalance accessory work toward compounds.
+// ─────────────────────────────────────────────────────────────────────
+const COMPOUND_LIFTS = new Set([
+  // Push
+  'Bench Press','Dumbbell Bench Press','Incline Bench Press','Incline Dumbbell Press','Incline Press',
+  'Decline Bench Press','Floor Press','Machine Chest Press',
+  'Overhead Press','Push Press','Dumbbell Shoulder Press','Seated Dumbbell Press','Arnold Press',
+  'Landmine Press','Guillotine Press',
+  'Dips','Push-Ups','Push-Ups (weighted)','Plyo Push-Ups','Close Grip Bench','Diamond Push-Ups',
+  // Pull
+  'Pull-Ups','Chin-Ups','Lat Pulldown','Pulldowns',
+  'Barbell Row','Bent Over Barbell Row','Dumbbell Row','Cable Row','T-Bar Row','Chest-Supported Row','Meadows Row',
+  'Rack Pulls','Rowing Machine',
+  // Legs / posterior chain
+  'Squat','Front Squat','Hack Squat','Leg Press','Leg Press (Single Leg)',
+  'Bulgarian Split Squat','Bulgarian Split Squats','Lunges','Walking Lunges','Step Ups','Goblet Squat',
+  'Hip Thrust','Hip Thrusts','Glute Bridge',
+  'Deadlift','Sumo Deadlift','Romanian Deadlift','Stiff-Leg Deadlift','Good Mornings',
+  'Dumbbell RDL',
+  // Cardio/conditioning compounds
+  'Burpees','Dumbbell Thrusters','Wall Balls','Kettlebell Swings',
+]);
+
+function classifyExercise(exName){
+  if(COMPOUND_LIFTS.has(exName)) return 'compound';
+  // Heuristic fallback for unknown names
+  const l = exName.toLowerCase();
+  if(/curl|tricep|skull|pushdown|extension|fly|raise|shrug|crunch|plank|leg curl|leg ext|calf|kickback|pull[- ]?apart|wood chop|pallof|crunch|sit.?up/.test(l)) return 'isolation';
+  if(/squat|lunge|step.up|leg press|hip thrust|deadlift|press|row|pull[- ]?up|chin/.test(l)) return 'compound';
+  return 'isolation'; // default conservative — accessory unless proven compound
+}
+
+// Returns per-group breakdown of compound vs isolation sets+volume in window.
+function calcCompoundIsolation(windowDays){
+  const since = new Date(Date.now() - windowDays * 86400000);
+  const groups = ['push','pull','legs'];
+  const out = { total:{compound:0, isolation:0, compoundVol:0, isolationVol:0} };
+  groups.forEach(g => out[g] = { compound:0, isolation:0, exerciseSets:{} });
+  // exerciseSets tracks per-exercise set counts so we can surface specific call-outs
+  out._exerciseSets = {};
+
+  completedSessions.filter(s => !s.manualActivity && s.setLog && new Date(s.date) >= since).forEach(s => {
+    Object.entries(s.setLog).forEach(([exName, data]) => {
+      const splits = getSplits(exName);
+      if(!splits) return;
+      const sets = data.sets || 0;
+      if(!sets) return;
+      const repsArr = Array.isArray(data.reps) ? data.reps : (data.reps ? [data.reps] : []);
+      const repsSum = repsArr.reduce((a, r) => a + (parseInt(r) || 0), 0);
+      let weight = data.weight || 0;
+      if(!weight){
+        const dbEx = EXDB.find(e => e.name === exName);
+        if((dbEx && dbEx.bw) || exName === 'Abdominal Work') weight = userProfile.weight || 80;
+      }
+      const vol = weight * (repsSum || sets * 8); // estimate 8 reps if not logged
+      const type = classifyExercise(exName); // 'compound' | 'isolation'
+      const volKey = type === 'compound' ? 'compoundVol' : 'isolationVol';
+      out.total[type] += sets;
+      out.total[volKey] += vol;
+      // Track per-exercise totals
+      if(!out._exerciseSets[exName]) out._exerciseSets[exName] = { sets:0, type, group:null };
+      out._exerciseSets[exName].sets += sets;
+      // Per-group split (skip core)
+      splits.forEach(({cat, f}) => {
+        if(cat === 'core') return;
+        if(!out[cat]) return;
+        out[cat][type] += sets * f;
+        if(!out._exerciseSets[exName].group) out._exerciseSets[exName].group = cat;
+      });
+    });
+  });
+  return out;
+}
+
+let _ciWindow = 7;
+function setCIWindow(d){ _ciWindow = d; renderCompoundIsolation(); }
+
+function renderCompoundIsolation(){
+  const el = document.getElementById('compoundIsolation');
+  if(!el) return;
+  const data = calcCompoundIsolation(_ciWindow);
+  const tot = data.total.compound + data.total.isolation;
+
+  const winChip = (d, label) => `<div class="chip${_ciWindow === d ? ' active' : ''}" onclick="setCIWindow(${d})" style="font-size:11px;padding:6px 12px;">${label}</div>`;
+  const toggle = `<div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+    ${winChip(7, 'This week')}${winChip(14, 'Last 2 weeks')}${winChip(28, 'Last 4 weeks')}
+  </div>`;
+
+  if(tot === 0){
+    el.innerHTML = toggle + `<div style="padding:8px;text-align:center;color:var(--text2);font-size:13px;">No sessions in the last ${_ciWindow} days.</div>`;
+    return;
+  }
+
+  const cPct = Math.round((data.total.compound  / tot) * 100);
+  const iPct = 100 - cPct;
+  const overallStatus = cPct >= 50 && cPct <= 80
+    ? { label:'✓ Balanced', color:'#4cff91' }
+    : cPct < 50
+      ? { label:'⚠ Low compound work', color:'#ff8c42' }
+      : { label:'↑ Compound-heavy', color:'var(--accent2)' };
+
+  // Overall stacked bar
+  let html = toggle;
+  html += `<div style="margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;">
+    <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;">Overall this period</div>
+    <div style="font-size:11px;font-weight:700;color:${overallStatus.color};">${overallStatus.label}</div>
+  </div>
+  <div style="display:flex;height:18px;border-radius:9px;overflow:hidden;background:var(--surface2);margin-bottom:6px;">
+    <div style="width:${cPct}%;background:rgba(76,255,145,0.7);border-right:0.5px solid rgba(76,255,145,0.4);display:flex;align-items:center;justify-content:flex-end;padding-right:${cPct > 12 ? '8px' : '0'};font-size:10px;font-weight:800;color:#0a0a0f;">${cPct >= 12 ? cPct + '%' : ''}</div>
+    <div style="width:${iPct}%;background:rgba(255,140,66,0.7);display:flex;align-items:center;justify-content:flex-start;padding-left:${iPct > 12 ? '8px' : '0'};font-size:10px;font-weight:800;color:#0a0a0f;">${iPct >= 12 ? iPct + '%' : ''}</div>
+  </div>
+  <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text2);margin-bottom:14px;">
+    <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:rgba(76,255,145,0.7);margin-right:5px;"></span>Compound (${Math.round(data.total.compound)} sets)</span>
+    <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:rgba(255,140,66,0.7);margin-right:5px;"></span>Isolation (${Math.round(data.total.isolation)} sets)</span>
+  </div>`;
+
+  // Per-group breakdown
+  const groupMeta = {
+    push: { label:'Push', desc:'Chest · Shoulders · Triceps' },
+    pull: { label:'Pull', desc:'Back · Biceps' },
+    legs: { label:'Legs', desc:'Quads · Hams · Glutes · Calves' }
+  };
+  ['push','pull','legs'].forEach(g => {
+    const grp = data[g];
+    const total = grp.compound + grp.isolation;
+    if(total < 1) return;
+    const cP = Math.round((grp.compound / total) * 100);
+    const iP = 100 - cP;
+    const status = cP >= 55
+      ? { label:'✓ Balanced', color:'#4cff91' }
+      : cP >= 35
+        ? { label:'⚠ Heavy on accessories', color:'#ff8c42' }
+        : { label:'⚠ Mostly isolation', color:'#ff4d6a' };
+    html += `<div style="margin-bottom:12px;padding:12px;background:var(--surface2);border-radius:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--text);">${groupMeta[g].label} <span style="font-size:10px;color:var(--text2);font-weight:500;">· ${Math.round(total)} sets</span></div>
+          <div style="font-size:10px;color:var(--text2);margin-top:1px;">${groupMeta[g].desc}</div>
+        </div>
+        <span style="font-size:10px;font-weight:700;color:${status.color};white-space:nowrap;">${status.label}</span>
+      </div>
+      <div style="display:flex;height:12px;border-radius:6px;overflow:hidden;background:var(--surface3);">
+        <div style="width:${cP}%;background:rgba(76,255,145,0.6);"></div>
+        <div style="width:${iP}%;background:rgba(255,140,66,0.6);"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text2);margin-top:4px;">
+        <span>${cP}% compound · ${Math.round(grp.compound)} sets</span>
+        <span>${Math.round(grp.isolation)} sets · ${iP}% isolation</span>
+      </div>
+    </div>`;
+  });
+
+  // Specific call-outs: high-isolation exercises that are out-of-balance with their compound peers
+  // e.g., curls > rows for pull, lateral raises > OHP for shoulders, leg curl > squat for legs
+  const exSets = data._exerciseSets;
+  const setsOf = (...names) => names.reduce((a, n) => a + (exSets[n]?.sets || 0), 0);
+  const callouts = [];
+  // Pull: curls vs rows/pull-ups
+  const curlSets = setsOf('Barbell Curls','Barbell Curl','Dumbbell Curl','Hammer Curl','EZ Bar Curl','Concentration Curl','Preacher Curl','Incline Dumbbell Curl','Cable Curl','Standing One-Arm Cable Curl');
+  const rowSets  = setsOf('Barbell Row','Bent Over Barbell Row','Dumbbell Row','Cable Row','T-Bar Row','Chest-Supported Row','Meadows Row','Pull-Ups','Chin-Ups','Lat Pulldown','Pulldowns');
+  if(curlSets >= 4 && curlSets > rowSets * 1.3 && rowSets > 0){
+    callouts.push(`💪 ${curlSets} sets of curls vs ${rowSets} sets of rows/pulldowns. Rows build the back biceps depend on — try equalising.`);
+  } else if(curlSets >= 6 && rowSets === 0){
+    callouts.push(`💪 ${curlSets} sets of curls but zero rows/pull-ups this period. Compound pulls would do more for arm growth.`);
+  }
+  // Push: lateral raises + tricep isolation vs press
+  const sideRaiseSets = setsOf('Lateral Raises','Cable Lateral Raise','Arnold Press');
+  const tricepIso = setsOf('Tricep Pushdown','Triceps Pushdowns','Skull Crushers','Triceps Extension','Overhead Tricep Extension');
+  const pressSets = setsOf('Bench Press','Dumbbell Bench Press','Incline Bench Press','Incline Dumbbell Press','Overhead Press','Push Press','Dumbbell Shoulder Press');
+  if(tricepIso + sideRaiseSets >= 6 && pressSets > 0 && (tricepIso + sideRaiseSets) > pressSets * 1.3){
+    callouts.push(`🏋 ${Math.round(tricepIso + sideRaiseSets)} accessory push sets vs ${pressSets} pressing sets. Heavy presses drive the most push gains.`);
+  }
+  // Legs: leg curl/ext/calf vs squat/leg press/lunge
+  const legIso = setsOf('Leg Curl','Leg Curls','Leg Extension','Leg Extensions','Calf Raises','Calf Raise','Donkey Calf Raise','Seated Calf Raise');
+  const legComp = setsOf('Squat','Front Squat','Leg Press','Bulgarian Split Squat','Lunges','Walking Lunges','Step Ups','Goblet Squat','Hack Squat','Romanian Deadlift','Deadlift');
+  if(legIso >= 6 && legComp > 0 && legIso > legComp * 1.4){
+    callouts.push(`🦵 ${legIso} leg-isolation sets vs ${legComp} compound leg sets. Squat/RDL/lunge variations drive growth more than machine work.`);
+  }
+
+  if(callouts.length){
+    html += `<div style="margin-top:6px;padding:10px 12px;background:rgba(255,140,66,0.07);border:1px solid rgba(255,140,66,0.25);border-radius:10px;">
+      <div style="font-size:10px;font-weight:700;color:#ff8c42;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Specific imbalances</div>
+      ${callouts.map(c => `<div style="font-size:11px;color:var(--text);line-height:1.45;margin-bottom:4px;">${c}</div>`).join('')}
+    </div>`;
+  } else if(tot >= 12){
+    html += `<div style="margin-top:6px;padding:10px 12px;background:rgba(76,255,145,0.07);border:1px solid rgba(76,255,145,0.25);border-radius:10px;font-size:11px;color:var(--text);">
+      ✓ No major imbalances detected. Compound and isolation work look proportional across muscle groups.
     </div>`;
   }
 
