@@ -2131,6 +2131,106 @@ function showInfoModal(title, body){
   m.classList.add('open');
 }
 
+// ── ACTION SHEET (bottom-sheet menu) ──
+// Lightweight context-menu replacement for long-press / right-click.
+//   showActionSheet('Bench Press', [
+//     { icon:'✏️', label:'Add note', onclick: () => openExerciseNote() },
+//     { icon:'🗑', label:'Remove', danger:true, onclick: () => doRemove() },
+//   ])
+function showActionSheet(title, actions){
+  let m = document.getElementById('actionSheetMod');
+  if(!m){
+    m = document.createElement('div');
+    m.id = 'actionSheetMod';
+    m.className = 'modal-ov';
+    m.onclick = (ev) => { if(ev.target === m) m.classList.remove('open'); };
+    m.innerHTML = `
+      <div class="modal" style="padding:16px;">
+        <div class="modal-handle"></div>
+        <div id="actionSheetTitle" style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.2px;text-align:center;margin-bottom:14px;"></div>
+        <div id="actionSheetBody"></div>
+        <button onclick="document.getElementById('actionSheetMod').classList.remove('open')" style="width:100%;margin-top:6px;background:transparent;border:0.5px solid var(--border);border-radius:12px;padding:13px;font-size:14px;font-weight:700;color:var(--text2);cursor:pointer;">Cancel</button>
+      </div>`;
+    document.body.appendChild(m);
+  }
+  document.getElementById('actionSheetTitle').textContent = title || '';
+  const body = document.getElementById('actionSheetBody');
+  body.innerHTML = actions.map((a, i) => `
+    <button data-action-idx="${i}" style="width:100%;background:${a.danger ? 'rgba(255,77,106,0.10)' : 'var(--surface2)'};border:0.5px solid ${a.danger ? 'rgba(255,77,106,0.3)' : 'var(--border)'};border-radius:12px;padding:14px;font-size:14px;font-weight:700;color:${a.danger ? 'var(--red)' : 'var(--text)'};cursor:pointer;margin-bottom:8px;display:flex;align-items:center;gap:14px;text-align:left;">
+      <span style="font-size:20px;flex-shrink:0;width:24px;text-align:center;">${a.icon || ''}</span>
+      <span style="flex:1;">${a.label}</span>
+    </button>
+  `).join('');
+  body.querySelectorAll('[data-action-idx]').forEach(btn => {
+    btn.onclick = () => {
+      const idx = parseInt(btn.getAttribute('data-action-idx'));
+      m.classList.remove('open');
+      // Run action after close animation so the modal doesn't sit behind a confirm/etc
+      setTimeout(() => { try { actions[idx].onclick(); } catch(e) { console.error('Action failed:', e); } }, 80);
+    };
+  });
+  m.classList.add('open');
+}
+
+// ── LONG-PRESS UTILITY ──
+// Attaches a long-press handler to an element. Fires after `hold` ms of contact
+// without significant movement. Cancels the click that follows so users don't
+// accidentally fire the underlying onclick after releasing.
+function attachLongPress(el, callback, opts){
+  if(!el || el._longPressInit) return;
+  el._longPressInit = true;
+  const HOLD_MS  = opts?.hold     ?? 500;
+  const MOVE_TOL = opts?.moveTol  ?? 12;
+  const exclude  = opts?.exclude  ?? 'button, input, textarea, select, .set-bub, .wadj-btn';
+  let timer = null, sx = 0, sy = 0, fired = false, pending = false;
+
+  el.addEventListener('touchstart', (e) => {
+    if(e.touches.length !== 1) return;
+    if(e.target.closest && exclude && e.target.closest(exclude)) return;
+    fired = false; pending = true;
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+    if(timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      if(!pending) return;
+      fired = true;
+      if(typeof haptic === 'function') haptic([18, 24, 18]);
+      try { callback(e); } catch(err) { console.error(err); }
+    }, HOLD_MS);
+  }, { passive: true });
+
+  el.addEventListener('touchmove', (e) => {
+    if(!pending) return;
+    const dx = Math.abs(e.touches[0].clientX - sx);
+    const dy = Math.abs(e.touches[0].clientY - sy);
+    if(dx > MOVE_TOL || dy > MOVE_TOL){
+      pending = false;
+      if(timer){ clearTimeout(timer); timer = null; }
+    }
+  }, { passive: true });
+
+  const cancel = () => {
+    pending = false;
+    if(timer){ clearTimeout(timer); timer = null; }
+  };
+  el.addEventListener('touchend', () => {
+    if(fired){
+      // Suppress the click that follows so the user's underlying onclick doesn't fire too
+      const stop = (ev) => { ev.stopPropagation(); ev.preventDefault(); el.removeEventListener('click', stop, true); };
+      el.addEventListener('click', stop, { capture: true, once: true });
+    }
+    cancel();
+  }, { passive: true });
+  el.addEventListener('touchcancel', cancel, { passive: true });
+
+  // Right-click on desktop maps to the same menu
+  el.addEventListener('contextmenu', (e) => {
+    if(e.target.closest && exclude && e.target.closest(exclude)) return;
+    e.preventDefault();
+    if(typeof haptic === 'function') haptic(20);
+    try { callback(e); } catch(err) { console.error(err); }
+  });
+}
+
 // ── BOTTOM-SHEET DRAG-TO-DISMISS ──
 // Touching the modal-handle and dragging downward dismisses the modal.
 // Uses event delegation so dynamically-created modals (like infoModalGeneric) work too.
@@ -3583,6 +3683,7 @@ function updateSessTimer(){const m=Math.floor(sessTimeSec/60),s=sessTimeSec%60;d
 function updateSessUI(){
   initBubbleSwipe();   // attach once; no-ops on subsequent calls via _swipeInit guard
   initExerciseSwipe(); // attach once; horizontal card swipe → next/prev exercise
+  initCurrCardLongPress(); // attach once; long-press → action sheet (note/swap/remove)
   const ex=sessExs[curIdx],tot=sessExs.length;
   const bc={'Upper':'badge-u','Lower':'badge-l','Full Body':'badge-f','Push A':'badge-u','Push B':'badge-u','Pull A':'badge-l','Pull B':'badge-l','Legs A':'badge-f','Legs B':'badge-f'};
   // Library programmes: look up the badge declared in the catalog by day name
@@ -5792,6 +5893,30 @@ function initExerciseSwipe(){
     card.style.transform = '';
     axisLocked = null;
   }, { passive: true });
+}
+
+// ── LONG-PRESS MENU on the current-exercise card ──
+// Opens an action sheet with quick-access power-user shortcuts.
+function initCurrCardLongPress(){
+  const card = document.getElementById('currCard');
+  if(!card) return;
+  attachLongPress(card, () => {
+    const ex = sessExs[curIdx];
+    if(!ex) return;
+    const isCoreCircuitEx = (typeof isCoreCircuit === 'function') && isCoreCircuit(ex);
+    const isHIIT = (typeof hiitState !== 'undefined' && hiitState);
+    const actions = [];
+    actions.push({ icon:'📐', label:'Form guide', onclick: () => openFormGuide() });
+    actions.push({ icon:'✏️', label:'Add / edit note', onclick: () => openExerciseNote() });
+    if(!isHIIT && !isCoreCircuitEx){
+      actions.push({ icon:'⇄', label:'Swap exercise', onclick: () => openSwap(curIdx) });
+      actions.push({ icon:'➕', label:'Add exercise to session', onclick: () => sessAddExercise() });
+      if(sessExs.length > 1){
+        actions.push({ icon:'🗑', label:'Remove from session', danger:true, onclick: () => sessRemoveExercise() });
+      }
+    }
+    showActionSheet(ex.name, actions);
+  });
 }
 
 function addSett(){const ex=sessExs[curIdx];ex.sets=Math.min(ex.sets+1,10);document.getElementById('setCountLbl').textContent=ex.sets+' sets planned';document.getElementById('currMeta').textContent=ex.sets+' sets · '+ex.reps+(ex.note?' · '+ex.note:'');renderBubbles(ex);updNextBtn();}
