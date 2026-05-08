@@ -36,6 +36,17 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 .page-title { font-size: 26px; font-weight: 800; letter-spacing: -0.5px; }
 .ac { color: var(--accent); }
 .section-label { font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text2); padding: 14px 20px 8px; }
+
+/* ── Collapsible analytics cards on Progress tab ── */
+.collapsible-section { margin: 12px 16px 0; background: var(--surface2); border: 0.5px solid var(--border); border-radius: 14px; overflow: hidden; }
+.cs-header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; user-select: none; min-height: 48px; }
+.cs-title  { font-size: 11px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: var(--text); flex-shrink: 0; }
+.cs-summary{ flex: 1; min-width: 0; font-size: 11px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
+.cs-chevron{ flex-shrink: 0; color: var(--text2); font-size: 12px; transition: transform 0.25s ease; }
+.collapsible-section.expanded .cs-chevron { transform: rotate(180deg); }
+.cs-body { padding: 0 14px 14px; display: none; border-top: 0.5px solid var(--border); padding-top: 14px; }
+.collapsible-section.expanded .cs-body { display: block; animation: csExpand 0.25s ease; }
+@keyframes csExpand { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 .card { background: var(--surface); border: 0.5px solid var(--border); border-radius: 16px; margin: 0 16px 10px; overflow: hidden; }
 .btn-p { background: var(--accent); color: #000; border: none; border-radius: 12px; font-size: 15px; font-weight: 800; padding: 16px; min-height: 48px; cursor: pointer; transition: all 0.15s; }
 .btn-p:active { transform: scale(0.97); }
@@ -607,23 +618,61 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
       <div class="section-label">MUSCLE HEATMAP</div>
       <div class="card" style="padding:16px;"><div id="muscleHeatmap"></div></div>
 
-      <div class="section-label">MUSCLE BALANCE</div>
-      <div class="card" style="padding:16px;"><div id="muscleBal"></div></div>
+      <div class="section-label" style="padding-top:18px;">ANALYTICS · TAP TO EXPAND</div>
 
-      <div class="section-label">STRENGTH RATIOS</div>
-      <div class="card" style="padding:16px;"><div id="strengthRatios"></div></div>
+      <div class="collapsible-section" id="cs-muscleBal">
+        <div class="cs-header" onclick="toggleProgressSection('muscleBal')">
+          <div class="cs-title">⚖️ Muscle balance</div>
+          <div class="cs-summary"></div>
+          <div class="cs-chevron">▼</div>
+        </div>
+        <div class="cs-body"><div id="muscleBal"></div></div>
+      </div>
 
-      <div class="section-label">COMPOUND vs ISOLATION</div>
-      <div class="card" style="padding:16px;"><div id="compoundIsolation"></div></div>
+      <div class="collapsible-section" id="cs-strengthRatios">
+        <div class="cs-header" onclick="toggleProgressSection('strengthRatios')">
+          <div class="cs-title">📐 Strength ratios</div>
+          <div class="cs-summary"></div>
+          <div class="cs-chevron">▼</div>
+        </div>
+        <div class="cs-body"><div id="strengthRatios"></div></div>
+      </div>
 
-      <div class="section-label">TIME UNDER TENSION</div>
-      <div class="card" style="padding:16px;"><div id="timeUnderTension"></div></div>
+      <div class="collapsible-section" id="cs-compoundIsolation">
+        <div class="cs-header" onclick="toggleProgressSection('compoundIsolation')">
+          <div class="cs-title">🏋️ Compound vs isolation</div>
+          <div class="cs-summary"></div>
+          <div class="cs-chevron">▼</div>
+        </div>
+        <div class="cs-body"><div id="compoundIsolation"></div></div>
+      </div>
 
-      <div class="section-label">REST TIME ANALYSIS</div>
-      <div class="card" style="padding:16px;"><div id="restAnalysis"></div></div>
+      <div class="collapsible-section" id="cs-timeUnderTension">
+        <div class="cs-header" onclick="toggleProgressSection('timeUnderTension')">
+          <div class="cs-title">⏱ Time under tension</div>
+          <div class="cs-summary"></div>
+          <div class="cs-chevron">▼</div>
+        </div>
+        <div class="cs-body"><div id="timeUnderTension"></div></div>
+      </div>
 
-      <div class="section-label">TRAINING FREQUENCY</div>
-      <div class="card" style="padding:16px;"><div id="trainingFrequency"></div></div>
+      <div class="collapsible-section" id="cs-restAnalysis">
+        <div class="cs-header" onclick="toggleProgressSection('restAnalysis')">
+          <div class="cs-title">😮‍💨 Rest time analysis</div>
+          <div class="cs-summary"></div>
+          <div class="cs-chevron">▼</div>
+        </div>
+        <div class="cs-body"><div id="restAnalysis"></div></div>
+      </div>
+
+      <div class="collapsible-section" id="cs-trainingFrequency" style="margin-bottom:24px;">
+        <div class="cs-header" onclick="toggleProgressSection('trainingFrequency')">
+          <div class="cs-title">📅 Training frequency</div>
+          <div class="cs-summary"></div>
+          <div class="cs-chevron">▼</div>
+        </div>
+        <div class="cs-body"><div id="trainingFrequency"></div></div>
+      </div>
     </div>
 
     <!-- IDEAS -->
@@ -10767,6 +10816,7 @@ function renderProgress(){
   renderTimeUnderTension();
   renderRestAnalysis();
   renderTrainingFrequency();
+  _applyProgSectionState();
   updateStorageBadge();
 }
 
@@ -11125,6 +11175,37 @@ function renderWeekKpi(){
     + tile(prSet.size,      'PRs',       prSet.size > 0 ? '#4cff91' : 'var(--text2)');
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Collapsible analytics — open/close + persistence + summary line
+// ─────────────────────────────────────────────────────────────────────
+function _getProgSectionState(){
+  try { return JSON.parse(localStorage.getItem('maxgainz_progSections') || '{}'); } catch(e) { return {}; }
+}
+function _saveProgSectionState(state){
+  try { localStorage.setItem('maxgainz_progSections', JSON.stringify(state)); } catch(e) {}
+}
+function toggleProgressSection(id){
+  const wrap = document.getElementById('cs-' + id);
+  if(!wrap) return;
+  const expanded = wrap.classList.toggle('expanded');
+  const state = _getProgSectionState();
+  state[id] = expanded;
+  _saveProgSectionState(state);
+}
+function _applyProgSectionState(){
+  const state = _getProgSectionState();
+  Object.entries(state).forEach(([id, expanded]) => {
+    if(expanded){
+      const wrap = document.getElementById('cs-' + id);
+      if(wrap) wrap.classList.add('expanded');
+    }
+  });
+}
+function _setProgSummary(id, text){
+  const sumEl = document.querySelector('#cs-' + id + ' .cs-summary');
+  if(sumEl) sumEl.textContent = text || '';
+}
+
 function renderMuscleHeatmap(){
   const el = document.getElementById('muscleHeatmap');
   if(!el) return;
@@ -11241,6 +11322,7 @@ function renderStrengthRatios(){
   const ohp   = getPBForLabel('Overhead Press');
 
   if(!bench && !squat && !dl && !ohp){
+    _setProgSummary('strengthRatios', 'No PBs yet');
     el.innerHTML = `<div style="padding:8px;text-align:center;color:var(--text2);font-size:13px;">Log Bench, Squat, Deadlift or Overhead Press to see your strength ratios.</div>`;
     return;
   }
@@ -11329,6 +11411,18 @@ function renderStrengthRatios(){
       </div>
     </div>`;
   }
+
+  // Summary line for collapsed header: tally on-target vs out-of-band ratios
+  let _ok = 0, _bad = 0, _miss = 0;
+  ratios.forEach(r => {
+    if(!r.num || !r.den){ _miss++; return; }
+    const v = r.num / r.den;
+    if(v >= r.lo && v <= r.hi) _ok++; else _bad++;
+  });
+  const _ratioSum = _ok + _bad === 0
+    ? `${_miss} ratios need PBs`
+    : `${_ok}/${_ok + _bad} on target${_bad ? ' · ⚠ ' + _bad + ' off' : ''}`;
+  _setProgSummary('strengthRatios', _ratioSum);
 
   el.innerHTML = html;
 }
@@ -11425,6 +11519,7 @@ function renderCompoundIsolation(){
   </div>`;
 
   if(tot === 0){
+    _setProgSummary('compoundIsolation', 'No data');
     el.innerHTML = toggle + `<div style="padding:8px;text-align:center;color:var(--text2);font-size:13px;">No sessions in the last ${_ciWindow} days.</div>`;
     return;
   }
@@ -11436,6 +11531,7 @@ function renderCompoundIsolation(){
     : cPct < 50
       ? { label:'⚠ Low compound work', color:'#ff8c42' }
       : { label:'↑ Compound-heavy', color:'var(--accent2)' };
+  _setProgSummary('compoundIsolation', cPct + '% compound · ' + iPct + '% iso');
 
   // Overall stacked bar
   let html = toggle;
@@ -11604,6 +11700,7 @@ function renderTimeUnderTension(){
   </div>`;
 
   if(data.totalSets === 0){
+    _setProgSummary('timeUnderTension', 'No data');
     el.innerHTML = toggle + `<div style="padding:8px;text-align:center;color:var(--text2);font-size:13px;">No sessions in the last ${_tutWindow} days.</div>`;
     return;
   }
@@ -11616,6 +11713,7 @@ function renderTimeUnderTension(){
   if(avg < 20)       { zone = 'strength';    zoneLabel = '⚡ Strength zone';   zoneColor = 'var(--accent2)'; zoneAdvice = 'Mostly heavy short sets — great for strength. For more hypertrophy, slow down reps to 3s each or push reps higher.'; }
   else if(avg < 60)  { zone = 'hypertrophy'; zoneLabel = '✓ Hypertrophy zone'; zoneColor = '#4cff91';        zoneAdvice = 'Most sets in the muscle-growth sweet spot (25-60s under tension).'; }
   else               { zone = 'endurance';   zoneLabel = '⏱ Endurance zone';  zoneColor = '#ff8c42';        zoneAdvice = 'Long sets — good for muscular endurance. For strength/hypertrophy, lower reps and add weight.'; }
+  _setProgSummary('timeUnderTension', avg + 's/set · ' + (zone === 'hypertrophy' ? 'Hypertrophy' : zone === 'strength' ? 'Strength' : 'Endurance') + ' zone');
 
   // Zone distribution
   const zSum = data.zones.strength + data.zones.hypertrophy + data.zones.endurance;
@@ -11764,11 +11862,29 @@ function renderRestAnalysis(){
   </div>`;
 
   if(data.dataAvailable === 0){
+    _setProgSummary('restAnalysis', data.dataMissing > 0 ? 'No timestamp data yet' : 'No data');
     const msg = data.dataMissing > 0
       ? `Older sessions don't have rest timestamps. Future sessions (logged set-by-set) will populate this analysis.`
       : `No sessions in the last ${_restWindow} days.`;
     el.innerHTML = toggle + `<div style="padding:8px;text-align:center;color:var(--text2);font-size:13px;line-height:1.5;">${msg}</div>`;
     return;
+  }
+
+  // Summary line: heavy compound average + status (the most important category)
+  const heavyB = data.buckets.heavy;
+  if(heavyB.count > 0){
+    const heavyAvg = Math.round(heavyB.totalRest / heavyB.count);
+    const heavyTarget = REST_TARGETS.heavy;
+    const status = heavyAvg < heavyTarget.lo ? '⚠ short' : heavyAvg > heavyTarget.hi ? '↑ long' : '✓';
+    _setProgSummary('restAnalysis', 'Heavy: ' + heavyAvg + 's avg ' + status);
+  } else {
+    // Fall back to whichever category has data
+    const fallback = data.buckets.moderate.count > 0 ? data.buckets.moderate : data.buckets.isolation;
+    if(fallback.count > 0){
+      _setProgSummary('restAnalysis', Math.round(fallback.totalRest / fallback.count) + 's avg rest');
+    } else {
+      _setProgSummary('restAnalysis', '');
+    }
   }
 
   let html = toggle;
@@ -11895,6 +12011,7 @@ function renderTrainingFrequency(){
   const data = calcFrequency();
 
   if(Object.values(data.broadDays).every(d => d === null)){
+    _setProgSummary('trainingFrequency', 'No history');
     el.innerHTML = `<div style="padding:8px;text-align:center;color:var(--text2);font-size:13px;">No training history yet. Log a session to see frequency.</div>`;
     return;
   }
@@ -11905,6 +12022,19 @@ function renderTrainingFrequency(){
     { key:'legs',  label:'Legs', icon:'🦵', desc:'Quads · Hams · Glutes · Calves' },
     { key:'core',  label:'Core', icon:'⚡', desc:'Abs · Obliques' },
   ];
+
+  // Summary line: most-overdue group, or "all recent" verdict
+  const _ranked = broadGroups
+    .map(g => ({ label:g.label, days:data.broadDays[g.key] }))
+    .filter(x => x.days !== null)
+    .sort((a, b) => b.days - a.days);
+  if(!_ranked.length){
+    _setProgSummary('trainingFrequency', 'No data');
+  } else if(_ranked[0].days >= 7){
+    _setProgSummary('trainingFrequency', 'Last ' + _ranked[0].label.toLowerCase() + ': ' + _ranked[0].days + 'd ⚠');
+  } else {
+    _setProgSummary('trainingFrequency', '✓ All groups recent');
+  }
 
   // Hero — 4 group cards in a 2×2 grid
   let html = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">`;
@@ -12026,9 +12156,13 @@ function renderMuscleBalance(){
   const noDataMsg=isLong?'No sessions found from 6–12 months ago.':'No sessions in the last '+muscleBalWindow+' weeks — start training!';
   const hasData=total>1;
   if(!hasData){
+    _setProgSummary('muscleBal', 'No data');
     document.getElementById('muscleBal').innerHTML=toggleHtml+'<div style="font-size:13px;color:var(--text2);text-align:center;padding:16px;">'+noDataMsg+'</div>';
     return;
   }
+  // Summary line for the collapsed header
+  const _bvPcts = rows.map(r => `${r.name.split(' ')[0]} ${Math.round((r.vol/total)*100)}%`).join(' · ');
+  _setProgSummary('muscleBal', _bvPcts);
 
   // Long-term view: bars are neutral (no threshold colours — historical read-only)
   const barsHtml=rows.map(m=>{
