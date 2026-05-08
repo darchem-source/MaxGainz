@@ -4621,7 +4621,7 @@ function startCircuitTimerCountdown(){
   const _circuitSpoken = new Set();
   let _circuitStartTime = Date.now();
   const _circuitTotal = coreTimerSec;
-  coreTimerInterval = setInterval(() => {
+  coreTimerInterval = startTimer('coreCircuit', () => {
     const elapsed = (Date.now() - _circuitStartTime) / 1000;
     const secsLeft = Math.max(0, Math.ceil(_circuitTotal - elapsed));
     coreTimerSec = secsLeft;
@@ -5001,7 +5001,7 @@ function startTwoPhaseTimer(){
   renderTwoPhaseDisplay(ex, twoPhaseState.setNum, 'work', Math.ceil(phaseConfig.workSecs), phaseConfig);
   
   // Start updating the timer
-  twoPhaseInterval = setInterval(updateTwoPhaseTimer, 100);
+  twoPhaseInterval = startTimer('twoPhase', updateTwoPhaseTimer, 100);
 }
 
 function updateTwoPhaseTimer(){
@@ -5045,7 +5045,7 @@ function transitionTwoPhase(){
     renderTwoPhaseDisplay(ex, setNum, 'rest', Math.ceil(phaseConfig.restSecs), phaseConfig);
     // Restart interval
     clearInterval(twoPhaseInterval);
-    twoPhaseInterval = setInterval(updateTwoPhaseTimer, 100);
+    twoPhaseInterval = startTimer('twoPhase', updateTwoPhaseTimer, 100);
   } else {
     // Rest done — auto-log this set INTERNALLY
     if(!repsLogged[curIdx]) repsLogged[curIdx]={};
@@ -5103,7 +5103,7 @@ function skipTwoPhase(){
     twoPhaseState.phaseDuration = phaseConfig.restSecs;
     renderTwoPhaseDisplay(ex, setNum, 'rest', Math.ceil(phaseConfig.restSecs), phaseConfig);
     // Restart interval
-    twoPhaseInterval = setInterval(updateTwoPhaseTimer, 100);
+    twoPhaseInterval = startTimer('twoPhase', updateTwoPhaseTimer, 100);
   } else {
     // Skip rest, complete the set and move to next
     const done = (setsDone[curIdx]||[]).length;
@@ -5145,7 +5145,7 @@ function startTimedSet(){
   document.getElementById('timedStartBtn').disabled=true;
   clearInterval(exSetTimerInterval);
   const _timedSpoken = new Set();
-  exSetTimerInterval=setInterval(()=>{
+  exSetTimerInterval = startTimer('exSet', ()=>{
     timedSetSec--;
     document.getElementById('timedSetDisplay').textContent=timedSetSec;
     if(timedSetSec > 0 && timedSetSec <= 3 && !_timedSpoken.has(timedSetSec)){
@@ -5186,7 +5186,7 @@ function startTimedSetBarry(ex){
   timedSetRunning=true;
   clearInterval(exSetTimerInterval);
   const _barryTimedSpoken = new Set();
-  exSetTimerInterval=setInterval(()=>{
+  exSetTimerInterval = startTimer('exSet', ()=>{
     timedSetSec--;
     const el = document.getElementById('barryTimerDisplay');
     if(el) el.textContent = timedSetSec;
@@ -5365,10 +5365,11 @@ function startAmrapTimer(totalSecs){
   }
 
   renderAmrap();
-  _amrapInterval = setInterval(()=>{
+  // startTimer auto-clears any prior 'amrap' timer in the registry
+  _amrapInterval = startTimer('amrap', ()=>{
     remaining--;
     if(remaining <= 0){
-      clearInterval(_amrapInterval);
+      stopTimer('amrap');
       playCompletionDing();
       speakCountdown('Done'); // AMRAP expiry = session end, not "go again"
       const live = document.getElementById('amrapLiveCountdown');
@@ -5442,7 +5443,7 @@ function startEmomAutoTimer(w){
     const totalRounds = Math.ceil(totalMinutes / exercises.length);
 
     if(currentMinute > totalMinutes){
-      clearInterval(_emomInterval);
+      stopTimer('emom');
       playCompletionDing();
       speakCountdown('Done'); // EMOM session end
       display.style.display = 'block';
@@ -5496,7 +5497,7 @@ function startEmomAutoTimer(w){
   }
 
   renderEmomTick();
-  _emomInterval = setInterval(()=>{
+  _emomInterval = startTimer('emom', ()=>{
     elapsed++;
     renderEmomTick();
   }, 1000);
@@ -5566,7 +5567,7 @@ function startCoreTimedAutoTimer(w){
 
   function renderCoreTick(){
     if(seqIdx >= sequence.length){
-      clearInterval(_coreTimedInterval);
+      stopTimer('coreTimed');
       display.style.display = 'block';
       display.innerHTML = '<div style="text-align:center;padding:28px;font-size:18px;font-weight:800;color:var(--green);">✅ Core Workout Complete!</div>';
       return;
@@ -5617,7 +5618,7 @@ function startCoreTimedAutoTimer(w){
   }
 
   renderCoreTick();
-  _coreTimedInterval = setInterval(()=>{
+  _coreTimedInterval = startTimer('coreTimed', ()=>{
     remaining--;
     if(remaining <= 0){
       _coreSpoken.clear();
@@ -5639,6 +5640,10 @@ function startCoreTimedAutoTimer(w){
 }
 
 function stopAmrapEmomTimers(){
+  stopTimer('amrap');
+  stopTimer('emom');
+  stopTimer('coreTimed');
+  // Belt-and-suspenders: also clear the variables in case any caller still holds a reference
   clearInterval(_amrapInterval);
   clearInterval(_emomInterval);
   clearInterval(_coreTimedInterval);
@@ -5669,7 +5674,7 @@ function showBarryBlockRest(secs, nextEx, nextIdx){
       <button onclick="skipBarryRest(${nextIdx})" style="background:var(--surface3);border:1px solid var(--border);border-radius:10px;padding:8px 20px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;margin-top:4px;">Skip rest →</button>
     </div>`;
   let _barrySpoken = new Set();
-  window._barryRestInterval = setInterval(()=>{
+  window._barryRestInterval = startTimer('barryRest', ()=>{
     remaining--;
     const el = document.getElementById('barryRestDisplay');
     if(el) el.textContent = remaining;
@@ -5732,7 +5737,7 @@ function showFloorTransition(nextIdx, prevExName){
     } catch(e){}
   }
   beepTick(); // immediate beep for 5
-  window._floorTransitionInterval = setInterval(()=>{
+  window._floorTransitionInterval = startTimer('floorTransition', ()=>{
     remaining--;
     if(remaining > 0){
       beepTick();
@@ -5997,8 +6002,7 @@ function startTimedRest(secs, onComplete){
   restSec=secs;
   const w=document.getElementById('restWrap');
   if(w){w.classList.add('show');}
-  clearInterval(restInterval);
-  restInterval=setInterval(()=>{
+  restInterval = startTimer('rest', ()=>{
     restSec--;
     const restEl=document.getElementById('restNum');
     const fillEl=document.getElementById('restFill');
@@ -6955,7 +6959,7 @@ function showCountdownTimer(seconds, callback){
   }
 
   updateCountdown();
-  countdownIntervalId = setInterval(updateCountdown, 1000);
+  countdownIntervalId = startTimer('preCountdown', updateCountdown, 1000);
 }
 
 function startHIITRound(){
@@ -6974,8 +6978,7 @@ function startHIITRound(){
   // Play work start sound
   playHIITAudio('workStart');
   
-  clearInterval(hiitIntervalId);
-  hiitIntervalId = setInterval(updateHIITTimer, 100); // High precision
+  hiitIntervalId = startTimer('hiit', updateHIITTimer, 100); // High precision
   showHIITDisplay();
 }
 
@@ -7011,7 +7014,7 @@ function updateHIITTimer(){
         hiitState.transitionPending = false; // Allow next transition
         // console.log('[HIIT] Rest phase set, timeLeft now:', hiitState.timeLeft);
         showHIITDisplay(); // Show updated display with rest timer
-        hiitIntervalId = setInterval(updateHIITTimer, 100);
+        hiitIntervalId = startTimer('hiit', updateHIITTimer, 100);
       } else if(!isLastBlock){
         // Block complete, more blocks remain — start inter-block rest
         // console.log('[HIIT] Block complete, starting inter-block rest (2 min)');
@@ -7024,7 +7027,7 @@ function updateHIITTimer(){
         hiitState.transitionPending = false; // Allow next transition
         showHIITBlockRestDisplay(); // Show block rest display
         updateSessUI(); // Update progress bar to show new block number
-        hiitIntervalId = setInterval(updateHIITBlockRestTimer, 100);
+        hiitIntervalId = startTimer('hiit', updateHIITBlockRestTimer, 100);
       } else {
         // All blocks done
         // console.log('[HIIT] All blocks complete!');
