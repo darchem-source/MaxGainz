@@ -139,6 +139,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 /* ── Skeleton shimmer placeholders ── */
 .skeleton { background:linear-gradient(90deg, var(--surface2) 0%, var(--surface3) 50%, var(--surface2) 100%); background-size:200% 100%; animation:skeletonShimmer 1.4s linear infinite; border-radius:8px; pointer-events:none; }
 @keyframes skeletonShimmer { 0% { background-position:200% 0; } 100% { background-position:-200% 0; } }
+
+/* ── Pull-to-refresh indicator ── */
+.ptr-indicator { position:fixed; top:0; left:50%; transform:translate(-50%,-60px); width:40px; height:40px; border-radius:50%; background:var(--surface2); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:18px; color:var(--accent); z-index:60; opacity:0; pointer-events:none; box-shadow:0 4px 12px rgba(0,0,0,0.5); }
+.ptr-indicator.spring { transition:transform 0.28s cubic-bezier(0.32,0.72,0,1), opacity 0.28s ease; }
+.ptr-indicator .ptr-icon { display:inline-block; }
+.ptr-indicator.spinning .ptr-icon { animation:ptrSpin 0.8s linear infinite; }
+@keyframes ptrSpin { to { transform:rotate(360deg); } }
 .wadj { display:flex; align-items:center; background:var(--surface2); border-radius:14px; padding:4px; width:fit-content; }
 .wadj-btn { width:48px; height:48px; border-radius:12px; border:none; background:transparent; color:var(--text); font-size:24px; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.12s; }
 .wadj-btn:active { background:var(--accent); color:#000; transform:scale(0.9); }
@@ -277,6 +284,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 <body>
 <div id="offlineBanner">📵 Offline — your workouts are saved locally</div>
 <div id="syncBanner"><span class="sync-dot"></span>Syncing your data…</div>
+<div class="ptr-indicator" id="ptrIndicator"><span class="ptr-icon" id="ptrIcon">↓</span></div>
 <div class="toast" id="appToast"></div>
 <div class="splash" id="splash" onclick="dismissSplash()">
   <div class="splash-logo">
@@ -2200,6 +2208,125 @@ function showInfoModal(title, body){
     if(e.pointerType === 'touch') return;
     onEnd();
   });
+})();
+
+// ── PULL-TO-REFRESH ──
+// Pulling down at the top of the .tab-content container triggers a cloud refresh.
+// Refreshable tabs: Today, Path, Programme, Progress, Profile, Game. Excluded: Active session.
+(function _initPullToRefresh(){
+  const container = document.querySelector('.tab-content');
+  if(!container) return;
+  const indicator = document.getElementById('ptrIndicator');
+  const icon = document.getElementById('ptrIcon');
+  if(!indicator || !icon) return;
+
+  const THRESHOLD = 70;
+  const MAX_PULL  = 120;
+  const DAMPING   = 0.55;
+  let pull = null;
+
+  function refreshAllowed(){
+    const active = document.querySelector('.screen.active');
+    if(!active) return false;
+    if(active.id === 's-active') return false;             // never during a session
+    if(document.querySelector('.modal-ov.open')) return false; // never with a modal open
+    return true;
+  }
+
+  function setIndicator(y, progress){
+    // y = px of pull (damped), progress = 0..1
+    indicator.classList.remove('spring');
+    indicator.style.transform = 'translate(-50%, ' + Math.max(-60, Math.min(MAX_PULL, y)) + 'px)';
+    indicator.style.opacity = Math.min(1, progress).toFixed(3);
+    icon.textContent = progress >= 1 ? '↑' : '↓';
+  }
+
+  function springReset(){
+    indicator.classList.add('spring');
+    indicator.classList.remove('spinning');
+    indicator.style.transform = 'translate(-50%, -60px)';
+    indicator.style.opacity = '0';
+    icon.textContent = '↓';
+  }
+
+  function startSpinner(){
+    indicator.classList.add('spring');
+    indicator.classList.add('spinning');
+    indicator.style.transform = 'translate(-50%, 24px)';
+    indicator.style.opacity = '1';
+    icon.textContent = '↻';
+  }
+
+  async function triggerRefresh(){
+    if(typeof haptic === 'function') haptic(20);
+    const active = document.querySelector('.screen.active');
+    const refreshActive = () => {
+      if(active?.id === 's-today')    try{ renderToday();         }catch(e){}
+      if(active?.id === 's-progress') try{ renderProgress();      }catch(e){}
+      if(active?.id === 's-workout')  try{ renderProgrammeFeed(); }catch(e){}
+      if(active?.id === 's-path')     try{ renderPathTab();       }catch(e){}
+      if(active?.id === 's-game')     try{ renderGame();          }catch(e){}
+      if(active?.id === 's-profile')  try{ renderProfile();       }catch(e){}
+    };
+
+    // Offline / unauthenticated → just rerender + a brief pause so the spinner is visible
+    if(!navigator.onLine || typeof isAuthenticated !== 'function' || !isAuthenticated()){
+      await new Promise(r => setTimeout(r, 600));
+      refreshActive();
+      showToast(navigator.onLine ? '✅ Refreshed' : '📵 Offline — using local data', { duration:1600 });
+      return;
+    }
+
+    try {
+      const synced = await cloudLoadAll();
+      if(synced && typeof applyCustomWeights === 'function') applyCustomWeights();
+      refreshActive();
+      showToast(synced ? '✅ Refreshed' : '⚠️ Refresh failed — using local data', { duration:1600 });
+    } catch(e){
+      showToast('⚠️ Refresh failed: ' + (e?.message || 'unknown'), { tone:'warning', duration:2200 });
+    }
+  }
+
+  container.addEventListener('touchstart', (e) => {
+    if(e.touches.length !== 1) return;
+    if(container.scrollTop > 0) return;
+    if(!refreshAllowed()) return;
+    pull = { startY: e.touches[0].clientY, lastDy: 0, refreshing: false };
+  }, { passive: true });
+
+  container.addEventListener('touchmove', (e) => {
+    if(!pull || pull.refreshing) return;
+    const dy = e.touches[0].clientY - pull.startY;
+    if(dy <= 0){
+      // Cancel pull if user reverses upward
+      if(indicator.style.opacity !== '0'){ springReset(); }
+      pull = null;
+      return;
+    }
+    const damped = Math.min(MAX_PULL, dy * DAMPING);
+    pull.lastDy = damped;
+    setIndicator(damped - 60, damped / THRESHOLD);
+  }, { passive: true });
+
+  container.addEventListener('touchend', () => {
+    if(!pull || pull.refreshing) return;
+    const damped = pull.lastDy;
+    if(damped >= THRESHOLD && refreshAllowed()){
+      pull.refreshing = true;
+      startSpinner();
+      triggerRefresh().finally(() => {
+        springReset();
+        pull = null;
+      });
+    } else {
+      springReset();
+      pull = null;
+    }
+  }, { passive: true });
+
+  container.addEventListener('touchcancel', () => {
+    if(pull && !pull.refreshing){ springReset(); pull = null; }
+  }, { passive: true });
 })();
 
 async function sbFetch(path, options = {}, _isRetry = false) {
