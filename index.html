@@ -140,6 +140,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 .skeleton { background:linear-gradient(90deg, var(--surface2) 0%, var(--surface3) 50%, var(--surface2) 100%); background-size:200% 100%; animation:skeletonShimmer 1.4s linear infinite; border-radius:8px; pointer-events:none; }
 @keyframes skeletonShimmer { 0% { background-position:200% 0; } 100% { background-position:-200% 0; } }
 
+/* ── Swipe-to-delete (custom programmes + custom HIIT) ── */
+.swipe-row { position:relative; overflow:hidden; border-radius:14px; }
+.swipe-actions { position:absolute; inset:0; display:flex; align-items:center; justify-content:flex-end; padding-right:24px; background:linear-gradient(90deg, rgba(255,77,106,0.6), rgba(255,77,106,1)); color:#fff; font-weight:800; font-size:13px; letter-spacing:0.5px; pointer-events:none; }
+.swipe-actions .ico { font-size:18px; margin-right:8px; }
+.swipe-card { position:relative; will-change:transform; transition:transform 0.25s cubic-bezier(0.32,0.72,0,1); z-index:1; }
+.swipe-card.dragging { transition:none; }
+
 /* ── Pull-to-refresh indicator ── */
 .ptr-indicator { position:fixed; top:0; left:50%; transform:translate(-50%,-60px); width:40px; height:40px; border-radius:50%; background:var(--surface2); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:18px; color:var(--accent); z-index:60; opacity:0; pointer-events:none; box-shadow:0 4px 12px rgba(0,0,0,0.5); }
 .ptr-indicator.spring { transition:transform 0.28s cubic-bezier(0.32,0.72,0,1), opacity 0.28s ease; }
@@ -366,7 +373,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
         </div>
         <div class="prog-strip" style="margin:0 16px 4px;"><div class="prog-fill" id="progFill" style="width:0%"></div></div>
       </div><!-- /sticky-hdr -->
-      <div class="curr-card">
+      <div class="curr-card" id="currCard">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
           <div class="curr-lbl" id="currActivityLbl">NOW LIFTING</div>
           <div id="supersetBadge" style="display:none;" class="superset-badge">⚡ Superset</div>
@@ -2329,6 +2336,84 @@ function showInfoModal(title, body){
   }, { passive: true });
 })();
 
+// ── SWIPE-TO-DELETE custom programmes + custom HIIT ──
+// Cards inside #progContent with [data-swipe-delete="prog:N"] or "hiit:N" can be
+// swiped left to delete. Threshold 100px; below that springs back. Routes to the
+// existing delete handler (which shows the native confirm dialog).
+(function _initSwipeDelete(){
+  const root = document.getElementById('progContent');
+  if(!root) return;
+  const THRESHOLD = 100;
+  const MAX_LEFT  = 240;
+  let drag = null;
+
+  root.addEventListener('touchstart', (e) => {
+    if(e.touches.length !== 1) return;
+    const card = e.target.closest('[data-swipe-delete]');
+    if(!card) return;
+    // Don't start if user touched a button/input — let the click/edit happen
+    if(e.target.closest('button, input, textarea')) return;
+    drag = { card, startX: e.touches[0].clientX, startY: e.touches[0].clientY, axisLocked: null, lastDx: 0 };
+    card.classList.add('dragging');
+  }, { passive: true });
+
+  root.addEventListener('touchmove', (e) => {
+    if(!drag) return;
+    const dx = e.touches[0].clientX - drag.startX;
+    const dy = e.touches[0].clientY - drag.startY;
+    if(!drag.axisLocked){
+      if(Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      drag.axisLocked = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+    }
+    if(drag.axisLocked === 'y'){
+      drag.card.classList.remove('dragging');
+      drag.card.style.transform = '';
+      drag = null;
+      return;
+    }
+    if(dx >= 0){
+      // Right-drag at this point: spring back to home
+      drag.card.style.transform = '';
+      drag.lastDx = 0;
+      return;
+    }
+    const tx = Math.max(-MAX_LEFT, dx);
+    drag.lastDx = tx;
+    drag.card.style.transform = 'translateX(' + tx + 'px)';
+  }, { passive: true });
+
+  root.addEventListener('touchend', () => {
+    if(!drag) return;
+    const card = drag.card;
+    card.classList.remove('dragging');
+    if(drag.lastDx <= -THRESHOLD){
+      // Past threshold — animate off and trigger delete
+      const sig = card.getAttribute('data-swipe-delete');
+      if(sig){
+        const [type, idxStr] = sig.split(':');
+        const idx = parseInt(idxStr);
+        if(typeof haptic === 'function') haptic(20);
+        card.style.transform = 'translateX(-110%)';
+        setTimeout(() => {
+          if(type === 'prog' && typeof deleteCustomProgramme === 'function')      deleteCustomProgramme(idx);
+          else if(type === 'hiit' && typeof deleteCustomHIIT === 'function')      deleteCustomHIIT(idx);
+        }, 220);
+      }
+    } else {
+      card.style.transform = '';
+    }
+    drag = null;
+  }, { passive: true });
+
+  root.addEventListener('touchcancel', () => {
+    if(drag){
+      drag.card.classList.remove('dragging');
+      drag.card.style.transform = '';
+      drag = null;
+    }
+  }, { passive: true });
+})();
+
 async function sbFetch(path, options = {}, _isRetry = false) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
@@ -3496,7 +3581,8 @@ function startSession(day,prog){
 function updateSessTimer(){const m=Math.floor(sessTimeSec/60),s=sessTimeSec%60;document.getElementById('sessTimer').textContent=m+':'+String(s).padStart(2,'0');}
 
 function updateSessUI(){
-  initBubbleSwipe(); // attach once; no-ops on subsequent calls via _swipeInit guard
+  initBubbleSwipe();   // attach once; no-ops on subsequent calls via _swipeInit guard
+  initExerciseSwipe(); // attach once; horizontal card swipe → next/prev exercise
   const ex=sessExs[curIdx],tot=sessExs.length;
   const bc={'Upper':'badge-u','Lower':'badge-l','Full Body':'badge-f','Push A':'badge-u','Push B':'badge-u','Pull A':'badge-l','Pull B':'badge-l','Legs A':'badge-f','Legs B':'badge-f'};
   // Library programmes: look up the badge declared in the catalog by day name
@@ -5620,6 +5706,94 @@ function initBubbleSwipe(){
   },{passive:true});
 }
 
+// ── SWIPE-BETWEEN-EXERCISES ──
+// Horizontal swipe on the current-exercise card navigates between exercises.
+// Right swipe → previous exercise; Left swipe → next exercise.
+// Disabled during HIIT/auto-timer workouts (timer drives progression there).
+function initExerciseSwipe(){
+  const card = document.getElementById('currCard');
+  if(!card || card._exSwipeInit) return;
+  card._exSwipeInit = true;
+  let startX = 0, startY = 0, axisLocked = null, dragging = false;
+  const THRESHOLD = 80;
+
+  function isManualNavAllowed(){
+    if(typeof hiitState !== 'undefined' && hiitState) return false;
+    if(typeof timedSetRunning !== 'undefined' && timedSetRunning) return false;
+    return true;
+  }
+
+  card.addEventListener('touchstart', (e) => {
+    if(e.touches.length !== 1) return;
+    if(!isManualNavAllowed()) return;
+    // Ignore swipe when starting on interactive children we don't want to override
+    const t = e.target;
+    if(t.closest('.set-bub, button, input, textarea, select, .wadj-btn, #miniPlateViz, #plateCalcTrigger, #timedSetWrap, #restWrap')) return;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    axisLocked = null;
+    dragging = true;
+    card.style.transition = 'none';
+  }, { passive: true });
+
+  card.addEventListener('touchmove', (e) => {
+    if(!dragging) return;
+    const dx = e.touches[0].clientX - startX;
+    const dy = e.touches[0].clientY - startY;
+    if(!axisLocked){
+      if(Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      axisLocked = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+    }
+    if(axisLocked === 'y'){ dragging = false; card.style.transform = ''; return; }
+    // Don't allow swipe past the boundaries (resist at first/last exercise)
+    const atFirst = curIdx === 0 && dx > 0;
+    const atLast  = curIdx === sessExs.length - 1 && dx < 0;
+    const damped = (atFirst || atLast) ? dx * 0.25 : dx * 0.7;
+    card.style.transform = 'translateX(' + Math.max(-150, Math.min(150, damped)) + 'px)';
+  }, { passive: true });
+
+  card.addEventListener('touchend', (e) => {
+    if(!dragging) return;
+    const dx = e.changedTouches[0].clientX - startX;
+    dragging = false;
+    card.style.transition = 'transform 0.25s cubic-bezier(0.32,0.72,0,1)';
+    if(axisLocked === 'x' && Math.abs(dx) >= THRESHOLD && isManualNavAllowed()){
+      // Animate off-screen in swipe direction, then update + reset
+      const dir = dx > 0 ? 'right' : 'left';
+      const target = dir === 'right' ? curIdx - 1 : curIdx + 1;
+      if(target >= 0 && target < sessExs.length){
+        if(typeof haptic === 'function') haptic(15);
+        card.style.transform = 'translateX(' + (dir === 'right' ? '120%' : '-120%') + ')';
+        setTimeout(() => {
+          curIdx = target;
+          // Drop transition before snapping back so no flash, then re-add for entry slide
+          card.style.transition = 'none';
+          card.style.transform  = 'translateX(' + (dir === 'right' ? '-120%' : '120%') + ')';
+          updateSessUI();
+          if(typeof scrollToActiveEx === 'function') scrollToActiveEx();
+          // Force reflow then animate back to centre
+          void card.offsetWidth;
+          card.style.transition = 'transform 0.25s cubic-bezier(0.32,0.72,0,1)';
+          card.style.transform  = 'translateX(0)';
+        }, 200);
+      } else {
+        card.style.transform = '';
+      }
+    } else {
+      card.style.transform = '';
+    }
+    axisLocked = null;
+  }, { passive: true });
+
+  card.addEventListener('touchcancel', () => {
+    if(!dragging) return;
+    dragging = false;
+    card.style.transition = 'transform 0.25s cubic-bezier(0.32,0.72,0,1)';
+    card.style.transform = '';
+    axisLocked = null;
+  }, { passive: true });
+}
+
 function addSett(){const ex=sessExs[curIdx];ex.sets=Math.min(ex.sets+1,10);document.getElementById('setCountLbl').textContent=ex.sets+' sets planned';document.getElementById('currMeta').textContent=ex.sets+' sets · '+ex.reps+(ex.note?' · '+ex.note:'');renderBubbles(ex);updNextBtn();}
 function removeSett(){const ex=sessExs[curIdx];if(ex.sets<=1)return;ex.sets--;document.getElementById('setCountLbl').textContent=ex.sets+' sets planned';document.getElementById('currMeta').textContent=ex.sets+' sets · '+ex.reps+(ex.note?' · '+ex.note:'');renderBubbles(ex);updNextBtn();}
 
@@ -7705,24 +7879,27 @@ function _renderMyProgrammesSection(){
       });
       inner += `<div style="padding:10px 16px 14px;"><button class="btn-p" style="width:100%;padding:11px;font-size:13px;" onclick="startCustomSubSession(${idx},${si})">▶ Start ${sub.name}</button></div></div></div>`;
     });
-    return `<div style="margin:0 16px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:14px;overflow:hidden;">
-      <div onclick="togDay('${k}')" style="padding:12px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;">
-        <div style="font-size:22px;">🛠️</div>
-        <div style="flex:1;min-width:0;">
-          <div style="display:flex;align-items:center;gap:6px;">
-            <div style="font-size:15px;font-weight:800;">${prog.name}</div>
-            <span style="background:rgba(200,255,0,0.12);color:var(--accent);font-size:9px;font-weight:800;padding:2px 7px;border-radius:5px;letter-spacing:0.5px;">CUSTOM</span>
+    return `<div class="swipe-row" style="margin:0 16px 8px;">
+      <div class="swipe-actions"><span class="ico">🗑</span> Delete</div>
+      <div class="swipe-card" data-swipe-delete="prog:${idx}" style="background:var(--surface2);border:1px solid var(--border);border-radius:14px;overflow:hidden;">
+        <div onclick="togDay('${k}')" style="padding:12px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;">
+          <div style="font-size:22px;">🛠️</div>
+          <div style="flex:1;min-width:0;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <div style="font-size:15px;font-weight:800;">${prog.name}</div>
+              <span style="background:rgba(200,255,0,0.12);color:var(--accent);font-size:9px;font-weight:800;padding:2px 7px;border-radius:5px;letter-spacing:0.5px;">CUSTOM</span>
+            </div>
+            <div style="font-size:11px;color:var(--text2);margin-top:2px;">${prog.subcategories.length} day${prog.subcategories.length !== 1 ? 's' : ''} · ${totalEx} exercises · swipe ← to delete</div>
           </div>
-          <div style="font-size:11px;color:var(--text2);margin-top:2px;">${prog.subcategories.length} day${prog.subcategories.length !== 1 ? 's' : ''} · ${totalEx} exercises</div>
+          <div style="color:var(--text2);font-size:13px;" id="arr-${k}">▼</div>
         </div>
-        <div style="color:var(--text2);font-size:13px;" id="arr-${k}">▼</div>
-      </div>
-      <div id="dd-${k}" style="display:none;padding:0 12px 12px;">
-        <div style="display:flex;gap:6px;margin-bottom:10px;">
-          <button onclick="event.stopPropagation();editCustomProgramme(${idx})" style="flex:1;background:var(--surface3);border:0.5px solid var(--border);border-radius:8px;padding:8px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;">Edit</button>
-          <button onclick="event.stopPropagation();deleteCustomProgramme(${idx})" style="flex:1;background:rgba(255,77,106,0.1);border:0.5px solid rgba(255,77,106,0.3);border-radius:8px;padding:8px;font-size:12px;font-weight:700;color:var(--red);cursor:pointer;">Delete</button>
+        <div id="dd-${k}" style="display:none;padding:0 12px 12px;">
+          <div style="display:flex;gap:6px;margin-bottom:10px;">
+            <button onclick="event.stopPropagation();editCustomProgramme(${idx})" style="flex:1;background:var(--surface3);border:0.5px solid var(--border);border-radius:8px;padding:8px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;">Edit</button>
+            <button onclick="event.stopPropagation();deleteCustomProgramme(${idx})" style="flex:1;background:rgba(255,77,106,0.1);border:0.5px solid rgba(255,77,106,0.3);border-radius:8px;padding:8px;font-size:12px;font-weight:700;color:var(--red);cursor:pointer;">Delete</button>
+          </div>
+          ${inner}
         </div>
-        ${inner}
       </div>
     </div>`;
   };
@@ -7766,7 +7943,9 @@ function _renderHIITStudioCards(){
   const customHTML = (w, ci) => {
     const fc = HIIT_FORMAT_COLORS[w.format] || 'var(--text2)';
     const k = 'chiit_' + ci;
-    return `<div class="day-card" style="margin:0 0 6px;border-radius:10px;">
+    return `<div class="swipe-row" style="margin:0 0 6px;border-radius:10px;">
+     <div class="swipe-actions"><span class="ico">🗑</span> Delete</div>
+     <div class="swipe-card day-card" data-swipe-delete="hiit:${ci}" style="margin:0;border-radius:10px;">
       <div class="day-head" onclick="togDay('${k}')">
         <div class="day-icon" style="background:${fc}22;font-size:14px;font-weight:900;color:${fc};">${w.duration}m</div>
         <div style="flex:1;"><div style="font-size:14px;font-weight:700;">${w.name}</div>
@@ -7784,7 +7963,8 @@ function _renderHIITStudioCards(){
           <button class="btn-p" style="flex:1;padding:11px;font-size:13px;" onclick="startCustomHIIT(${ci})">▶ Start</button>
           <button onclick="deleteCustomHIIT(${ci})" style="background:rgba(255,77,106,0.1);border:0.5px solid rgba(255,77,106,0.3);border-radius:10px;padding:8px 12px;font-size:12px;font-weight:700;color:var(--red);cursor:pointer;">Delete</button>
         </div>
-      </div></div>`;
+      </div></div>
+     </div>`;
   };
 
   // Built-in HIIT card row
