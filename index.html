@@ -454,7 +454,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
         </div>
         <div class="rest-bar-wrap" id="restWrap">
           <div><div style="font-size:10px;color:var(--text2);font-weight:700;text-transform:uppercase;letter-spacing:1px;" id="restLabel">Rest</div><div class="rest-num" id="restNum">90</div></div>
-          <div style="flex:1;"><div class="rest-track"><div class="rest-fill" id="restFill" style="width:100%;"></div></div><div style="font-size:11px;color:var(--text2);margin-top:4px;">Tap to skip</div></div>
+          <div style="flex:1;"><div class="rest-track"><div class="rest-fill" id="restFill" style="width:100%;"></div></div><div style="font-size:11px;color:var(--text2);margin-top:4px;">Tap or swipe to skip</div></div>
           <button onclick="skipRest()" style="background:var(--surface3);border:none;color:var(--text2);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;">Skip</button>
         </div>
         <div class="act-row">
@@ -3688,6 +3688,7 @@ function updateSessUI(){
   initBubbleSwipe();   // attach once; no-ops on subsequent calls via _swipeInit guard
   initExerciseSwipe(); // attach once; horizontal card swipe → next/prev exercise
   initCurrCardLongPress(); // attach once; long-press → action sheet (note/swap/remove)
+  initRestPullCancel();    // attach once; vertical pull on rest bar → cancel (skipRest)
   const ex=sessExs[curIdx],tot=sessExs.length;
   const bc={'Upper':'badge-u','Lower':'badge-l','Full Body':'badge-f','Push A':'badge-u','Push B':'badge-u','Pull A':'badge-l','Pull B':'badge-l','Legs A':'badge-f','Legs B':'badge-f'};
   // Library programmes: look up the badge declared in the catalog by day name
@@ -5896,6 +5897,77 @@ function initExerciseSwipe(){
     card.style.transition = 'transform 0.25s cubic-bezier(0.32,0.72,0,1)';
     card.style.transform = '';
     axisLocked = null;
+  }, { passive: true });
+}
+
+// ── PULL-TO-CANCEL REST ──
+// Vertical swipe (up or down) on the rest bar dismisses it the same as Skip.
+// Visual: bar follows finger with damping, fades, animates off, calls skipRest().
+function initRestPullCancel(){
+  const wrap = document.getElementById('restWrap');
+  if(!wrap || wrap._pullCancelInit) return;
+  wrap._pullCancelInit = true;
+  const THRESHOLD = 50;
+  let drag = null;
+
+  wrap.addEventListener('touchstart', (e) => {
+    if(e.touches.length !== 1) return;
+    if(e.target.closest('button')) return;             // Skip button keeps its tap
+    if(!wrap.classList.contains('show')) return;       // not currently resting
+    drag = { startY: e.touches[0].clientY, startX: e.touches[0].clientX, lastDy: 0, axisLocked: null };
+    wrap.style.transition = 'none';
+  }, { passive: true });
+
+  wrap.addEventListener('touchmove', (e) => {
+    if(!drag) return;
+    const dy = e.touches[0].clientY - drag.startY;
+    const dx = e.touches[0].clientX - drag.startX;
+    if(!drag.axisLocked){
+      if(Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+      drag.axisLocked = Math.abs(dy) > Math.abs(dx) ? 'y' : 'x';
+    }
+    if(drag.axisLocked === 'x'){
+      // Horizontal — let scroll/other handlers take over
+      wrap.style.transform = '';
+      wrap.style.opacity = '';
+      drag = null;
+      return;
+    }
+    drag.lastDy = dy;
+    const damped = Math.sign(dy) * Math.min(80, Math.abs(dy) * 0.6);
+    wrap.style.transform = 'translateY(' + damped + 'px)';
+    wrap.style.opacity = String(Math.max(0.3, 1 - Math.abs(dy) / 200));
+  }, { passive: true });
+
+  wrap.addEventListener('touchend', () => {
+    if(!drag) return;
+    wrap.style.transition = 'transform 0.25s cubic-bezier(0.32,0.72,0,1), opacity 0.25s ease';
+    if(Math.abs(drag.lastDy) >= THRESHOLD){
+      const dir = drag.lastDy > 0 ? 100 : -100;
+      wrap.style.transform = 'translateY(' + dir + 'px)';
+      wrap.style.opacity   = '0';
+      if(typeof haptic === 'function') haptic(20);
+      setTimeout(() => {
+        try { skipRest(); } catch(e){}
+        wrap.style.transform = '';
+        wrap.style.opacity   = '';
+        wrap.style.transition = '';
+      }, 220);
+    } else {
+      wrap.style.transform = '';
+      wrap.style.opacity   = '';
+      setTimeout(() => { wrap.style.transition = ''; }, 260);
+    }
+    drag = null;
+  }, { passive: true });
+
+  wrap.addEventListener('touchcancel', () => {
+    if(drag){
+      wrap.style.transition = 'transform 0.25s cubic-bezier(0.32,0.72,0,1), opacity 0.25s ease';
+      wrap.style.transform = '';
+      wrap.style.opacity   = '';
+      drag = null;
+    }
   }, { passive: true });
 }
 
