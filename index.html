@@ -624,6 +624,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
         <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--text2);margin-left:34px;" id="bwChartX"></div>
       </div>
 
+      <div class="section-label">MUSCLE HEATMAP</div>
+      <div class="card" style="padding:16px;"><div id="muscleHeatmap"></div></div>
+
       <div class="section-label">MUSCLE BALANCE</div>
       <div class="card" style="padding:16px;"><div id="muscleBal"></div></div>
       <div class="section-label">RECENT SESSIONS</div>
@@ -10335,6 +10338,7 @@ function renderProgress(){
   renderCalendar();
   selLift('bench',document.querySelector('#liftTabs .chip.active')||document.querySelector('#liftTabs .chip'));
   renderBWChart();
+  renderMuscleHeatmap();
   renderMuscleBalance();
   const sorted=[...completedSessions].sort((a,b)=>b.date-a.date).slice(0,8);
   if(!sorted.length){document.getElementById('recentSess').innerHTML='<div style="padding:20px;text-align:center;color:var(--text2);font-size:13px;">No sessions yet — start your first workout!</div>';}
@@ -10406,6 +10410,335 @@ function getRecencyWeight(sessionDate){
   if(weeksAgo<=6) return 0.5;
   if(weeksAgo<=12) return 0.25;
   return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// MUSCLE HEATMAP — fine-grained volume per muscle on a body diagram
+// 11 muscles: chest, shoulders, rear_delts, traps, lats, biceps, triceps,
+//             abs, quads, hamstrings, glutes, calves
+// ─────────────────────────────────────────────────────────────────────
+const FINE_MUSCLE_MAP = {
+  // Chest
+  'Bench Press':['chest','triceps','shoulders'],
+  'Dumbbell Bench Press':['chest','triceps'],
+  'Incline Bench Press':['chest','shoulders'],
+  'Incline Dumbbell Press':['chest','shoulders'],
+  'Incline Press':['chest','shoulders'],
+  'Decline Bench Press':['chest','triceps'],
+  'Floor Press':['chest','triceps'],
+  'Push-Ups':['chest','triceps'],
+  'Push-Ups (weighted)':['chest','triceps'],
+  "Cable Fly's":['chest'], "Fly's":['chest'],
+  'Pec Deck':['chest'], 'Cable Crossover':['chest'],
+  'Machine Chest Press':['chest','triceps'],
+  'Dips':['chest','triceps'],
+  'Plyo Push-Ups':['chest'],
+  // Shoulders (front + side delts)
+  'Overhead Press':['shoulders','triceps'],
+  'Push Press':['shoulders','triceps','traps'],
+  'Dumbbell Shoulder Press':['shoulders','triceps'],
+  'Seated Dumbbell Press':['shoulders','triceps'],
+  'Arnold Press':['shoulders'],
+  'Lateral Raises':['shoulders'],
+  'Cable Lateral Raise':['shoulders'],
+  'Upright Row':['shoulders','traps'],
+  'Landmine Press':['shoulders','triceps'],
+  'Guillotine Press':['chest','shoulders'],
+  // Rear delts / upper back
+  'Face Pulls':['rear_delts','traps'],
+  'Reverse Fly':['rear_delts'],
+  'Rear Delt Fly':['rear_delts'],
+  'Band Pull-Aparts':['rear_delts','traps'],
+  'Shrugs':['traps'],
+  // Lats / mid back
+  'Pull-Ups':['lats','biceps'],
+  'Chin-Ups':['lats','biceps'],
+  'Lat Pulldown':['lats','biceps'],
+  'Pulldowns':['lats','biceps'],
+  'Straight Arm Pulldown':['lats'],
+  'Cable Row':['lats','traps','biceps'],
+  'Barbell Row':['lats','traps','biceps'],
+  'Bent Over Barbell Row':['lats','traps','biceps'],
+  'Dumbbell Row':['lats','biceps'],
+  'Chest-Supported Row':['lats','traps'],
+  'T-Bar Row':['lats','traps'],
+  'Meadows Row':['lats','traps'],
+  'Rack Pulls':['lats','traps','glutes'],
+  // Biceps
+  'Barbell Curls':['biceps'],
+  'Barbell Curl':['biceps'],
+  'Dumbbell Curl':['biceps'],
+  'Hammer Curl':['biceps'],
+  'Concentration Curl':['biceps'],
+  'Preacher Curl':['biceps'],
+  'EZ Bar Curl':['biceps'],
+  'Incline Dumbbell Curl':['biceps'],
+  'Standing One-Arm Cable Curl':['biceps'],
+  'Cable Curl':['biceps'],
+  // Triceps
+  'Tricep Pushdown':['triceps'],
+  'Triceps Pushdowns':['triceps'],
+  'Skull Crushers':['triceps'],
+  'Triceps Extension':['triceps'],
+  'Overhead Tricep Extension':['triceps'],
+  'Close Grip Bench':['triceps','chest'],
+  'Diamond Push-Ups':['triceps','chest'],
+  // Quads
+  'Squat':['quads','glutes'],
+  'Front Squat':['quads'],
+  'Hack Squat':['quads'],
+  'Leg Press':['quads','glutes'],
+  'Leg Press (Single Leg)':['quads','glutes'],
+  'Leg Extension':['quads'],
+  'Bulgarian Split Squat':['quads','glutes'],
+  'Bulgarian Split Squats':['quads','glutes'],
+  'Lunges':['quads','glutes'],
+  'Walking Lunges':['quads','glutes'],
+  'Step Ups':['quads','glutes'],
+  'Goblet Squat':['quads','glutes'],
+  // Hamstrings
+  'Romanian Deadlift':['hamstrings','glutes','lats'],
+  'Stiff-Leg Deadlift':['hamstrings','glutes'],
+  'Good Mornings':['hamstrings','glutes'],
+  'Leg Curl':['hamstrings'],
+  'Leg Curls':['hamstrings'],
+  'Nordic Curl':['hamstrings'],
+  'Glute-Ham Raise':['hamstrings','glutes'],
+  'Dumbbell RDL':['hamstrings','glutes'],
+  // Glutes
+  'Hip Thrust':['glutes','hamstrings'],
+  'Hip Thrusts':['glutes','hamstrings'],
+  'Glute Bridge':['glutes'],
+  'Glute Kickback':['glutes'],
+  // Calves
+  'Calf Raises':['calves'],
+  'Calf Raise':['calves'],
+  'Donkey Calf Raise':['calves'],
+  'Seated Calf Raise':['calves'],
+  // Posterior chain compounds
+  'Deadlift':['lats','traps','hamstrings','glutes'],
+  'Sumo Deadlift':['glutes','hamstrings','lats'],
+  // Abs / core
+  'Plank':['abs'], 'Side Plank':['abs'],
+  'Hanging Leg Raise':['abs'], 'Cable Crunch':['abs'],
+  'Russian Twist':['abs'], 'Ab Wheel Rollout':['abs'],
+  'Decline Crunch':['abs'], 'V-Ups':['abs'],
+  'Sit-Ups':['abs'], 'Crunch':['abs'],
+  'Hollow Hold':['abs'], 'L-Sit':['abs'],
+  'Dead Bug':['abs'], 'Pallof Press':['abs'],
+  'Mountain Climbers':['abs'], 'Abdominal Work':['abs'],
+  'Dragon Flag':['abs'], 'Cable Wood Chop':['abs'],
+  'Windmill':['abs'],
+};
+
+// Resolve an exercise name to its target muscles (fine-grained).
+// Falls back to heuristic matching if not in FINE_MUSCLE_MAP.
+function resolveExerciseMuscles(exName){
+  if(FINE_MUSCLE_MAP[exName]) return FINE_MUSCLE_MAP[exName];
+  const l = exName.toLowerCase();
+  // Specific name patterns first
+  if(/face pull|rear[- ]?delt|reverse fly/.test(l)) return ['rear_delts'];
+  if(/calf/.test(l)) return ['calves'];
+  if(/hip thrust|glute bridge|glute kick/.test(l)) return ['glutes'];
+  if(/leg curl|romanian|rdl|good morning|nordic/.test(l)) return ['hamstrings','glutes'];
+  if(/leg ext/.test(l)) return ['quads'];
+  if(/squat|leg press|lunge|step.up|split squat/.test(l)) return ['quads','glutes'];
+  if(/deadlift/.test(l)) return ['lats','traps','hamstrings','glutes'];
+  if(/shrug/.test(l)) return ['traps'];
+  if(/pulldown|pull[- ]?up|chin/.test(l)) return ['lats','biceps'];
+  if(/row/.test(l)) return ['lats','traps','biceps'];
+  if(/curl/.test(l)) return ['biceps'];
+  if(/tricep|skull|pushdown|close grip/.test(l)) return ['triceps'];
+  if(/lateral|side raise|arnold/.test(l)) return ['shoulders'];
+  if(/press|push press/.test(l) && !/leg press/.test(l)){
+    if(/incline/.test(l)) return ['chest','shoulders'];
+    if(/overhead|shoulder|military/.test(l)) return ['shoulders','triceps'];
+    return ['chest','triceps'];
+  }
+  if(/bench/.test(l)) return ['chest','triceps'];
+  if(/fly|pec/.test(l)) return ['chest'];
+  if(/dip/.test(l)) return ['chest','triceps'];
+  if(/push.?up/.test(l)) return ['chest','triceps'];
+  if(/plank|crunch|sit.?up|leg.raise|hollow|ab |abs |abdominal|russian|pallof|wood chop|v.?up|bicycle/.test(l)) return ['abs'];
+  return [];
+}
+
+// Sum volume per muscle over the last `windowDays` days.
+// Returns { muscleVol: {chest:N,...}, total, daysAgo: {muscle: days} }.
+function calcMuscleHeatmap(windowDays){
+  const since = new Date(Date.now() - windowDays * 86400000);
+  const muscles = ['chest','shoulders','rear_delts','traps','lats','biceps','triceps','abs','quads','hamstrings','glutes','calves'];
+  const muscleVol = {};
+  const lastWorked = {};
+  muscles.forEach(m => { muscleVol[m] = 0; lastWorked[m] = null; });
+
+  completedSessions.filter(s => !s.manualActivity && s.setLog && new Date(s.date) >= since).forEach(s => {
+    const sd = s.date instanceof Date ? s.date : new Date(s.date);
+    Object.entries(s.setLog).forEach(([exName, data]) => {
+      const targets = resolveExerciseMuscles(exName);
+      if(!targets.length) return;
+      const sets = data.sets || 0;
+      const repsArr = Array.isArray(data.reps) ? data.reps : (data.reps ? [data.reps] : []);
+      const repsSum = repsArr.reduce((a, r) => a + (parseInt(r) || 0), 0);
+      let weight = data.weight || 0;
+      let isBW = false;
+      if(!weight){
+        const dbEx = EXDB.find(e => e.name === exName);
+        if((dbEx && dbEx.bw) || exName === 'Abdominal Work'){ weight = userProfile.weight || 80; isBW = true; }
+      }
+      const effectiveReps = repsSum > 0 ? repsSum : (isBW ? sets * 10 : 0);
+      const vol = weight * effectiveReps;
+      // Primary muscle gets full credit; subsequent muscles get diminishing credit
+      const weights = [1.0, 0.6, 0.4, 0.25];
+      targets.forEach((m, i) => {
+        if(!(m in muscleVol)) return;
+        muscleVol[m] += vol * (weights[i] || 0.2);
+        if(!lastWorked[m] || sd > lastWorked[m]) lastWorked[m] = sd;
+      });
+    });
+  });
+  const total = Object.values(muscleVol).reduce((a, v) => a + v, 0);
+  return { muscleVol, total, lastWorked };
+}
+
+let _muscleHeatmapWindow = 7; // days
+
+function setMuscleHeatmapWindow(days){
+  _muscleHeatmapWindow = days;
+  renderMuscleHeatmap();
+}
+
+function _muscleHeatColor(vol, peak){
+  // 0 vol → dim red; small vol relative to peak → orange; mid → yellow-green; high → green
+  if(vol === 0)             return { fill:'rgba(255,77,106,0.18)', stroke:'rgba(255,77,106,0.55)' };
+  if(peak === 0)            return { fill:'rgba(150,150,150,0.20)', stroke:'rgba(150,150,150,0.5)' };
+  const pct = vol / peak;
+  if(pct < 0.20)            return { fill:'rgba(255,140,66,0.55)',  stroke:'rgba(255,140,66,0.85)' };
+  if(pct < 0.50)            return { fill:'rgba(200,255,0,0.55)',   stroke:'rgba(200,255,0,0.85)' };
+  return                           { fill:'rgba(76,255,145,0.65)',  stroke:'rgba(76,255,145,0.95)' };
+}
+
+const MUSCLE_LABELS = {
+  chest:'Chest', shoulders:'Shoulders', rear_delts:'Rear delts', traps:'Traps',
+  lats:'Lats', biceps:'Biceps', triceps:'Triceps', abs:'Abs',
+  quads:'Quads', hamstrings:'Hamstrings', glutes:'Glutes', calves:'Calves'
+};
+
+const UNDER_TRAINED_HINTS = {
+  rear_delts: 'Try Face Pulls or Reverse Fly',
+  traps:      'Try Shrugs or Face Pulls',
+  hamstrings: 'Try Romanian Deadlift or Leg Curl',
+  calves:     'Try Calf Raises',
+  glutes:     'Try Hip Thrusts or Bulgarian Split Squat',
+  abs:        'Try Plank or Hanging Leg Raise',
+  triceps:    'Try Pushdowns or Skull Crushers',
+  biceps:     'Try Curl variants',
+  shoulders:  'Try Overhead Press or Lateral Raises',
+  chest:      'Try Bench Press or Push-Ups',
+  lats:       'Try Pull-Ups or Lat Pulldown',
+  quads:      'Try Squat or Leg Press',
+};
+
+function renderMuscleHeatmap(){
+  const el = document.getElementById('muscleHeatmap');
+  if(!el) return;
+  const data = calcMuscleHeatmap(_muscleHeatmapWindow);
+  const peak = Math.max(...Object.values(data.muscleVol));
+
+  const muscleColors = {};
+  Object.entries(data.muscleVol).forEach(([m, v]) => muscleColors[m] = _muscleHeatColor(v, peak));
+
+  // Build SVG body diagram (front + back silhouettes)
+  const svg = `
+    <svg viewBox="0 0 280 360" style="width:100%;height:auto;max-height:340px;display:block;" xmlns="http://www.w3.org/2000/svg">
+      <!-- FRONT silhouette -->
+      <text x="65" y="14" fill="var(--text2)" font-size="9" font-weight="700" text-anchor="middle" letter-spacing="1.5">FRONT</text>
+      <circle cx="65" cy="32" r="13" fill="var(--surface3)" stroke="var(--border)"/>
+      <!-- Shoulders (front+side delts) -->
+      <ellipse cx="40" cy="62" rx="14" ry="9"  fill="${muscleColors.shoulders.fill}" stroke="${muscleColors.shoulders.stroke}" stroke-width="1.2"/>
+      <ellipse cx="90" cy="62" rx="14" ry="9"  fill="${muscleColors.shoulders.fill}" stroke="${muscleColors.shoulders.stroke}" stroke-width="1.2"/>
+      <!-- Chest -->
+      <rect x="32" y="56" width="66" height="44" rx="14" ry="14" fill="${muscleColors.chest.fill}" stroke="${muscleColors.chest.stroke}" stroke-width="1.2"/>
+      <line x1="65" y1="60" x2="65" y2="96" stroke="rgba(0,0,0,0.25)" stroke-width="1"/>
+      <!-- Biceps -->
+      <rect x="14"  y="78" width="16" height="42" rx="7" fill="${muscleColors.biceps.fill}" stroke="${muscleColors.biceps.stroke}" stroke-width="1.2"/>
+      <rect x="100" y="78" width="16" height="42" rx="7" fill="${muscleColors.biceps.fill}" stroke="${muscleColors.biceps.stroke}" stroke-width="1.2"/>
+      <!-- Abs -->
+      <rect x="42" y="106" width="46" height="48" rx="10" fill="${muscleColors.abs.fill}" stroke="${muscleColors.abs.stroke}" stroke-width="1.2"/>
+      <!-- Quads -->
+      <rect x="32" y="166" width="30" height="86" rx="10" fill="${muscleColors.quads.fill}" stroke="${muscleColors.quads.stroke}" stroke-width="1.2"/>
+      <rect x="68" y="166" width="30" height="86" rx="10" fill="${muscleColors.quads.fill}" stroke="${muscleColors.quads.stroke}" stroke-width="1.2"/>
+      <!-- Calves preview (front) -->
+      <rect x="38" y="262" width="20" height="58" rx="7" fill="${muscleColors.calves.fill}" stroke="${muscleColors.calves.stroke}" stroke-width="1" opacity="0.6"/>
+      <rect x="72" y="262" width="20" height="58" rx="7" fill="${muscleColors.calves.fill}" stroke="${muscleColors.calves.stroke}" stroke-width="1" opacity="0.6"/>
+
+      <!-- BACK silhouette -->
+      <text x="215" y="14" fill="var(--text2)" font-size="9" font-weight="700" text-anchor="middle" letter-spacing="1.5">BACK</text>
+      <circle cx="215" cy="32" r="13" fill="var(--surface3)" stroke="var(--border)"/>
+      <!-- Traps -->
+      <rect x="200" y="50" width="30" height="18" rx="6" fill="${muscleColors.traps.fill}" stroke="${muscleColors.traps.stroke}" stroke-width="1.2"/>
+      <!-- Rear delts -->
+      <ellipse cx="190" cy="62" rx="14" ry="9" fill="${muscleColors.rear_delts.fill}" stroke="${muscleColors.rear_delts.stroke}" stroke-width="1.2"/>
+      <ellipse cx="240" cy="62" rx="14" ry="9" fill="${muscleColors.rear_delts.fill}" stroke="${muscleColors.rear_delts.stroke}" stroke-width="1.2"/>
+      <!-- Lats -->
+      <rect x="184" y="72" width="62" height="68" rx="14" fill="${muscleColors.lats.fill}" stroke="${muscleColors.lats.stroke}" stroke-width="1.2"/>
+      <line x1="215" y1="76" x2="215" y2="136" stroke="rgba(0,0,0,0.25)" stroke-width="1"/>
+      <!-- Triceps -->
+      <rect x="164" y="78" width="16" height="42" rx="7" fill="${muscleColors.triceps.fill}" stroke="${muscleColors.triceps.stroke}" stroke-width="1.2"/>
+      <rect x="250" y="78" width="16" height="42" rx="7" fill="${muscleColors.triceps.fill}" stroke="${muscleColors.triceps.stroke}" stroke-width="1.2"/>
+      <!-- Glutes -->
+      <rect x="184" y="146" width="62" height="30" rx="12" fill="${muscleColors.glutes.fill}" stroke="${muscleColors.glutes.stroke}" stroke-width="1.2"/>
+      <line x1="215" y1="148" x2="215" y2="174" stroke="rgba(0,0,0,0.25)" stroke-width="1"/>
+      <!-- Hamstrings -->
+      <rect x="184" y="184" width="30" height="74" rx="10" fill="${muscleColors.hamstrings.fill}" stroke="${muscleColors.hamstrings.stroke}" stroke-width="1.2"/>
+      <rect x="216" y="184" width="30" height="74" rx="10" fill="${muscleColors.hamstrings.fill}" stroke="${muscleColors.hamstrings.stroke}" stroke-width="1.2"/>
+      <!-- Calves (primary view from back) -->
+      <rect x="188" y="266" width="22" height="58" rx="7" fill="${muscleColors.calves.fill}" stroke="${muscleColors.calves.stroke}" stroke-width="1.2"/>
+      <rect x="220" y="266" width="22" height="58" rx="7" fill="${muscleColors.calves.fill}" stroke="${muscleColors.calves.stroke}" stroke-width="1.2"/>
+    </svg>`;
+
+  // Sort muscles by volume
+  const ranked = Object.entries(data.muscleVol).sort((a, b) => b[1] - a[1]);
+  const topTwo = ranked.slice(0, 2).filter(([, v]) => v > 0);
+  const underTrained = ranked.slice().reverse().filter(([, v]) => v < peak * 0.20).slice(0, 3);
+
+  // Window selector
+  const winChip = (days, label) => `<div class="chip${_muscleHeatmapWindow === days ? ' active' : ''}" onclick="setMuscleHeatmapWindow(${days})" style="font-size:11px;padding:6px 12px;">${label}</div>`;
+  const toggleHtml = `<div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+    ${winChip(7, 'This week')}${winChip(14, 'Last 2 weeks')}${winChip(28, 'Last 4 weeks')}
+  </div>`;
+
+  // Volume legend
+  const legend = `
+    <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-top:6px;font-size:10px;color:var(--text2);">
+      <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:3px;background:rgba(255,77,106,0.55);"></span>None</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:3px;background:rgba(255,140,66,0.7);"></span>Low</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:3px;background:rgba(200,255,0,0.7);"></span>Mid</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:3px;background:rgba(76,255,145,0.85);"></span>Strong</span>
+    </div>`;
+
+  // Top trained / under-trained callouts
+  const fmtVol = (v) => v >= 1000 ? (Math.round(v / 100) / 10) + 'k kg' : Math.round(v) + ' kg';
+  const topHtml = topTwo.length ? `
+    <div style="margin-top:14px;padding:10px 12px;background:rgba(76,255,145,0.07);border:1px solid rgba(76,255,145,0.25);border-radius:10px;">
+      <div style="font-size:10px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;">✓ Top trained</div>
+      ${topTwo.map(([m, v]) => `<div style="font-size:12px;font-weight:600;color:var(--text);">${MUSCLE_LABELS[m]} <span style="color:var(--text2);font-weight:400;">— ${fmtVol(v)}</span></div>`).join('')}
+    </div>` : '';
+  const underHtml = underTrained.length ? `
+    <div style="margin-top:8px;padding:10px 12px;background:rgba(255,140,66,0.07);border:1px solid rgba(255,140,66,0.25);border-radius:10px;">
+      <div style="font-size:10px;font-weight:700;color:#ff8c42;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;">⚠ Watch out — under-trained</div>
+      ${underTrained.map(([m, v]) => {
+        const hint = UNDER_TRAINED_HINTS[m] || '';
+        const volLabel = v === 0 ? 'no work logged' : fmtVol(v);
+        return `<div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:3px;">${MUSCLE_LABELS[m]} <span style="color:var(--text2);font-weight:400;">— ${volLabel}</span>${hint ? `<div style="font-size:11px;font-weight:400;color:var(--text2);margin-top:1px;">${hint}</div>` : ''}</div>`;
+      }).join('')}
+    </div>` : '';
+
+  if(data.total === 0){
+    el.innerHTML = `${toggleHtml}<div style="padding:20px;text-align:center;color:var(--text2);font-size:13px;">No sessions in the last ${_muscleHeatmapWindow} days — start training to see your heatmap.</div>${svg}${legend}`;
+    return;
+  }
+  el.innerHTML = `${toggleHtml}${svg}${legend}${topHtml}${underHtml}`;
 }
 
 function renderMuscleBalance(){
