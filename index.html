@@ -636,6 +636,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
       <div class="section-label">COMPOUND vs ISOLATION</div>
       <div class="card" style="padding:16px;"><div id="compoundIsolation"></div></div>
 
+      <div class="section-label">TIME UNDER TENSION</div>
+      <div class="card" style="padding:16px;"><div id="timeUnderTension"></div></div>
+
       <div class="section-label">RECENT SESSIONS</div>
       <div class="card" id="recentSess"></div>
     </div>
@@ -10349,6 +10352,7 @@ function renderProgress(){
   renderMuscleBalance();
   renderStrengthRatios();
   renderCompoundIsolation();
+  renderTimeUnderTension();
   const sorted=[...completedSessions].sort((a,b)=>b.date-a.date).slice(0,8);
   if(!sorted.length){document.getElementById('recentSess').innerHTML='<div style="padding:20px;text-align:center;color:var(--text2);font-size:13px;">No sessions yet — start your first workout!</div>';}
   else {
@@ -11048,6 +11052,162 @@ function renderCompoundIsolation(){
       ✓ No major imbalances detected. Compound and isolation work look proportional across muscle groups.
     </div>`;
   }
+
+  el.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// TIME UNDER TENSION — estimated from reps × tempo (or actual seconds for holds)
+// Hypertrophy zone: 25-60s per set. Strength: <20s. Endurance: >90s.
+// ─────────────────────────────────────────────────────────────────────
+const TUT_HOLD_EXERCISES = new Set([
+  'Plank','Side Plank','Hollow Hold','L-Sit','Dead Bug','Wall Sit','Dragon Flag',
+]);
+const TUT_DEFAULT_TEMPO = 3; // seconds per rep (1s up + 2s down)
+
+function estimateSetTUT(exName, reps){
+  // For static holds, the logged "rep" is already seconds — sum directly
+  if(TUT_HOLD_EXERCISES.has(exName)) return reps;
+  // Standard reps: ~3 seconds per rep is a reasonable default tempo
+  return reps * TUT_DEFAULT_TEMPO;
+}
+
+function calcTUT(windowDays){
+  const since = new Date(Date.now() - windowDays * 86400000);
+  const muscles = ['chest','shoulders','rear_delts','traps','lats','biceps','triceps','abs','quads','hamstrings','glutes','calves'];
+  const muscleTUT = {};
+  muscles.forEach(m => muscleTUT[m] = 0);
+  let totalTUT = 0;
+  let totalSets = 0;
+  let perSetTUTs = []; // for distribution analysis
+
+  completedSessions.filter(s => !s.manualActivity && s.setLog && new Date(s.date) >= since).forEach(s => {
+    Object.entries(s.setLog).forEach(([exName, data]) => {
+      const targets = resolveExerciseMuscles(exName);
+      const sets = data.sets || 0;
+      const repsArr = Array.isArray(data.reps) ? data.reps : (data.reps ? [data.reps] : []);
+      // Per-set TUT: if reps array has per-set values, use them; otherwise reuse the average
+      const avgReps = repsArr.length ? repsArr.reduce((a,r)=>a+(parseInt(r)||0),0) / repsArr.length : 8;
+      for(let i = 0; i < sets; i++){
+        const reps = parseInt(repsArr[i]) || avgReps;
+        const setTUT = estimateSetTUT(exName, reps);
+        if(setTUT <= 0) continue;
+        totalTUT += setTUT;
+        totalSets++;
+        perSetTUTs.push(setTUT);
+        // Distribute TUT across primary/secondary muscles same way as heatmap
+        const muscleWeights = [1.0, 0.6, 0.4, 0.25];
+        targets.forEach((m, idx) => {
+          if(!(m in muscleTUT)) return;
+          muscleTUT[m] += setTUT * (muscleWeights[idx] || 0.2);
+        });
+      }
+    });
+  });
+
+  const avgTUT = totalSets > 0 ? totalTUT / totalSets : 0;
+  // Distribution: how many sets fall in each zone
+  const zones = { strength:0, hypertrophy:0, endurance:0 };
+  perSetTUTs.forEach(t => {
+    if(t < 20)      zones.strength++;
+    else if(t < 60) zones.hypertrophy++;
+    else            zones.endurance++;
+  });
+
+  return { totalTUT, totalSets, avgTUT, muscleTUT, zones };
+}
+
+let _tutWindow = 7;
+function setTUTWindow(d){ _tutWindow = d; renderTimeUnderTension(); }
+
+function renderTimeUnderTension(){
+  const el = document.getElementById('timeUnderTension');
+  if(!el) return;
+  const data = calcTUT(_tutWindow);
+
+  const winChip = (d, label) => `<div class="chip${_tutWindow === d ? ' active' : ''}" onclick="setTUTWindow(${d})" style="font-size:11px;padding:6px 12px;">${label}</div>`;
+  const toggle = `<div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+    ${winChip(7, 'This week')}${winChip(14, 'Last 2 weeks')}${winChip(28, 'Last 4 weeks')}
+  </div>`;
+
+  if(data.totalSets === 0){
+    el.innerHTML = toggle + `<div style="padding:8px;text-align:center;color:var(--text2);font-size:13px;">No sessions in the last ${_tutWindow} days.</div>`;
+    return;
+  }
+
+  const totalMin = Math.round(data.totalTUT / 60);
+  const avg = Math.round(data.avgTUT);
+
+  // Avg-TUT zone classification + advice
+  let zone, zoneLabel, zoneColor, zoneAdvice;
+  if(avg < 20)       { zone = 'strength';    zoneLabel = '⚡ Strength zone';   zoneColor = 'var(--accent2)'; zoneAdvice = 'Mostly heavy short sets — great for strength. For more hypertrophy, slow down reps to 3s each or push reps higher.'; }
+  else if(avg < 60)  { zone = 'hypertrophy'; zoneLabel = '✓ Hypertrophy zone'; zoneColor = '#4cff91';        zoneAdvice = 'Most sets in the muscle-growth sweet spot (25-60s under tension).'; }
+  else               { zone = 'endurance';   zoneLabel = '⏱ Endurance zone';  zoneColor = '#ff8c42';        zoneAdvice = 'Long sets — good for muscular endurance. For strength/hypertrophy, lower reps and add weight.'; }
+
+  // Zone distribution
+  const zSum = data.zones.strength + data.zones.hypertrophy + data.zones.endurance;
+  const sP = Math.round((data.zones.strength    / zSum) * 100);
+  const hP = Math.round((data.zones.hypertrophy / zSum) * 100);
+  const eP = 100 - sP - hP;
+
+  // Top muscles by TUT
+  const ranked = Object.entries(data.muscleTUT).sort((a,b) => b[1] - a[1]).filter(([,v]) => v > 0);
+  const peakTUT = ranked.length ? ranked[0][1] : 1;
+
+  let html = toggle;
+
+  // Hero stats: total minutes + avg per set
+  html += `<div style="display:flex;gap:10px;margin-bottom:14px;">
+    <div style="flex:1;background:var(--surface2);border-radius:10px;padding:14px;text-align:center;">
+      <div style="font-size:28px;font-weight:900;color:var(--text);line-height:1;">${totalMin}<span style="font-size:14px;font-weight:700;color:var(--text2);"> min</span></div>
+      <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-top:5px;">Total TUT</div>
+    </div>
+    <div style="flex:1;background:var(--surface2);border-radius:10px;padding:14px;text-align:center;">
+      <div style="font-size:28px;font-weight:900;color:${zoneColor};line-height:1;">${avg}<span style="font-size:14px;font-weight:700;color:var(--text2);"> s</span></div>
+      <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-top:5px;">Avg per set</div>
+    </div>
+  </div>`;
+
+  html += `<div style="margin-bottom:6px;font-size:11px;font-weight:700;color:${zoneColor};">${zoneLabel}</div>
+  <div style="font-size:11px;color:var(--text2);line-height:1.45;margin-bottom:14px;">${zoneAdvice}</div>`;
+
+  // Zone distribution stacked bar
+  html += `<div style="margin-bottom:6px;font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;">Set distribution</div>
+  <div style="display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--surface3);margin-bottom:5px;">
+    <div style="width:${sP}%;background:rgba(0,212,255,0.7);" title="Strength <20s"></div>
+    <div style="width:${hP}%;background:rgba(76,255,145,0.7);" title="Hypertrophy 25-60s"></div>
+    <div style="width:${eP}%;background:rgba(255,140,66,0.7);" title="Endurance >60s"></div>
+  </div>
+  <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text2);margin-bottom:14px;">
+    <span><span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:rgba(0,212,255,0.7);margin-right:4px;"></span>Strength <20s · ${data.zones.strength} sets</span>
+    <span><span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:rgba(76,255,145,0.7);margin-right:4px;"></span>Hyp 25-60s · ${data.zones.hypertrophy}</span>
+    <span><span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:rgba(255,140,66,0.7);margin-right:4px;"></span>Endurance · ${data.zones.endurance}</span>
+  </div>`;
+
+  // Per-muscle TUT bars (top 6 by volume)
+  if(ranked.length){
+    html += `<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">By muscle group</div>`;
+    ranked.slice(0, 6).forEach(([m, t]) => {
+      const pct = Math.max(2, Math.round((t / peakTUT) * 100));
+      const min = Math.round(t / 60);
+      const sec = Math.round(t % 60);
+      const timeStr = min > 0 ? `${min}m ${sec}s` : `${Math.round(t)}s`;
+      html += `<div style="margin-bottom:6px;">
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;">
+          <span style="color:var(--text);font-weight:600;">${MUSCLE_LABELS[m] || m}</span>
+          <span style="color:var(--text2);">${timeStr}</span>
+        </div>
+        <div style="background:var(--surface3);border-radius:4px;height:6px;overflow:hidden;">
+          <div style="width:${pct}%;height:100%;background:linear-gradient(90deg, var(--accent2), var(--accent));"></div>
+        </div>
+      </div>`;
+    });
+  }
+
+  // Disclosure
+  html += `<div style="margin-top:14px;padding-top:10px;border-top:0.5px solid var(--border);font-size:10px;color:var(--text2);line-height:1.45;">
+    <strong style="color:var(--text);">Note:</strong> TUT estimated at 3s per rep (default tempo). Static holds (plank, hollow) use logged seconds directly. Real TUT depends on your tempo per set.
+  </div>`;
 
   el.innerHTML = html;
 }
