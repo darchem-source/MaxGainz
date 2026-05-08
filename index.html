@@ -60,7 +60,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 .nav-label { font-size: 10px; font-weight: 500; color: var(--text2); }
 .nav-item.active .nav-label { color: var(--accent); }
 .screen { display: none; }
-.screen.active { display: block; animation: fadeIn 0.2s ease; }
+.screen.active { display: block; animation: fadeIn var(--dur-base) var(--ease-out); }
 @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
 .page-header { padding: 16px 20px 12px; position: sticky; top: 0; z-index: 50; background: var(--bg); }
 /* Sticky wrapper for multi-element headers (session, programme) */
@@ -167,7 +167,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 .exercise-info-icon:hover { opacity:1; transform:scale(1.15); }
 @keyframes iconPulse { 0%,100%{opacity:1;} 50%{opacity:0.4;color:var(--accent);} }
 .curr-name.pulse-first-time { animation:iconPulse 1.4s ease-in-out 2; }
-.toast { position:fixed; bottom:100px; left:50%; transform:translateX(-50%) translateY(20px); background:var(--surface2); border:0.5px solid var(--border); color:var(--text); font-size:13px; font-weight:700; padding:10px 18px; border-radius:var(--radius-pill); z-index:var(--z-toast); opacity:0; transition:opacity 0.2s, transform 0.2s; pointer-events:none; white-space:normal; max-width:min(90vw, 360px); text-align:center; line-height:1.4; }
+.toast { position:fixed; bottom:100px; left:50%; transform:translateX(-50%) translateY(20px); background:var(--surface2); border:0.5px solid var(--border); color:var(--text); font-size:13px; font-weight:700; padding:10px 18px; border-radius:var(--radius-pill); z-index:var(--z-toast); opacity:0; transition:opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out); pointer-events:none; white-space:normal; max-width:min(90vw, 360px); text-align:center; line-height:1.4; }
 .toast.tone-info    { border-color:rgba(0,212,255,0.4); color:var(--accent2); }
 .toast.tone-success { border-color:rgba(76,255,145,0.4); color:#4cff91; }
 .toast.tone-warning { border-color:rgba(255,165,0,0.45); color:#ffb547; }
@@ -231,7 +231,13 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 .act-row { display:flex; gap:8px; margin-top:4px; }
 .btn-swap { flex:1; background:var(--surface2); color:var(--text); border:0.5px solid var(--border); border-radius:12px; font-size:14px; font-weight:700; padding:16px; min-height:48px; cursor:pointer; }
 .btn-next { flex:2; background:var(--accent); color:#000; border:none; border-radius:12px; font-size:15px; font-weight:800; padding:16px; min-height:48px; cursor:pointer; transition:all 0.15s; }
-.btn-next:active { transform:scale(0.97); }
+.btn-next:active { transform:scale(0.96); transition: transform 80ms var(--ease-snap); }
+.btn-p:active    { transform:scale(0.97); transition: transform 80ms var(--ease-snap); }
+.btn-swap:active { transform:scale(0.97); transition: transform 80ms var(--ease-snap); }
+.set-bub:active  { transform:scale(0.92); transition: transform 80ms var(--ease-snap); }
+.sc-btn:active   { transform:scale(0.92); transition: transform 80ms var(--ease-snap); }
+.wadj-btn:active { transform:scale(0.90); transition: transform 80ms var(--ease-snap); }
+.chip:active, .nav-item:active { transform:scale(0.96); transition: transform 80ms var(--ease-snap); }
 /* Larger touch targets in active session — gloves & sweaty hands.
    Scoped to #s-active button. Excludes already-sized controls (.sc-btn,
    .wadj-btn, .set-bub, .modal-handle, .chip) so dense rows don't bloat. */
@@ -410,7 +416,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
         <button onclick="handleHIITStart()" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:12px;font-size:15px;font-weight:800;padding:14px;cursor:pointer;margin-bottom:8px;">▶ Start Session</button>
         <button onclick="cancelSession()" style="width:100%;background:rgba(255,77,106,0.08);color:var(--red);border:0.5px solid rgba(255,77,106,0.25);border-radius:12px;font-size:13px;font-weight:600;padding:11px;cursor:pointer;">✕ Cancel &amp; discard session</button>
       </div>
-      <!-- Compact sticky bar: exercise counter + timer + progress -->
+      <!-- Compact sticky bar: exercise counter + timer + progress + scroll-driven exercise name -->
       <div class="sticky-hdr">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 16px 2px;gap:6px;">
           <div style="display:flex;align-items:center;justify-content:space-between;flex:1;min-width:0;">
@@ -418,6 +424,10 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
             <span style="color:var(--accent);font-weight:700;font-size:11px;margin-right:6px;" id="progPct">0%</span>
           </div>
           <div class="timer-pill" id="sessTimer">0:00</div>
+        </div>
+        <!-- Scroll-driven: exercise name fades in once the curr-card title scrolls out of view -->
+        <div id="sessStickyExName" style="height:0;overflow:hidden;opacity:0;transform:translateY(-4px);transition:height var(--dur-base) var(--ease-out),opacity var(--dur-base) var(--ease-out),transform var(--dur-base) var(--ease-out);padding:0 16px;">
+          <div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:4px 0;" id="sessStickyExNameText"></div>
         </div>
         <div class="prog-strip" style="margin:0 16px 4px;"><div class="prog-fill" id="progFill" style="width:0%"></div></div>
       </div><!-- /sticky-hdr -->
@@ -3801,6 +3811,7 @@ function updateSessUI(){
   initExerciseSwipe(); // attach once; horizontal card swipe → next/prev exercise
   initCurrCardLongPress(); // attach once; long-press → action sheet (note/swap/remove)
   initRestPullCancel();    // attach once; vertical pull on rest bar → cancel (skipRest)
+  initScrollDrivenHeader(); // attach once; sticky exercise-name fades in on scroll
   const ex=sessExs[curIdx],tot=sessExs.length;
   const bc={'Upper':'badge-u','Lower':'badge-l','Full Body':'badge-f','Push A':'badge-u','Push B':'badge-u','Pull A':'badge-l','Pull B':'badge-l','Legs A':'badge-f','Legs B':'badge-f'};
   // Library programmes: look up the badge declared in the catalog by day name
@@ -3847,6 +3858,9 @@ function updateSessUI(){
     document.getElementById('progPct').textContent=pct+'%';
   }
   const _currNameEl = document.getElementById('currName');
+  // Mirror exercise name into the sticky header pill (used by scroll-driven reveal)
+  const _stickyNameEl = document.getElementById('sessStickyExNameText');
+  if(_stickyNameEl) _stickyNameEl.textContent = ex.name;
   // Only rewrite when the exercise actually changes — don't disrupt a running
   // animation on every set-logged / weight-adjusted updateSessUI call.
   if(_currNameEl.dataset.exName !== ex.name) {
@@ -6015,6 +6029,35 @@ function initExerciseSwipe(){
 // ── PULL-TO-CANCEL REST ──
 // Vertical swipe (up or down) on the rest bar dismisses it the same as Skip.
 // Visual: bar follows finger with damping, fades, animates off, calls skipRest().
+// ── SCROLL-DRIVEN HEADER ──
+// As the curr-card title scrolls out of view, fade in a slim exercise-name
+// row inside the sticky header so the user always knows what they're doing.
+function initScrollDrivenHeader(){
+  const reveal  = document.getElementById('sessStickyExName');
+  const sentinel = document.getElementById('currName');
+  const root     = document.querySelector('.tab-content');
+  if(!reveal || !sentinel || !root) return;
+  if(reveal._observer) return; // attach once per session
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      const stuck = !entry.isIntersecting;
+      if(stuck){
+        reveal.style.height    = '24px';
+        reveal.style.opacity   = '1';
+        reveal.style.transform = 'translateY(0)';
+      } else {
+        reveal.style.height    = '0';
+        reveal.style.opacity   = '0';
+        reveal.style.transform = 'translateY(-4px)';
+      }
+    });
+  }, { root, threshold: 0, rootMargin: '-44px 0px 0px 0px' });
+
+  observer.observe(sentinel);
+  reveal._observer = observer;
+}
+
 function initRestPullCancel(){
   const wrap = document.getElementById('restWrap');
   if(!wrap || wrap._pullCancelInit) return;
