@@ -7037,6 +7037,133 @@ function dismissCelebrate(){
   document.getElementById('celebrateAlert').classList.remove('show');
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// SESSION INSIGHT — smart post-session summary in priority order:
+//   1. New weight PR on any exercise
+//   2. Best volume for this day-type in N weeks
+//   3. Top set well above recent average
+//   4. First-ever session (welcome)
+// Returns { emoji, title, sub } or null to fall back to generic text.
+// ─────────────────────────────────────────────────────────────────────
+function generateSessionInsight(){
+  if(!sessExs || !sessExs.length) return null;
+
+  // Snapshot the just-completed session from in-memory state
+  const sessLifts = [];
+  let totalVolume = 0;
+  sessExs.forEach((ex, i) => {
+    const done = (setsDone[i] || []).length;
+    if(done === 0) return;
+    const repsArr = Object.values(repsLogged[i] || {}).map(r => parseInt(r) || 0).filter(r => r > 0);
+    const setWtsArr = Object.values(setWeights[i] || {}).map(w => parseFloat(w) || 0).filter(w => w > 0);
+    const topReps = repsArr.length ? Math.max(...repsArr) : 0;
+    const topWeight = Math.max(ex.weight || 0, ...setWtsArr);
+    let exVolume = 0;
+    for(let s = 0; s < done; s++){
+      const w = setWtsArr[s] || ex.weight || 0;
+      const r = repsArr[s] || (ex.reps ? parseInt(ex.reps.split('–')[0]) || 8 : 8);
+      exVolume += w * r;
+    }
+    totalVolume += exVolume;
+    sessLifts.push({ name: ex.name, sets: done, weight: topWeight, topReps, volume: exVolume });
+  });
+
+  if(!sessLifts.length) return null;
+
+  // ─── 1. PR check ──────────────────────────────────────────
+  const prs = [];
+  sessLifts.forEach(l => {
+    if(l.weight <= 0) return;
+    const history = getLiftHistoryByName(l.name);
+    if(!history.length) return; // first time logged — skip PR detection (handled later)
+    const prevMax = Math.max(...history.map(p => p.weight));
+    if(l.weight > prevMax){
+      prs.push({ name:l.name, weight:l.weight, prev:prevMax, jump:l.weight - prevMax });
+    }
+  });
+  if(prs.length){
+    const biggest = prs.sort((a, b) => b.jump - a.jump)[0];
+    const jumpStr = biggest.jump.toFixed(biggest.jump < 1 ? 1 : (biggest.jump % 1 === 0 ? 0 : 1));
+    return {
+      emoji: '🏆',
+      title: 'New ' + biggest.name + ' PR!',
+      sub:   biggest.weight + 'kg — up ' + jumpStr + 'kg from ' + biggest.prev + 'kg'
+    };
+  }
+
+  // ─── 2. Best volume in N weeks for the same day type ──────
+  if(sessDay && totalVolume > 0){
+    const sameDayPast = completedSessions.filter(s => s.day === sessDay && !s.manualActivity);
+    if(sameDayPast.length >= 1){
+      const wk = 7 * 24 * 60 * 60 * 1000;
+      const past12wk = sameDayPast.filter(s => (Date.now() - new Date(s.date).getTime()) <= 12 * wk);
+      const peakInWindow = past12wk.length ? Math.max(...past12wk.map(s => s.volume || 0)) : 0;
+      if(totalVolume > peakInWindow && peakInWindow > 0){
+        // Find the most recent session with equal or higher volume to compute "in X weeks"
+        const sorted = sameDayPast.filter(s => (s.volume || 0) >= totalVolume).sort((a, b) => new Date(b.date) - new Date(a.date));
+        let weeksAgo;
+        if(sorted.length){
+          weeksAgo = Math.round((Date.now() - new Date(sorted[0].date).getTime()) / wk);
+        } else {
+          // Never been higher — find earliest session and use that span
+          const earliest = sameDayPast.sort((a, b) => new Date(a.date) - new Date(b.date))[0];
+          weeksAgo = Math.max(1, Math.round((Date.now() - new Date(earliest.date).getTime()) / wk));
+        }
+        const volStr = totalVolume >= 1000 ? (Math.round(totalVolume / 100) / 10) + 'k kg' : Math.round(totalVolume) + ' kg';
+        const span = weeksAgo >= 12 ? 'ever' : (weeksAgo + ' week' + (weeksAgo !== 1 ? 's' : ''));
+        return {
+          emoji: '🔥',
+          title: 'Best ' + sessDay + ' session in ' + span + '!',
+          sub:   volStr + ' total volume — biggest since you started tracking this day'
+        };
+      }
+    }
+  }
+
+  // ─── 3. Top set well above recent average ─────────────────
+  if(sessLifts.length){
+    const heaviest = sessLifts.slice().sort((a, b) => b.weight - a.weight)[0];
+    if(heaviest && heaviest.weight > 0){
+      const history = getLiftHistoryByName(heaviest.name);
+      if(history.length >= 3){
+        const recent = history.slice(-5);
+        const recentAvg = recent.reduce((a, p) => a + p.weight, 0) / recent.length;
+        const jump = heaviest.weight - recentAvg;
+        if(jump >= 5){
+          return {
+            emoji: '💪',
+            title: heaviest.name + ' is moving!',
+            sub:   'Top set ' + heaviest.weight + 'kg — ' + jump.toFixed(jump % 1 === 0 ? 0 : 1) + 'kg above your recent average'
+          };
+        }
+      }
+    }
+  }
+
+  // ─── 4. First-ever real session ───────────────────────────
+  const realSessionsBefore = completedSessions.filter(s => !s.manualActivity).length;
+  if(realSessionsBefore === 0){
+    const volStr = totalVolume >= 1000 ? (Math.round(totalVolume / 100) / 10) + 'k kg' : Math.round(totalVolume) + ' kg';
+    return {
+      emoji: '🚀',
+      title: 'First session done!',
+      sub:   volStr + ' total volume — every PR starts here'
+    };
+  }
+
+  // ─── 5. Long session ──────────────────────────────────────
+  if(sessTimeSec >= 90 * 60){
+    const mins = Math.round(sessTimeSec / 60);
+    return {
+      emoji: '🦾',
+      title: 'Marathon session — ' + mins + ' min',
+      sub:   sessLifts.length + ' exercises through dedication'
+    };
+  }
+
+  return null; // fall back to generic
+}
+
 function celebrateNext(){
   // If the current exercise was part of a superset, we need to scan from
   // the LOWEST index in that group — not from curIdx — so we don't skip
@@ -7228,9 +7355,11 @@ function showCelebrate(){
       const groupExNames = group.exerciseIndices.map(idx => sessExs[idx].name).join(' + ');
       const isSessionLast = group.exerciseIndices[group.exerciseIndices.length - 1] >= tot - 1;
       
-      document.getElementById('celebEmoji').textContent = isSessionLast ? '🏆' : '🔥';
-      document.getElementById('celebTitle').textContent = groupExNames + ' Superset Complete!';
-      document.getElementById('celebSub').textContent = isSessionLast ? 'All exercises completed' : 'All ' + group.sets + ' rounds done — awesome work!';
+      // Smart insight when the superset is also the last thing in the session
+      const ssInsight = isSessionLast ? generateSessionInsight() : null;
+      document.getElementById('celebEmoji').textContent = isSessionLast ? (ssInsight?.emoji || '🏆') : '🔥';
+      document.getElementById('celebTitle').textContent = isSessionLast && ssInsight ? ssInsight.title : groupExNames + ' Superset Complete!';
+      document.getElementById('celebSub').textContent   = isSessionLast ? (ssInsight?.sub || 'All exercises completed') : 'All ' + group.sets + ' rounds done — awesome work!';
       document.getElementById('celebWtSuggest').innerHTML = '';
       
       // Set button text and onclick based on whether session is complete
@@ -7265,9 +7394,12 @@ function showCelebrate(){
   const next=stepWeight(ex.weight||0,1,steps);
   let wtMsg='',wtCls='';
   if(avg>hi+1&&next!==ex.weight){wtMsg=`💪 Crushed it! Consider ${next}kg next time`;wtCls='color:var(--accent)';}
-  document.getElementById('celebEmoji').textContent=isSessionLast?'🏆':'🎉';
-  document.getElementById('celebTitle').textContent=isSessionLast?'Session Complete!':ex.name+' done!';
-  document.getElementById('celebSub').textContent=isSessionLast?'All exercises completed':'All sets complete — great work!';
+  // Smart insight for session-complete: PR, best-in-N-weeks, or trend highlight.
+  // Falls back to generic text when nothing notable.
+  const insight = isSessionLast ? generateSessionInsight() : null;
+  document.getElementById('celebEmoji').textContent = isSessionLast ? (insight?.emoji || '🏆') : '🎉';
+  document.getElementById('celebTitle').textContent = isSessionLast ? (insight?.title || 'Session Complete!') : ex.name + ' done!';
+  document.getElementById('celebSub').textContent   = isSessionLast ? (insight?.sub   || 'All exercises completed') : 'All sets complete — great work!';
   document.getElementById('celebWtSuggest').innerHTML=wtMsg?`<span style="${wtCls}">${wtMsg}</span>`:'';
   
   // Show XP + achievements earned for session complete
