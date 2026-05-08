@@ -594,6 +594,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
         </div>
         <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--text2);margin-left:34px;" id="chartX"></div>
       </div>
+
+      <div class="section-label">ESTIMATED 1RM</div>
+      <div class="card" style="padding:16px;"><div id="oneRMChart"></div></div>
+
       <!-- Body Weight Tracker -->
       <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px 8px;">
         <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text2);">BODY WEIGHT</div>
@@ -8965,6 +8969,7 @@ function selVariation(exactName) {
     chartEl.innerHTML = '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text2);font-size:13px;">Complete sessions to see your progress</div>';
     if (yAxisEl) yAxisEl.innerHTML = '';
     if (xEl) xEl.innerHTML = '';
+    renderOneRMChart(exactName);
     return;
   }
   miniChart(chartEl, pts.map(p => p.weight), _currentLiftColor, yAxisEl);
@@ -8973,6 +8978,176 @@ function selVariation(exactName) {
     const pt = pts[i * step];
     return `<span>${pt ? new Date(pt.date).toLocaleDateString('en-GB', {day:'numeric', month:'short'}) : ''}</span>`;
   }).join('');
+  // Sync the 1RM chart to the same lift
+  renderOneRMChart(exactName);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// ESTIMATED 1RM CURVES — multi-formula 1RM with min/max confidence band
+// ─────────────────────────────────────────────────────────────────────
+
+// Returns [{date, weight, reps}] using the heaviest set per session for `name`.
+function getLiftHistoryWithReps(name){
+  const out = [];
+  completedSessions.filter(s => !s.manualActivity).forEach(s => {
+    const entry = s.setLog && s.setLog[name];
+    if(!entry || !entry.weight) return;
+    const repsArr = Array.isArray(entry.reps) ? entry.reps : (entry.reps ? [entry.reps] : []);
+    if(!repsArr.length) return;
+    const setWeights = Array.isArray(entry.setWeights) ? entry.setWeights : [];
+    let bestW = 0, bestR = 0;
+    repsArr.forEach((r, i) => {
+      const w = setWeights[i] || entry.weight;
+      const reps = parseInt(r) || 0;
+      if(reps <= 0 || w <= 0) return;
+      // Use estimated 1RM (Epley) to compare sets, so a heavier-but-fewer-reps set wins over light high-rep
+      const e1rm = w * (1 + reps / 30);
+      const bestE1rm = bestW * (1 + bestR / 30);
+      if(e1rm > bestE1rm){ bestW = w; bestR = reps; }
+    });
+    if(bestR > 0) out.push({ date: s.date instanceof Date ? s.date : new Date(s.date), weight: bestW, reps: bestR });
+  });
+  return out.sort((a, b) => a.date - b.date);
+}
+
+// Multi-formula 1RM band. Returns { mean, low, high, formulas:{...} }.
+// Confidence band widens for high reps (formulas diverge); tight for 1-3 reps.
+function estimate1RM(weight, reps){
+  if(weight <= 0 || reps <= 0) return null;
+  const formulas = {
+    epley:    weight * (1 + reps / 30),
+    brzycki:  reps < 37 ? weight * 36 / (37 - reps) : null,
+    lombardi: weight * Math.pow(reps, 0.10),
+    oconner:  weight * (1 + reps * 0.025),
+  };
+  const vals = Object.values(formulas).filter(v => v !== null && isFinite(v) && v > 0);
+  if(!vals.length) return null;
+  const mean = vals.reduce((a, v) => a + v, 0) / vals.length;
+  const low  = Math.min(...vals);
+  const high = Math.max(...vals);
+  return { mean, low, high, formulas };
+}
+
+function renderOneRMChart(exactName){
+  const el = document.getElementById('oneRMChart');
+  if(!el) return;
+  const pts = getLiftHistoryWithReps(exactName);
+
+  if(!pts.length){
+    el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text2);font-size:13px;">No rep-logged ${exactName} sessions yet — log reps with weight to see your 1RM curve.</div>`;
+    return;
+  }
+
+  // Compute 1RM bands per session
+  const series = pts.map(p => {
+    const est = estimate1RM(p.weight, p.reps);
+    return est ? { ...p, ...est } : null;
+  }).filter(Boolean);
+
+  if(!series.length){
+    el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text2);font-size:13px;">No valid 1RM estimates for ${exactName}.</div>`;
+    return;
+  }
+
+  // Latest 1RM + trend
+  const latest = series[series.length - 1];
+  const prev = series.length > 1 ? series[series.length - 2] : null;
+  const trend = prev ? latest.mean - prev.mean : 0;
+  const trendStr = trend > 0.5 ? `↑ +${trend.toFixed(1)}kg vs last` : trend < -0.5 ? `↓ ${trend.toFixed(1)}kg vs last` : '→ same';
+  const trendColor = trend > 0.5 ? '#4cff91' : trend < -0.5 ? '#ff4d6a' : 'var(--text2)';
+
+  // Best estimated 1RM ever
+  const peakE1RM = Math.max(...series.map(s => s.mean));
+
+  // Build SVG: line + band (between low and high)
+  const w = 340, h = 116;
+  const allHi = series.map(s => s.high);
+  const allLo = series.map(s => s.low);
+  const rawMax = Math.max(...allHi);
+  const rawMin = Math.min(...allLo);
+  const range = rawMax - rawMin;
+  const step = range <= 5 ? 1 : range <= 15 ? 2 : range <= 30 ? 5 : range <= 80 ? 10 : range <= 160 ? 20 : 50;
+  const yMin = Math.max(0, Math.floor((rawMin - step * 0.8) / step) * step);
+  const yMax = Math.ceil((rawMax + step * 0.5) / step) * step;
+  const yRange = yMax - yMin || 1;
+
+  // Tick labels
+  const allTicks = [];
+  for(let t = yMin; t <= yMax + 0.001; t += step) allTicks.push(Math.round(t));
+  const ticks = allTicks.length <= 5 ? allTicks
+    : allTicks.filter((_, i, a) => i === 0 || i === a.length - 1 || i % Math.ceil((a.length - 1) / 4) === 0);
+
+  const xFor = i => series.length === 1 ? w / 2 : (i / (series.length - 1)) * w;
+  const yFor = v => h - (v - yMin) / yRange * h;
+
+  const grids = ticks.map(t => `<line x1="0" y1="${yFor(t).toFixed(1)}" x2="${w}" y2="${yFor(t).toFixed(1)}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>`).join('');
+
+  // Band path: walk along high then back along low
+  let bandPath = '';
+  if(series.length >= 2){
+    bandPath = 'M' + series.map((s, i) => `${xFor(i).toFixed(1)},${yFor(s.high).toFixed(1)}`).join('L');
+    bandPath += 'L' + series.slice().reverse().map((s, i) => {
+      const idx = series.length - 1 - i;
+      return `${xFor(idx).toFixed(1)},${yFor(s.low).toFixed(1)}`;
+    }).join('L') + 'Z';
+  }
+  // Mean line
+  const meanLine = 'M' + series.map((s, i) => `${xFor(i).toFixed(1)},${yFor(s.mean).toFixed(1)}`).join('L');
+  // Latest dot
+  const lx = xFor(series.length - 1).toFixed(1), ly = yFor(latest.mean).toFixed(1);
+  const color = '#9d7bff';
+
+  const svg = `
+    <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%;height:100%;overflow:visible;">
+      <defs>
+        <linearGradient id="oneRMBand" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${color}" stop-opacity="0.20"/>
+          <stop offset="100%" stop-color="${color}" stop-opacity="0.04"/>
+        </linearGradient>
+      </defs>
+      ${grids}
+      ${bandPath ? `<path d="${bandPath}" fill="url(#oneRMBand)" stroke="none"/>` : ''}
+      <path d="${meanLine}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="${lx}" cy="${ly}" r="5" fill="${color}"/>
+    </svg>`;
+
+  // Y-axis labels
+  const yAxis = ticks.map(t => {
+    const pct = ((yMax - t) / yRange * 100).toFixed(1);
+    return `<span style="position:absolute;right:4px;top:calc(${pct}% - 5px);font-size:9px;color:var(--text2);line-height:1;white-space:nowrap;">${t}</span>`;
+  }).join('');
+
+  // X-axis tick labels (5 evenly spaced)
+  const stepX = Math.max(1, Math.ceil(series.length / 5));
+  const xLabels = Array.from({length: Math.min(5, series.length)}, (_, i) => {
+    const pt = series[i * stepX];
+    return `<span>${pt ? new Date(pt.date).toLocaleDateString('en-GB', {day:'numeric', month:'short'}) : ''}</span>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <div>
+        <div style="font-size:14px;font-weight:700;color:var(--text);">${exactName}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px;">${series.length} session${series.length !== 1 ? 's' : ''} with reps</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:24px;font-weight:900;color:${color};line-height:1;">${Math.round(latest.mean)}<span style="font-size:12px;font-weight:700;color:var(--text2);"> kg</span></div>
+        <div style="font-size:10px;color:var(--text2);margin-top:3px;">Est. 1RM (${Math.round(latest.low)}–${Math.round(latest.high)})</div>
+        <div style="font-size:11px;font-weight:700;color:${trendColor};margin-top:3px;">${trendStr}</div>
+      </div>
+    </div>
+    <div style="display:flex;height:116px;gap:0;">
+      <div style="width:34px;flex-shrink:0;position:relative;">${yAxis}</div>
+      <div style="flex:1;min-width:0;overflow:visible;">${svg}</div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--text2);margin-left:34px;">${xLabels}</div>
+    <div style="margin-top:14px;display:flex;align-items:center;gap:14px;font-size:10px;color:var(--text2);flex-wrap:wrap;">
+      <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:14px;height:2px;background:${color};display:inline-block;"></span>Estimated 1RM (avg of formulas)</span>
+      <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:14px;height:8px;background:${color};opacity:0.25;display:inline-block;border-radius:2px;"></span>Confidence band</span>
+    </div>
+    <div style="margin-top:10px;padding-top:10px;border-top:0.5px solid var(--border);font-size:10px;color:var(--text2);line-height:1.45;">
+      <strong style="color:var(--text);">Peak est. 1RM:</strong> ${Math.round(peakE1RM)} kg · <strong style="color:var(--text);">Latest set:</strong> ${latest.weight}kg × ${latest.reps} reps · Band shows the spread between Epley, Brzycki, Lombardi & O'Conner formulas.
+    </div>`;
 }
 
 // ── ONBOARDING ──
