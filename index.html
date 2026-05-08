@@ -64,7 +64,10 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
 .page-header { padding: 16px 20px 12px; position: sticky; top: 0; z-index: 50; background: var(--bg); }
 /* Sticky wrapper for multi-element headers (session, programme) */
-.sticky-hdr { position: sticky; top: 0; z-index: 50; background: var(--bg); }
+.sticky-hdr { position: sticky; top: 0; z-index: 50; background: var(--bg); transition: box-shadow var(--dur-base) var(--ease-out); }
+.sticky-hdr.stuck { box-shadow: 0 4px 16px rgba(0,0,0,0.45); }
+.sticky-hdr.stuck #sessStickyBadge { opacity: 1; transform: scale(1); max-width: 80px; padding-right: 7px; }
+.sticky-hdr.stuck #sessStickyExName { border-top-color: var(--border); }
 .sticky-hdr .page-header { position: static; } /* avoid double-sticky inside wrapper */
 .page-title { font-size: 26px; font-weight: 800; letter-spacing: -0.5px; }
 .ac { color: var(--accent); }
@@ -416,18 +419,20 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
         <button onclick="handleHIITStart()" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:12px;font-size:15px;font-weight:800;padding:14px;cursor:pointer;margin-bottom:8px;">▶ Start Session</button>
         <button onclick="cancelSession()" style="width:100%;background:rgba(255,77,106,0.08);color:var(--red);border:0.5px solid rgba(255,77,106,0.25);border-radius:12px;font-size:13px;font-weight:600;padding:11px;cursor:pointer;">✕ Cancel &amp; discard session</button>
       </div>
-      <!-- Compact sticky bar: exercise counter + timer + progress + scroll-driven exercise name -->
-      <div class="sticky-hdr">
+      <!-- Compact sticky bar: counter + timer + progress + scroll-driven exercise name + mini day-badge -->
+      <div class="sticky-hdr" id="sessStickyHdr">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 16px 2px;gap:6px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;flex:1;min-width:0;">
-            <span id="progLbl" style="font-size:11px;color:var(--text2);font-weight:600;white-space:nowrap;">Exercise 1 of 7</span>
-            <span style="color:var(--accent);font-weight:700;font-size:11px;margin-right:6px;" id="progPct">0%</span>
+          <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0;">
+            <!-- Mini day-badge mirror — fades in once user scrolls (sess-header version is gone) -->
+            <span id="sessStickyBadge" class="day-badge" style="font-size:9px;padding:2px 7px;letter-spacing:0.5px;opacity:0;transform:scale(0.8);transition:opacity var(--dur-base) var(--ease-out),transform var(--dur-base) var(--ease-out);max-width:0;overflow:hidden;white-space:nowrap;"></span>
+            <span id="progLbl" style="font-size:11px;color:var(--text2);font-weight:600;white-space:nowrap;flex-shrink:0;">Exercise 1 of 7</span>
+            <span style="color:var(--accent);font-weight:700;font-size:11px;margin-left:auto;margin-right:6px;flex-shrink:0;" id="progPct">0%</span>
           </div>
           <div class="timer-pill" id="sessTimer">0:00</div>
         </div>
-        <!-- Scroll-driven: exercise name fades in once the curr-card title scrolls out of view -->
-        <div id="sessStickyExName" style="height:0;overflow:hidden;opacity:0;transform:translateY(-4px);transition:height var(--dur-base) var(--ease-out),opacity var(--dur-base) var(--ease-out),transform var(--dur-base) var(--ease-out);padding:0 16px;">
-          <div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:4px 0;" id="sessStickyExNameText"></div>
+        <!-- Scroll-driven exercise name reveal -->
+        <div id="sessStickyExName" style="height:0;overflow:hidden;opacity:0;transform:translateY(-4px);transition:height var(--dur-base) var(--ease-out),opacity var(--dur-base) var(--ease-out),transform var(--dur-base) var(--ease-out);padding:0 16px;border-top:0.5px solid transparent;">
+          <div style="font-size:14px;font-weight:800;color:var(--accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:6px 0 4px;" id="sessStickyExNameText"></div>
         </div>
         <div class="prog-strip" style="margin:0 16px 4px;"><div class="prog-fill" id="progFill" style="width:0%"></div></div>
       </div><!-- /sticky-hdr -->
@@ -6033,17 +6038,37 @@ function initExerciseSwipe(){
 // As the curr-card title scrolls out of view, fade in a slim exercise-name
 // row inside the sticky header so the user always knows what they're doing.
 function initScrollDrivenHeader(){
-  const reveal  = document.getElementById('sessStickyExName');
+  const reveal   = document.getElementById('sessStickyExName');
   const sentinel = document.getElementById('currName');
+  const stickyHdr= document.getElementById('sessStickyHdr');
+  const miniBadge= document.getElementById('sessStickyBadge');
+  const sessBadge= document.getElementById('sessBadge');
   const root     = document.querySelector('.tab-content');
-  if(!reveal || !sentinel || !root) return;
+  if(!reveal || !sentinel || !root || !stickyHdr) return;
   if(reveal._observer) return; // attach once per session
+
+  // Mirror the day-badge text into the mini chip so the chip says e.g. "UPPER DAY"
+  const syncBadge = () => {
+    if(!miniBadge || !sessBadge) return;
+    miniBadge.textContent = sessBadge.textContent;
+    // Mirror the badge colour class (badge-u/l/f) so the small chip matches
+    const cls = sessBadge.className.match(/badge-[ulf]/);
+    if(cls){ miniBadge.classList.remove('badge-u','badge-l','badge-f'); miniBadge.classList.add(cls[0]); }
+  };
+  syncBadge();
+  // Re-sync on any future updates — observe text changes on the original badge
+  if(!sessBadge._mirrorMo){
+    const mo = new MutationObserver(syncBadge);
+    mo.observe(sessBadge, { childList:true, characterData:true, subtree:true, attributes:true, attributeFilter:['class'] });
+    sessBadge._mirrorMo = mo;
+  }
 
   const observer = new IntersectionObserver((entries) => {
     entries.forEach(entry => {
       const stuck = !entry.isIntersecting;
+      stickyHdr.classList.toggle('stuck', stuck);
       if(stuck){
-        reveal.style.height    = '24px';
+        reveal.style.height    = '30px';
         reveal.style.opacity   = '1';
         reveal.style.transform = 'translateY(0)';
       } else {
@@ -6052,7 +6077,7 @@ function initScrollDrivenHeader(){
         reveal.style.transform = 'translateY(-4px)';
       }
     });
-  }, { root, threshold: 0, rootMargin: '-44px 0px 0px 0px' });
+  }, { root, threshold: 0, rootMargin: '-30px 0px 0px 0px' });
 
   observer.observe(sentinel);
   reveal._observer = observer;
