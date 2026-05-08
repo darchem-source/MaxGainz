@@ -639,6 +639,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
       <div class="section-label">TIME UNDER TENSION</div>
       <div class="card" style="padding:16px;"><div id="timeUnderTension"></div></div>
 
+      <div class="section-label">REST TIME ANALYSIS</div>
+      <div class="card" style="padding:16px;"><div id="restAnalysis"></div></div>
+
       <div class="section-label">RECENT SESSIONS</div>
       <div class="card" id="recentSess"></div>
     </div>
@@ -3558,7 +3561,7 @@ function startSessionULF(day){
   sessDay=day; sessExs=exs;
   curIdx=0;setsDone={};repsLogged={};totalSets=0;sessTimeSec=0;
   sessStartTime=Date.now();
-  supersets={}; warmupShown={}; warmupDone={}; equipOverride={}; setWeights={};
+  supersets={}; warmupShown={}; warmupDone={}; equipOverride={}; setWeights={}; setTimestamps={};
   _exerciseNotes={};
   coreCircuitExs=pickCoreCircuit();
   clearInterval(sessInterval);
@@ -3608,6 +3611,7 @@ function cancelSession(){
   sessTimeSec=0;
   sessStartTime=null;
   supersets={};
+  setTimestamps={};
   hiitState=null;
   hiitIntervalId=null;
   restSec=0;
@@ -3666,6 +3670,8 @@ function releaseWakeLock(){
 let supersets = {};
 let warmupShown = {};
 let warmupDone = {};
+// Per-set completion timestamps: { exerciseIdx: { setIdx: ms } }. Used by Rest Time Analysis.
+let setTimestamps = {};
 let equipOverride = {};
 let setWeights = {};
 let exSetTimerInterval = null; // for timed exercise sets
@@ -3680,7 +3686,7 @@ function startSession(day,prog){
   sessDay=day; sessExs=prog[day].map(e=>({...e}));
   curIdx=0; setsDone={}; repsLogged={}; totalSets=0; sessTimeSec=0;
   sessStartTime=Date.now();
-  supersets={}; warmupShown={}; warmupDone={}; equipOverride={}; setWeights={};
+  supersets={}; warmupShown={}; warmupDone={}; equipOverride={}; setWeights={}; setTimestamps={};
   supersetGroups=[]; supersetBuilder={exercises: [], sets: 3};
   _exerciseNotes={};
   coreCircuitExs = pickCoreCircuit();
@@ -6121,6 +6127,9 @@ function markSet(i){
   if(!setsDone[curIdx])setsDone[curIdx]=[];
   const isNew=!setsDone[curIdx].includes(i);
   if(isNew){setsDone[curIdx].push(i);totalSets++;}
+  // Record completion timestamp — used downstream for Rest Time Analysis
+  if(!setTimestamps[curIdx]) setTimestamps[curIdx] = {};
+  if(setTimestamps[curIdx][i] === undefined) setTimestamps[curIdx][i] = Date.now();
   renderBubbles(sessExs[curIdx]);renderQueue();updNextBtn();
   const ex=sessExs[curIdx];
   const allDone=(setsDone[curIdx]||[]).length>=ex.sets;
@@ -7457,7 +7466,20 @@ function finishSession(){
   sessExs.forEach((ex,i)=>{
     const done=(setsDone[i]||[]).length;
     const rl=repsLogged[i]||{}, sw=setWeights[i]||{};
-    if(done>0) setLog[ex.name]={sets:done,reps:Object.values(rl),weight:ex.weight,setWeights:Object.values(sw),equipOverride:equipOverride[i]||null,note:_exerciseNotes[ex.name]||null};
+    if(done>0){
+      // Per-set rest deltas in seconds: gap between consecutive set completions, minus the working set itself
+      // Approximation: rest = (t[k] - t[k-1]) - estimated_working_seconds. We just store the raw deltas
+      // (between consecutive completions) — they include the next set's working time, but for averaging
+      // across many sets the working time is roughly constant and the trend is what matters.
+      const ts = setTimestamps[i] || {};
+      const sortedKeys = Object.keys(ts).map(k => parseInt(k)).sort((a,b)=>a-b);
+      const restSecs = [];
+      for(let k = 1; k < sortedKeys.length; k++){
+        const dt = (ts[sortedKeys[k]] - ts[sortedKeys[k-1]]) / 1000;
+        if(dt > 0 && dt < 600) restSecs.push(Math.round(dt)); // sanity: drop > 10min outliers
+      }
+      setLog[ex.name]={sets:done,reps:Object.values(rl),weight:ex.weight,setWeights:Object.values(sw),equipOverride:equipOverride[i]||null,note:_exerciseNotes[ex.name]||null,restSecs:restSecs.length?restSecs:undefined};
+    }
   });
   // console.log('finishSession: step 5 - progressions');
   const progressions=computeProgressionSuggestions();
@@ -7834,7 +7856,7 @@ function startHIIT(idx){
   });
   curIdx=0;setsDone={};repsLogged={};totalSets=0;sessTimeSec=0;
   sessStartTime=null; // Don't set until user clicks start
-  supersets={};warmupShown={};warmupDone={};equipOverride={};setWeights={};
+  supersets={};warmupShown={};warmupDone={};equipOverride={};setWeights={};setTimestamps={};
   coreCircuitExs=[];twoPhaseState=null;clearInterval(twoPhaseInterval);
   clearInterval(sessInterval);
   document.getElementById('nav-active').style.display='flex';
@@ -8580,7 +8602,7 @@ function startCustomSubSession(progIdx,subIdx){
   sessExs=sub.exercises.map(e=>({...e}));
   curIdx=0;setsDone={};repsLogged={};totalSets=0;sessTimeSec=0;
   sessStartTime=Date.now();
-  supersets={};warmupShown={};warmupDone={};equipOverride={};setWeights={};
+  supersets={};warmupShown={};warmupDone={};equipOverride={};setWeights={};setTimestamps={};
   coreCircuitExs=pickCoreCircuit();
   clearInterval(sessInterval);
   sessInterval=setInterval(()=>{sessTimeSec=Math.floor((Date.now()-sessStartTime)/1000);updateSessTimer();},1000);
@@ -10353,6 +10375,7 @@ function renderProgress(){
   renderStrengthRatios();
   renderCompoundIsolation();
   renderTimeUnderTension();
+  renderRestAnalysis();
   const sorted=[...completedSessions].sort((a,b)=>b.date-a.date).slice(0,8);
   if(!sorted.length){document.getElementById('recentSess').innerHTML='<div style="padding:20px;text-align:center;color:var(--text2);font-size:13px;">No sessions yet — start your first workout!</div>';}
   else {
@@ -11207,6 +11230,163 @@ function renderTimeUnderTension(){
   // Disclosure
   html += `<div style="margin-top:14px;padding-top:10px;border-top:0.5px solid var(--border);font-size:10px;color:var(--text2);line-height:1.45;">
     <strong style="color:var(--text);">Note:</strong> TUT estimated at 3s per rep (default tempo). Static holds (plank, hollow) use logged seconds directly. Real TUT depends on your tempo per set.
+  </div>`;
+
+  el.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// REST TIME ANALYSIS — per-exercise category rest vs research-backed targets
+// Uses setTimestamps captured during sessions (gap between consecutive set
+// completions, minus estimated working time of the next set ≈ true rest).
+// Heavy compounds: 180s ideal (120-300 acceptable)
+// Moderate compounds: 90-150s
+// Isolation: 60-90s
+// ─────────────────────────────────────────────────────────────────────
+const REST_HEAVY_COMPOUNDS = new Set([
+  'Squat','Front Squat','Hack Squat','Deadlift','Sumo Deadlift','Romanian Deadlift','Stiff-Leg Deadlift',
+  'Bench Press','Incline Bench Press','Overhead Press','Push Press','Bent Over Barbell Row','Barbell Row',
+  'Rack Pulls','T-Bar Row','Pull-Ups','Chin-Ups','Dips',
+]);
+
+function classifyExerciseForRest(exName){
+  if(REST_HEAVY_COMPOUNDS.has(exName)) return 'heavy';
+  // Moderate compounds — use COMPOUND_LIFTS minus the heavy ones
+  if(typeof COMPOUND_LIFTS !== 'undefined' && COMPOUND_LIFTS.has(exName)) return 'moderate';
+  return 'isolation';
+}
+
+const REST_TARGETS = {
+  heavy:    { lo:120, ideal:180, hi:300, label:'Heavy compounds', subtitle:'Squat, deadlift, bench, OHP, big rows' },
+  moderate: { lo: 75, ideal:120, hi:180, label:'Moderate compounds', subtitle:'Light presses, machine compounds' },
+  isolation:{ lo: 45, ideal: 75, hi:120, label:'Isolation work',    subtitle:'Curls, raises, extensions, calves' },
+};
+
+function calcRestAnalysis(windowDays){
+  const since = new Date(Date.now() - windowDays * 86400000);
+  const buckets = {
+    heavy:     { totalRest:0, count:0, byEx:{} },
+    moderate:  { totalRest:0, count:0, byEx:{} },
+    isolation: { totalRest:0, count:0, byEx:{} },
+  };
+  let dataAvailable = 0;
+  let dataMissing = 0;
+
+  completedSessions.filter(s => !s.manualActivity && s.setLog && new Date(s.date) >= since).forEach(s => {
+    Object.entries(s.setLog).forEach(([exName, data]) => {
+      const sets = data.sets || 0;
+      if(sets < 2) return; // can't compute rest with 1 set
+      const cat = classifyExerciseForRest(exName);
+      if(!data.restSecs || !data.restSecs.length){
+        dataMissing += sets - 1;
+        return;
+      }
+      dataAvailable += data.restSecs.length;
+      // Estimate next-set working time to subtract from gap
+      const repsArr = Array.isArray(data.reps) ? data.reps : [];
+      const avgReps = repsArr.length ? repsArr.reduce((a,r)=>a+(parseInt(r)||0),0) / repsArr.length : 8;
+      const workSec = TUT_HOLD_EXERCISES.has(exName) ? avgReps : avgReps * TUT_DEFAULT_TEMPO;
+      data.restSecs.forEach(gap => {
+        const rest = Math.max(0, gap - workSec);
+        if(rest <= 5 || rest > 600) return; // skip obvious outliers
+        buckets[cat].totalRest += rest;
+        buckets[cat].count++;
+        if(!buckets[cat].byEx[exName]) buckets[cat].byEx[exName] = { totalRest:0, count:0 };
+        buckets[cat].byEx[exName].totalRest += rest;
+        buckets[cat].byEx[exName].count++;
+      });
+    });
+  });
+  return { buckets, dataAvailable, dataMissing };
+}
+
+let _restWindow = 14;
+function setRestWindow(d){ _restWindow = d; renderRestAnalysis(); }
+
+function renderRestAnalysis(){
+  const el = document.getElementById('restAnalysis');
+  if(!el) return;
+  const data = calcRestAnalysis(_restWindow);
+
+  const winChip = (d, label) => `<div class="chip${_restWindow === d ? ' active' : ''}" onclick="setRestWindow(${d})" style="font-size:11px;padding:6px 12px;">${label}</div>`;
+  const toggle = `<div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+    ${winChip(7, 'This week')}${winChip(14, 'Last 2 weeks')}${winChip(28, 'Last 4 weeks')}
+  </div>`;
+
+  if(data.dataAvailable === 0){
+    const msg = data.dataMissing > 0
+      ? `Older sessions don't have rest timestamps. Future sessions (logged set-by-set) will populate this analysis.`
+      : `No sessions in the last ${_restWindow} days.`;
+    el.innerHTML = toggle + `<div style="padding:8px;text-align:center;color:var(--text2);font-size:13px;line-height:1.5;">${msg}</div>`;
+    return;
+  }
+
+  let html = toggle;
+
+  // Render each category
+  ['heavy','moderate','isolation'].forEach(cat => {
+    const b = data.buckets[cat];
+    const target = REST_TARGETS[cat];
+    if(b.count === 0){
+      html += `<div style="margin-bottom:12px;padding:12px;background:var(--surface2);border-radius:10px;opacity:0.55;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);">${target.label}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px;">${target.subtitle} — no rest data this window</div>
+      </div>`;
+      return;
+    }
+    const avg = Math.round(b.totalRest / b.count);
+    let status, color, advice = null;
+    if(avg < target.lo){
+      status = '⚠ Too short';  color = '#ff8c42';
+      const deficit = target.ideal - avg;
+      const kgEstimate = cat === 'heavy' ? '5-10kg' : (cat === 'moderate' ? '2-5kg' : '1-2kg');
+      advice = `Averaging ${avg}s on ${target.label.toLowerCase()}. Bumping to ${target.ideal}s+ could unlock ${kgEstimate} on these lifts.`;
+    } else if(avg > target.hi){
+      status = '↑ Long rest';   color = 'var(--accent2)';
+      advice = `Averaging ${avg}s — that's longer than typical for ${target.label.toLowerCase()}. Trimming to ${target.ideal}s could improve workout density without losing strength.`;
+    } else {
+      status = '✓ On target';   color = '#4cff91';
+    }
+
+    // Range bar: scale 0..max(hi*1.5, avg*1.2)
+    const scaleMax = Math.max(target.hi * 1.5, avg * 1.15);
+    const tgtLeft   = (target.lo / scaleMax) * 100;
+    const tgtWidth  = ((target.hi - target.lo) / scaleMax) * 100;
+    const idealLeft = (target.ideal / scaleMax) * 100;
+    const markerPct = Math.min(98, (avg / scaleMax) * 100);
+
+    // Top exercises by rest count for this category
+    const topExs = Object.entries(b.byEx).sort((a,b) => b[1].count - a[1].count).slice(0, 3);
+
+    html += `<div style="margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;gap:8px;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:700;color:var(--text);">${target.label}</div>
+          <div style="font-size:10px;color:var(--text2);margin-top:1px;">${target.subtitle}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;">
+          <div style="font-size:18px;font-weight:800;color:var(--text);line-height:1;">${avg}<span style="font-size:11px;font-weight:700;color:var(--text2);"> s</span></div>
+          <div style="font-size:10px;font-weight:700;color:${color};margin-top:3px;">${status}</div>
+        </div>
+      </div>
+      <div style="position:relative;height:14px;background:var(--surface2);border-radius:7px;margin-bottom:4px;">
+        <div style="position:absolute;left:${tgtLeft}%;width:${tgtWidth}%;top:0;bottom:0;background:rgba(76,255,145,0.20);border:1px solid rgba(76,255,145,0.45);border-radius:6px;"></div>
+        <div style="position:absolute;left:${idealLeft}%;top:-2px;bottom:-2px;width:1px;background:rgba(76,255,145,0.7);"></div>
+        <div style="position:absolute;left:${markerPct}%;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;border-radius:50%;background:${color};border:2px solid #0a0a0f;box-shadow:0 0 0 1px ${color};"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text2);">
+        <span>${target.lo}s</span>
+        <span style="color:#4cff91;font-weight:700;">${target.ideal}s ideal</span>
+        <span>${target.hi}s</span>
+      </div>
+      ${advice ? `<div style="font-size:11px;color:var(--text);margin-top:7px;line-height:1.45;background:rgba(255,140,66,0.08);border:0.5px solid rgba(255,140,66,0.25);border-radius:8px;padding:8px 10px;">${advice}</div>` : ''}
+      ${topExs.length ? `<div style="font-size:10px;color:var(--text2);margin-top:6px;">From: ${topExs.map(([n, x]) => `${n} (${Math.round(x.totalRest/x.count)}s avg)`).join(', ')}</div>` : ''}
+    </div>`;
+  });
+
+  // Footer
+  html += `<div style="margin-top:6px;padding-top:10px;border-top:0.5px solid var(--border);font-size:10px;color:var(--text2);line-height:1.45;">
+    <strong style="color:var(--text);">${data.dataAvailable}</strong> rest periods analysed${data.dataMissing > 0 ? ` · ${data.dataMissing} from older sessions skipped (no timestamp data)` : ''}
   </div>`;
 
   el.innerHTML = html;
