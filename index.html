@@ -629,6 +629,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 
       <div class="section-label">MUSCLE BALANCE</div>
       <div class="card" style="padding:16px;"><div id="muscleBal"></div></div>
+
+      <div class="section-label">STRENGTH RATIOS</div>
+      <div class="card" style="padding:16px;"><div id="strengthRatios"></div></div>
+
       <div class="section-label">RECENT SESSIONS</div>
       <div class="card" id="recentSess"></div>
     </div>
@@ -10340,6 +10344,7 @@ function renderProgress(){
   renderBWChart();
   renderMuscleHeatmap();
   renderMuscleBalance();
+  renderStrengthRatios();
   const sorted=[...completedSessions].sort((a,b)=>b.date-a.date).slice(0,8);
   if(!sorted.length){document.getElementById('recentSess').innerHTML='<div style="padding:20px;text-align:center;color:var(--text2);font-size:13px;">No sessions yet — start your first workout!</div>';}
   else {
@@ -10739,6 +10744,112 @@ function renderMuscleHeatmap(){
     return;
   }
   el.innerHTML = `${toggleHtml}${svg}${legend}${topHtml}${underHtml}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// STRENGTH RATIOS — bench/squat/deadlift balance vs typical ratios
+// Suggests weak-point training when a ratio is out of the target band.
+// ─────────────────────────────────────────────────────────────────────
+function renderStrengthRatios(){
+  const el = document.getElementById('strengthRatios');
+  if(!el) return;
+
+  const bench = getPBForLabel('Bench Press');
+  const squat = getPBForLabel('Squat');
+  const dl    = getPBForLabel('Deadlift');
+  const ohp   = getPBForLabel('Overhead Press');
+
+  if(!bench && !squat && !dl && !ohp){
+    el.innerHTML = `<div style="padding:8px;text-align:center;color:var(--text2);font-size:13px;">Log Bench, Squat, Deadlift or Overhead Press to see your strength ratios.</div>`;
+    return;
+  }
+
+  const ratios = [
+    { label:'Squat / Bench', num:squat, den:bench,
+      lo:1.25, hi:1.5,
+      missingMsg:'Need PBs for Bench and Squat',
+      lowAdvice:'Squat is lagging your bench — front squats, pause squats or higher squat frequency could close the gap.',
+      highAdvice:'Strong legs vs bench — push more bench volume or chest accessory work.' },
+    { label:'Deadlift / Squat', num:dl, den:squat,
+      lo:1.10, hi:1.30,
+      missingMsg:'Need PBs for Squat and Deadlift',
+      lowAdvice:'Posterior chain may be weak — RDLs, deficit deadlifts or glute-ham raises could help.',
+      highAdvice:'Pull dominant — a squat-focused phase could rebalance.' },
+    { label:'Deadlift / Bench', num:dl, den:bench,
+      lo:1.40, hi:1.70,
+      missingMsg:'Need PBs for Bench and Deadlift',
+      lowAdvice:'Pull strength is lagging — add a deadlift-focused day or rack pull work.',
+      highAdvice:'Deadlift dominant — bench work and chest accessories could rebalance.' },
+    { label:'OHP / Bench', num:ohp, den:bench,
+      lo:0.55, hi:0.70,
+      missingMsg:'Need PBs for Bench and Overhead Press',
+      lowAdvice:'Shoulders may be weak — strict press progression, lateral raises, push press.',
+      highAdvice:'Shoulders strong — chest accessory work could rebalance.' },
+  ];
+
+  const fmt = n => (n).toFixed(2);
+  let html = '';
+
+  ratios.forEach(r => {
+    if(!r.num || !r.den){
+      html += `<div style="margin-bottom:12px;padding:12px;background:var(--surface2);border-radius:10px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:3px;">${r.label}</div>
+        <div style="font-size:11px;color:var(--text2);">${r.missingMsg}</div>
+      </div>`;
+      return;
+    }
+    const ratio = r.num / r.den;
+    let status, statusColor, advice = null;
+    if(ratio < r.lo){       status = '⚠ low';        statusColor = '#ff8c42';     advice = r.lowAdvice; }
+    else if(ratio > r.hi){  status = '↑ high';       statusColor = 'var(--accent2)'; advice = r.highAdvice; }
+    else {                  status = '✓ on target';  statusColor = '#4cff91';     }
+
+    // Marker positioning: scale shows lo - 50%(range) to hi + 50%(range)
+    const range  = r.hi - r.lo;
+    const padLo  = r.lo - range * 0.5;
+    const padHi  = r.hi + range * 0.5;
+    const markerPct = Math.max(2, Math.min(98, ((ratio - padLo) / (padHi - padLo)) * 100));
+    const tgtLeft   = ((r.lo - padLo) / (padHi - padLo)) * 100;
+    const tgtWidth  = (range / (padHi - padLo)) * 100;
+
+    html += `<div style="margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);">${r.label}</div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <span style="font-size:15px;font-weight:800;color:var(--text);">${fmt(ratio)}×</span>
+          <span style="font-size:10px;font-weight:700;color:${statusColor};">${status}</span>
+        </div>
+      </div>
+      <div style="position:relative;height:14px;background:var(--surface2);border-radius:7px;">
+        <div style="position:absolute;left:${tgtLeft}%;width:${tgtWidth}%;top:0;bottom:0;background:rgba(76,255,145,0.20);border:1px solid rgba(76,255,145,0.45);border-radius:6px;"></div>
+        <div style="position:absolute;left:${markerPct}%;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;border-radius:50%;background:${statusColor};border:2px solid #0a0a0f;box-shadow:0 0 0 1px ${statusColor};"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text2);margin-top:4px;">
+        <span>${fmt(r.lo)}</span>
+        <span style="color:#4cff91;font-weight:700;">target</span>
+        <span>${fmt(r.hi)}</span>
+      </div>
+      ${advice ? `<div style="font-size:11px;color:var(--text2);margin-top:7px;line-height:1.45;">${advice}</div>` : ''}
+    </div>`;
+  });
+
+  // PB summary footer
+  const pbList = [
+    bench && { name:'Bench',    val:bench },
+    squat && { name:'Squat',    val:squat },
+    dl    && { name:'Deadlift', val:dl    },
+    ohp   && { name:'OHP',      val:ohp   }
+  ].filter(Boolean);
+  if(pbList.length){
+    html += `<div style="margin-top:6px;padding-top:12px;border-top:0.5px solid var(--border);">
+      <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Your PBs</div>
+      <div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--text2);">
+        ${pbList.map(p => `<span><span style="color:var(--text);font-weight:700;">${p.val}kg</span> ${p.name}</span>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  el.innerHTML = html;
 }
 
 function renderMuscleBalance(){
