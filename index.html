@@ -2221,6 +2221,55 @@ function haptic(pattern){
   try{ if(navigator.vibrate) navigator.vibrate(pattern); }catch(e){}
 }
 
+// ── TIMER REGISTRY ──
+// Centralised setInterval bookkeeping. Every session-bound timer goes through
+// startTimer(name, ...) so that stopAllTimers() in cancelSession can nuke them
+// all in one call regardless of which feature spawned them. Returns the raw
+// interval id so call sites can still hold onto it / clearInterval directly
+// for back-compat.
+const _timers = new Map();
+function startTimer(name, fn, intervalMs){
+  stopTimer(name); // dedupe: never have two intervals under the same name
+  const id = setInterval(fn, intervalMs);
+  _timers.set(name, id);
+  return id;
+}
+function stopTimer(name){
+  const id = _timers.get(name);
+  if(id !== undefined){
+    clearInterval(id);
+    _timers.delete(name);
+  }
+}
+function stopAllTimers(except = []){
+  const exceptSet = new Set(except);
+  _timers.forEach((id, name) => {
+    if(!exceptSet.has(name)){
+      clearInterval(id);
+      _timers.delete(name);
+    }
+  });
+}
+
+// ── TIME FORMATTERS ──
+// Replaces 5+ inline `m+':'+String(s).padStart(2,'0')` patterns scattered
+// through the timer-update functions. formatMMSS(75) → '1:15'.
+function formatMMSS(totalSeconds){
+  const t = Math.max(0, Math.floor(totalSeconds || 0));
+  const m = Math.floor(t / 60);
+  const s = t % 60;
+  return m + ':' + String(s).padStart(2, '0');
+}
+function formatHHMMSS(totalSeconds){
+  const t = Math.max(0, Math.floor(totalSeconds || 0));
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const s = t % 60;
+  return h > 0
+    ? h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0')
+    : formatMMSS(t);
+}
+
 // ── TOAST NOTIFICATIONS ──
 // Two call shapes (back-compat):
 //   showToast(msg)                                — info, 2200ms
@@ -3796,8 +3845,11 @@ function startSessionULF(day){
   supersets={}; warmupShown={}; warmupDone={}; equipOverride={}; setWeights={}; setTimestamps={};
   _exerciseNotes={};
   coreCircuitExs=pickCoreCircuit();
-  clearInterval(sessInterval);
-  sessInterval=setInterval(()=>{sessTimeSec=Math.floor((Date.now()-sessStartTime)/1000);updateSessTimer();},1000);
+  // Wall-clock-based session timer; startTimer auto-clears any prior 'session' timer.
+  sessInterval = startTimer('session', () => {
+    sessTimeSec = Math.floor((Date.now() - sessStartTime) / 1000);
+    updateSessTimer();
+  }, 1000);
   document.getElementById('nav-active').style.display='flex';
   updateSessUI();
   goTab('active',document.getElementById('nav-active'));
@@ -3807,8 +3859,11 @@ function cancelSession(){
   // console.log('[CANCEL] cancelSession called');
   if(!confirm('Cancel this session? All progress will be lost.')) return;
   // console.log('[CANCEL] User confirmed cancel');
-  
-  // Clear all intervals first
+
+  // Nuke every registered timer in one call (registry-aware). Belt-and-
+  // suspenders line-by-line clears below cover any timer not yet migrated
+  // to startTimer().
+  stopAllTimers();
   if(sessInterval) clearInterval(sessInterval);
   if(hiitIntervalId) clearInterval(hiitIntervalId);
   if(twoPhaseInterval){ clearInterval(twoPhaseInterval); twoPhaseInterval=null; }
@@ -3922,18 +3977,18 @@ function startSession(day,prog){
   supersetGroups=[]; supersetBuilder={exercises: [], sets: 3};
   _exerciseNotes={};
   coreCircuitExs = pickCoreCircuit();
-  clearInterval(sessInterval);
-  // Use wall-clock diff so timer survives app switching / screen lock
-  sessInterval=setInterval(()=>{
-    sessTimeSec=Math.floor((Date.now()-sessStartTime)/1000);
+  // Wall-clock-based session timer (survives app switching / screen lock).
+  // startTimer auto-clears any prior 'session' timer before assigning the new one.
+  sessInterval = startTimer('session', () => {
+    sessTimeSec = Math.floor((Date.now() - sessStartTime) / 1000);
     updateSessTimer();
-  },1000);
+  }, 1000);
   document.getElementById('nav-active').style.display='flex';
   updateSessUI();
   goTab('active',document.getElementById('nav-active'));
 }
 
-function updateSessTimer(){const m=Math.floor(sessTimeSec/60),s=sessTimeSec%60;document.getElementById('sessTimer').textContent=m+':'+String(s).padStart(2,'0');}
+function updateSessTimer(){ document.getElementById('sessTimer').textContent = formatMMSS(sessTimeSec); }
 
 function updateSessUI(){
   initBubbleSwipe();   // attach once; no-ops on subsequent calls via _swipeInit guard
@@ -5295,8 +5350,7 @@ function startAmrapTimer(totalSecs){
   let _amrapSpoken = new Set();
 
   function renderAmrap(){
-    const m = Math.floor(remaining/60), s = remaining%60;
-    const timeStr = `${m}:${String(s).padStart(2,'0')}`;
+    const timeStr = formatMMSS(remaining);
     // Update inline live countdown (primary, always visible)
     const live = document.getElementById('amrapLiveCountdown');
     if(live) live.textContent = timeStr;
@@ -9024,8 +9078,11 @@ function startCustomSubSession(progIdx,subIdx){
   sessStartTime=Date.now();
   supersets={};warmupShown={};warmupDone={};equipOverride={};setWeights={};setTimestamps={};
   coreCircuitExs=pickCoreCircuit();
-  clearInterval(sessInterval);
-  sessInterval=setInterval(()=>{sessTimeSec=Math.floor((Date.now()-sessStartTime)/1000);updateSessTimer();},1000);
+  // Wall-clock-based session timer; startTimer auto-clears any prior 'session' timer.
+  sessInterval = startTimer('session', () => {
+    sessTimeSec = Math.floor((Date.now() - sessStartTime) / 1000);
+    updateSessTimer();
+  }, 1000);
   document.getElementById('nav-active').style.display='flex';
   updateSessUI();
   goTab('active',document.getElementById('nav-active'));
