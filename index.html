@@ -569,6 +569,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
           <span>🏃 Activity</span>
           <span style="opacity:0.5;">○ Rest</span>
         </div>
+        <div style="text-align:center;margin-top:8px;font-size:11px;color:var(--text2);font-style:italic;">Tap any workout day for full details</div>
       </div>
       
       <div class="section-label">LIFT PROGRESS</div>
@@ -648,9 +649,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 
       <div class="section-label">TRAINING FREQUENCY</div>
       <div class="card" style="padding:16px;"><div id="trainingFrequency"></div></div>
-
-      <div class="section-label">RECENT SESSIONS</div>
-      <div class="card" id="recentSess"></div>
     </div>
 
     <!-- IDEAS -->
@@ -10438,15 +10436,91 @@ function showCalDayDetail(dateStr){
     return d.toDateString() === day;
   });
   if(!sessions.length) return;
-  const dateLabel = date.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' });
-  const lines = sessions.map(s => {
+
+  // Lazy-create the rich detail modal on first call
+  let m = document.getElementById('calDayDetailMod');
+  if(!m){
+    m = document.createElement('div');
+    m.id = 'calDayDetailMod';
+    m.className = 'modal-ov';
+    m.onclick = (ev) => { if(ev.target === m) m.classList.remove('open'); };
+    m.innerHTML = `
+      <div class="modal" style="max-height:82vh;overflow-y:auto;">
+        <div class="modal-handle"></div>
+        <div id="calDayDetailTitle" style="font-size:18px;font-weight:800;margin-bottom:2px;"></div>
+        <div id="calDayDetailSub" style="font-size:12px;color:var(--text2);margin-bottom:14px;"></div>
+        <div id="calDayDetailBody"></div>
+        <button onclick="document.getElementById('calDayDetailMod').classList.remove('open')" style="width:100%;margin-top:10px;background:transparent;border:0.5px solid var(--border);border-radius:12px;padding:13px;font-size:14px;font-weight:700;color:var(--text2);cursor:pointer;">Close</button>
+      </div>`;
+    document.body.appendChild(m);
+  }
+
+  const dateLabel = date.toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+  document.getElementById('calDayDetailTitle').textContent = dateLabel;
+  document.getElementById('calDayDetailSub').textContent = sessions.length === 1
+    ? '1 session logged'
+    : sessions.length + ' sessions logged';
+
+  // Build the same rich card layout that Recent Sessions used
+  const todayStr = new Date().toDateString();
+  const html = sessions.map(s => {
+    const idx = completedSessions.indexOf(s);
+    const d = s.date instanceof Date ? s.date : new Date(s.date);
+    const dayName = d.toLocaleDateString('en-GB', { weekday:'short' });
+    const dayNum = d.getDate();
+    const isToday = d.toDateString() === todayStr;
+    const closeAfter = `document.getElementById('calDayDetailMod').classList.remove('open');`;
+
     if(s.manualActivity){
-      return `${s.activityEmoji || '🏃'} ${s.day} · ${s.durationMin}min · ${s.intensity || 'moderate'}`;
+      const topStr = `${s.activityEmoji || '🏅'} ${s.intensity || ''} · ${s.durationMin}min`;
+      return `<div style="margin-bottom:10px;">
+        <div class="log-row">
+          <div style="width:40px;text-align:center;">
+            <div style="font-size:11px;color:var(--text2);">${dayName}</div>
+            <div style="font-size:18px;font-weight:800;">${dayNum}</div>
+          </div>
+          <div style="flex:1;">
+            <div style="font-size:13px;font-weight:700;">${s.day}</div>
+            <div style="font-size:12px;color:var(--text2);">${topStr}</div>
+          </div>
+          <div style="text-align:right;">
+            <button onclick="${closeAfter}deleteSession(${idx})" style="background:rgba(255,77,106,0.1);border:0.5px solid rgba(255,77,106,0.25);border-radius:8px;padding:3px 8px;font-size:11px;color:var(--red);cursor:pointer;">Delete</button>
+          </div>
+        </div>
+      </div>`;
     }
-    const vol = s.volume ? ` · ${s.volume}kg vol` : '';
-    return `🏋️ ${s.day} · ${s.exercises} exercises · ${s.durationMin}min${vol}`;
-  }).join('\n');
-  showInfoModal(dateLabel, lines);
+
+    const topStr = (s.topLifts || []).map(l => l.name + (l.weight ? ` ${l.weight}kg` : '')).join(' · ') || 'Bodyweight';
+    const vol = s.volume >= 1000 ? (Math.round(s.volume / 100) / 10) + 'k kg' : (s.volume ? s.volume + 'kg' : '');
+    const setLogEntries = Object.entries(s.setLog || {}).filter(([,v]) => v.reps && v.reps.length);
+    const pills = setLogEntries.map(([n, v]) =>
+      `<div class="rep-log-pill">${n.split(' ')[0]} ${v.reps.join('/')}r @ ${v.weight || 'BW'}kg</div>`
+    ).join('');
+    const totalSetsDone = Object.values(s.setLog || {}).reduce((a, v) => a + (v.sets || 0), 0);
+
+    return `<div onclick="${closeAfter}openSessDetail(${idx})" style="cursor:pointer;margin-bottom:10px;">
+      <div class="log-row">
+        <div style="width:40px;text-align:center;">
+          <div style="font-size:11px;color:var(--text2);">${dayName}</div>
+          <div style="font-size:18px;font-weight:800;">${dayNum}</div>
+          ${isToday ? '<div style="font-size:9px;color:var(--accent);font-weight:700;">TODAY</div>' : ''}
+        </div>
+        <div style="flex:1;">
+          <div style="font-size:13px;font-weight:700;">${s.day}${isToday ? ' 🔥' : ''}</div>
+          <div style="font-size:12px;color:var(--text2);">${topStr}</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px;">⏱ ${s.durationMin}min${totalSetsDone ? ' · ' + totalSetsDone + ' sets' : ''}</div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:14px;font-weight:700;color:var(--accent);">${vol}</div>
+          <button onclick="event.stopPropagation();${closeAfter}deleteSession(${idx})" style="margin-top:4px;background:rgba(255,77,106,0.1);border:0.5px solid rgba(255,77,106,0.25);border-radius:8px;padding:3px 8px;font-size:11px;color:var(--red);cursor:pointer;">Delete</button>
+        </div>
+      </div>
+      ${pills ? `<div class="rep-log-row">${pills}</div>` : ''}
+    </div>`;
+  }).join('');
+
+  document.getElementById('calDayDetailBody').innerHTML = html;
+  m.classList.add('open');
 }
 
 // ── BODY WEIGHT TRACKER ──
@@ -10687,22 +10761,6 @@ function renderProgress(){
   renderTimeUnderTension();
   renderRestAnalysis();
   renderTrainingFrequency();
-  const sorted=[...completedSessions].sort((a,b)=>b.date-a.date).slice(0,8);
-  if(!sorted.length){document.getElementById('recentSess').innerHTML='<div style="padding:20px;text-align:center;color:var(--text2);font-size:13px;">No sessions yet — start your first workout!</div>';}
-  else {
-    document.getElementById('recentSess').innerHTML=sorted.map(s=>{
-      const d=s.date,dayName=d.toLocaleDateString('en-GB',{weekday:'short'}),dayNum=d.getDate();
-      const topStr=s.manualActivity
-        ? `${s.activityEmoji||'🏅'} ${s.intensity||''} · ${s.durationMin}min`
-        : s.topLifts.map(l=>l.name+(l.weight?` ${l.weight}kg`:'')).join(' · ')||'Bodyweight';
-      const vol=s.volume>=1000?(Math.round(s.volume/100)/10)+'k kg':s.volume?s.volume+'kg':'';
-      const isToday=d.toDateString()===new Date().toDateString();
-      const setLogEntries=Object.entries(s.setLog||{}).filter(([,v])=>v.reps&&v.reps.length).slice(0,3);
-      const pills=setLogEntries.map(([n,v])=>`<div class="rep-log-pill">${n.split(' ')[0]} ${v.reps.join('/')}r @ ${v.weight||'BW'}kg</div>`).join('');
-      const totalSetsDone=Object.values(s.setLog||{}).reduce((a,v)=>a+(v.sets||0),0);
-      return`<div onclick="openSessDetail(${completedSessions.indexOf(s)})" style="cursor:pointer;"><div class="log-row"><div style="width:40px;text-align:center;"><div style="font-size:11px;color:var(--text2);">${dayName}</div><div style="font-size:18px;font-weight:800;">${dayNum}</div>${isToday?'<div style="font-size:9px;color:var(--accent);font-weight:700;">TODAY</div>':''}</div><div style="flex:1;"><div style="font-size:13px;font-weight:700;">${s.day}${isToday?' 🔥':''}</div><div style="font-size:12px;color:var(--text2);">${topStr}</div><div style="font-size:11px;color:var(--text2);margin-top:2px;">⏱ ${s.durationMin}min${totalSetsDone?' · '+totalSetsDone+' sets':''}</div></div><div style="text-align:right;"><div style="font-size:14px;font-weight:700;color:var(--accent);">${vol}</div><button onclick="event.stopPropagation();deleteSession(${completedSessions.indexOf(s)})" style="margin-top:4px;background:rgba(255,77,106,0.1);border:0.5px solid rgba(255,77,106,0.25);border-radius:8px;padding:3px 8px;font-size:11px;color:var(--red);cursor:pointer;">Delete</button></div></div>${pills?`<div class="rep-log-row">${pills}</div>`:''}</div>`;
-    }).join('');
-  }
   updateStorageBadge();
 }
 
