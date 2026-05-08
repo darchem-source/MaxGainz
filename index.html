@@ -501,11 +501,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
           <button onclick="openCreateChooser()" style="background:var(--accent);color:#000;border:none;border-radius:10px;padding:8px 14px;font-size:12px;font-weight:800;cursor:pointer;">+ Create</button>
           <div style="width:44px;"></div>
         </div>
-        <div style="display:flex;background:var(--surface);border-radius:12px;padding:3px;margin:0 16px 12px;gap:2px;overflow-x:auto;" id="progTabs">
-          <div style="flex:1;min-width:50px;padding:8px;text-align:center;font-size:11px;font-weight:600;border-radius:9px;cursor:pointer;background:var(--surface3);color:var(--text);" id="ptab0" onclick="swProg(0,this)">ULF</div>
-          <div style="flex:1;min-width:50px;padding:8px;text-align:center;font-size:11px;font-weight:600;border-radius:9px;cursor:pointer;color:var(--text2);" id="ptab1" onclick="swProg(1,this)">PPL</div>
-          <div style="flex:1;min-width:50px;padding:8px;text-align:center;font-size:11px;font-weight:600;border-radius:9px;cursor:pointer;color:var(--text2);" id="ptab2" onclick="swProg(2,this)">HIIT</div>
-        </div>
       </div><!-- /sticky-hdr -->
       <div id="progContent"></div>
     </div>
@@ -2503,7 +2498,7 @@ function goTab(tab,el){
   }
   
   if(tab==='progress')renderProgress();
-  if(tab==='workout'){rebuildProgTabs();renderProg();}
+  if(tab==='workout'){renderProgrammeFeed();}
   if(tab==='game')renderGame();
   if(tab==='profile')renderProfile();
   if(tab==='path')renderPathTab();
@@ -7059,98 +7054,6 @@ const HIIT_FORMAT_COLORS={
   'For Time':'var(--red)'
 };
 
-function renderHIITProg(){
-  const diffLabels=['','Beginner','Intermediate','Advanced','Elite'];
-  const diffColors=['','var(--green)','var(--accent)','var(--orange)','var(--red)'];
-  const brackets=[
-    {label:'10–15 min',min:0,max:16},
-    {label:'20–25 min',min:16,max:26},
-    {label:'30–35 min',min:26,max:36},
-    {label:'40–45 min',min:36,max:46},
-    {label:'50–60 min',min:46,max:61}
-  ];
-  let html='<div style="padding:0 16px 12px;font-size:13px;color:var(--text2);">'+HIIT.length+' workouts · 10 to 60 minutes</div>';
-  
-  // Custom HIIT section
-  if(customHIITs.length > 0){
-    html += `<div class="section-label">YOUR CUSTOM HIIT</div>`;
-    customHIITs.forEach((w, ci) => {
-      const fc = HIIT_FORMAT_COLORS[w.format] || 'var(--text2)';
-      const k = 'chiit_'+ci;
-      html += `<div class="day-card">
-        <div class="day-head" onclick="togDay('${k}')">
-          <div class="day-icon" style="background:${fc}22;font-size:15px;font-weight:900;color:${fc};">${w.duration}m</div>
-          <div style="flex:1;">
-            <div style="font-size:14px;font-weight:700;">${w.name}</div>
-            <div style="display:flex;gap:6px;margin-top:3px;flex-wrap:wrap;">
-              <span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;background:${fc}22;color:${fc};">${w.format}</span>
-              <span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;background:rgba(200,255,0,0.15);color:var(--accent);">CUSTOM</span>
-            </div>
-          </div>
-          <div style="color:var(--text2);font-size:13px;" id="arr-${k}">▼</div>
-        </div>
-        <div id="dd-${k}" style="display:none;">
-          <div style="padding:8px 16px 4px;font-size:12px;color:var(--text2);">${w.desc || ''}</div>
-          ${(w.exercises || []).map(ex => `<div class="ex-row"><div style="flex:1;"><div style="font-size:13px;font-weight:600;">${ex.name}</div><div style="font-size:11px;color:var(--text2);">${ex.reps || ''}</div></div></div>`).join('')}
-          <div style="padding:10px 16px 14px;display:flex;gap:8px;">
-            <button class="btn-p" style="flex:1;padding:12px;font-size:13px;" onclick="startCustomHIIT(${ci})">▶ Start</button>
-            <button onclick="deleteCustomHIIT(${ci})" style="background:rgba(255,77,106,0.1);border:0.5px solid rgba(255,77,106,0.3);border-radius:10px;padding:8px 14px;font-size:12px;font-weight:700;color:var(--red);cursor:pointer;">Delete</button>
-          </div>
-        </div>
-      </div>`;
-    });
-  }
-  
-  brackets.forEach(b=>{
-    const group=HIIT.filter(w=>w.duration>=b.min&&w.duration<=b.max);
-    if(!group.length) return;
-    html+=`<div class="section-label">${b.label}</div>`;
-    group.forEach(w=>{
-      const hiitIdx=HIIT.indexOf(w);
-      const fc=HIIT_FORMAT_COLORS[w.format]||'var(--text2)';
-      const k='hiit_'+hiitIdx;
-      html+=`<div class="day-card">
-        <div class="day-head" onclick="togDay('${k}')">
-          <div class="day-icon" style="background:${fc}22;font-size:15px;font-weight:900;color:${fc};">${w.duration}m</div>
-          <div style="flex:1;">
-            <div style="font-size:14px;font-weight:700;">${w.name}</div>
-            <div style="display:flex;gap:6px;margin-top:3px;flex-wrap:wrap;">
-              <span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;background:${fc}22;color:${fc};">${w.format}</span>
-              <span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;background:${diffColors[w.diff]}22;color:${diffColors[w.diff]};">${diffLabels[w.diff]}</span>
-            </div>
-          </div>
-          <div style="color:var(--text2);font-size:13px;" id="arr-${k}">▼</div>
-        </div>
-        <div id="dd-${k}" style="display:none;">
-          <div style="padding:10px 16px;font-size:13px;color:var(--text2);line-height:1.5;">${w.desc}</div>
-          <div style="padding:0 16px 10px;">
-            ${(w.blocks ? 
-              w.blocks.flatMap((block, bi) => block.exercises.map(ex => 
-                `<div style="display:flex;align-items:center;padding:6px 0;border-bottom:0.5px solid var(--border);gap:8px;">
-                  <div style="flex:1;">
-                    <div style="font-size:13px;font-weight:600;">${ex.name}</div>
-                    <div style="font-size:10px;color:var(--text2);">${block.type} · ${ex.duration}s</div>
-                  </div>
-                </div>`
-              )) :
-              (w.exercises || []).map(ex => 
-                `<div style="display:flex;align-items:center;padding:6px 0;border-bottom:0.5px solid var(--border);gap:8px;">
-                  <div style="flex:1;font-size:13px;font-weight:600;">${ex.name}</div>
-                  <div style="font-size:12px;color:var(--accent);">${ex.sets}×${ex.reps}</div>
-                </div>`
-              )
-            ).join('')}
-          </div>
-          <div style="padding:10px 16px 14px;">
-            <button class="btn-p" style="width:100%;padding:12px;font-size:13px;" onclick="startHIIT(${hiitIdx})">▶ Start ${w.name}</button>
-          </div>
-        </div>
-      </div>`;
-    });
-  });
-  document.getElementById('progContent').innerHTML=html;
-}
-
 function startHIIT(idx){
   const w=HIIT[idx];
   if(!w) return;
@@ -7334,40 +7237,303 @@ function startNonTabataSession(){
   });
 }
 
-function swProg(i,el){
-  curProg=i;
-  // Update tab highlights dynamically
-  document.querySelectorAll('#progTabs div').forEach((e,j)=>{
-    e.style.background=i===j?'var(--surface3)':'transparent';
-    e.style.color=i===j?'var(--text)':'var(--text2)';
-  });
-  renderProg();
+// ─────────────────────────────────────────────────────────────────
+// PROGRAMME TAB — section-based feed
+// One scrollable feed: Active Path → Library → My Programmes → HIIT Studio
+// ─────────────────────────────────────────────────────────────────
+let _hiitSearchQuery = '';
+
+// Back-compat shim — older flows still reference renderProg/renderHIITProg
+function renderProg(){ renderProgrammeFeed(); }
+function renderHIITProg(){ renderProgrammeFeed(); }
+
+function renderProgrammeFeed(){
+  const root = document.getElementById('progContent');
+  if(!root) return;
+  let html = '';
+  html += _renderActivePathSection();
+  html += _renderLibrarySection();
+  html += _renderMyProgrammesSection();
+  html += _renderHIITStudioSection();
+  // bottom padding so last section doesn't hug the nav bar
+  html += '<div style="height:90px;"></div>';
+  root.innerHTML = html;
+  // Re-bind HIIT search input value (re-render clobbers it)
+  const searchInput = document.getElementById('hiitSearchInput');
+  if(searchInput) searchInput.value = _hiitSearchQuery;
 }
 
-function rebuildProgTabs(){
-  const tabs=document.getElementById('progTabs');
-  if(!tabs) return;
-  const fixed=['ULF','PPL','HIIT'];
-  const customs=customWorkouts.slice(0,3);
-  tabs.innerHTML=[...fixed,...customs.map(w=>w.name)].map((name,i)=>`<div style="flex:1;min-width:50px;padding:8px;text-align:center;font-size:11px;font-weight:600;border-radius:9px;cursor:pointer;${curProg===i?'background:var(--surface3);color:var(--text);':'color:var(--text2);'}" onclick="swProg(${i},this)">${name}</div>`).join('');
+function _renderActivePathSection(){
+  if(!isPathActive() || !userPath) return '';
+  const lib = isLibraryProgramme(userPath.programme) ? getLibraryProgramme(userPath.programme) : null;
+  const name = lib ? lib.name : userPath.programme;
+  const week = getPathCurrentWeek();
+  const nextDay = getNextPathDay(userPath.programme);
+  const exs = nextDay ? getExercisesForPathDay(userPath.programme, nextDay) : [];
+  const completion = hasCorePathWorkoutBeenCompletedToday(userPath.programme);
+  return `
+    <div class="section-label">🎯 YOUR PATH</div>
+    <div class="card" style="padding:16px;margin:0 16px 6px;background:linear-gradient(135deg,rgba(200,255,0,0.06),rgba(123,77,255,0.06));border:1px solid rgba(200,255,0,0.3);">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:17px;font-weight:800;color:var(--text);">${name}</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:2px;">Week ${week} of ${userPath.duration}</div>
+        </div>
+        <button onclick="goTab('path',document.getElementById('nav-path'))" style="background:rgba(200,255,0,0.12);border:1px solid rgba(200,255,0,0.4);border-radius:8px;padding:6px 12px;font-size:11px;font-weight:800;color:var(--accent);cursor:pointer;white-space:nowrap;">Open Path →</button>
+      </div>
+      ${nextDay ? `
+        <div style="background:var(--surface3);border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:10px;">
+          <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;">${completion ? '✅ Done today' : 'Up next'}</div>
+          <div style="font-size:13px;font-weight:700;color:var(--text);flex:1;min-width:0;text-align:right;">${nextDay}${exs.length ? ' · ' + exs.length + ' ex' : ''}</div>
+        </div>` : ''}
+    </div>`;
 }
 
-function renderProg(){
-  if(curProg===2){renderHIITProg();return;}
-  // Custom programmes start at index 3+
-  const customIdx=curProg-3;
-  if(customIdx>=0&&customIdx<customWorkouts.length){renderCustomProgView(customIdx);return;}
-  const prog=curProg===0?ULF:PPL;
-  const icons={Upper:'💪',Lower:'🦵','Full Body':'⚡','Push A':'🫸','Push B':'🫸','Pull A':'🫷','Pull B':'🫷','Legs A':'🦵','Legs B':'🦵'};
-  const icc={Upper:'ic-u',Lower:'ic-l','Full Body':'ic-f','Push A':'ic-push','Push B':'ic-push','Pull A':'ic-pull','Pull B':'ic-pull','Legs A':'ic-legs','Legs B':'ic-legs'};
-  let html='';
-  for(const [day,exs] of Object.entries(prog)){
-    const k=day.replace(/ /g,'_');
-    html+=`<div class="day-card"><div class="day-head" onclick="togDay('${k}')"><div class="day-icon ${icc[day]||'ic-u'}">${icons[day]||'🏋️'}</div><div style="flex:1;"><div style="font-size:15px;font-weight:700;">${day} Day</div><div style="font-size:12px;color:var(--text2);">${exs.length} exercises</div></div><div style="color:var(--text2);font-size:13px;" id="arr-${k}">▼</div></div><div id="dd-${k}" style="display:none;">`;
-    exs.forEach(ex=>{const wt=ex.weight?ex.weight+'kg':ex.bw?'BW':'–';html+=`<div class="ex-row"><div style="flex:1;"><div style="font-size:13px;font-weight:600;">${ex.name}</div><div style="font-size:11px;color:var(--text2);">${ex.sets} sets · ${ex.reps}${ex.type?' · '+ex.type:''}</div></div><div style="font-size:15px;font-weight:800;color:var(--accent);">${wt}</div></div>`;});
-    html+=`<div style="padding:10px 16px 14px;"><button class="btn-p" style="width:100%;padding:12px;font-size:13px;" onclick="${curProg===0?'startSessionULF(\''+day+'\')':'startSession(\''+day+'\',PPL)'}">▶ Start ${day} Day</button></div></div></div>`;
+function _renderLibrarySection(){
+  // Pick 3 random-ish featured names to give a flavour (rotate by day-of-month for variety)
+  const sample = LIBRARY_PROGRAMMES.slice(0, 5).map(p => p.short).join(' · ');
+  return `
+    <div class="section-label">📚 PROGRAMME LIBRARY</div>
+    <div onclick="openLibraryBrowse()"
+      style="margin:0 16px 6px;padding:16px;background:linear-gradient(135deg,rgba(123,77,255,0.10),rgba(0,212,255,0.06));border:1px solid rgba(123,77,255,0.3);border-radius:14px;cursor:pointer;display:flex;align-items:center;gap:12px;">
+      <div style="font-size:32px;">📚</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:15px;font-weight:800;color:var(--text);">Browse ${LIBRARY_PROGRAMMES.length} curated classics</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${sample} & more</div>
+      </div>
+      <div style="font-size:18px;color:var(--accent);">›</div>
+    </div>`;
+}
+
+function _renderMyProgrammesSection(){
+  // Built-in templates (ULF, PPL) + user custom programmes
+  const icons = { Upper:'💪', Lower:'🦵', 'Full Body':'⚡', 'Push A':'🫸', 'Push B':'🫸', 'Pull A':'🫷', 'Pull B':'🫷', 'Legs A':'🦵', 'Legs B':'🦵' };
+  const icc   = { Upper:'ic-u', Lower:'ic-l', 'Full Body':'ic-f', 'Push A':'ic-push', 'Push B':'ic-push', 'Pull A':'ic-pull', 'Pull B':'ic-pull', 'Legs A':'ic-legs', 'Legs B':'ic-legs' };
+
+  // Render a built-in programme card (ULF or PPL)
+  const renderBuiltIn = (name, prog, descLine) => {
+    const dayCount = Object.keys(prog).length;
+    const k = 'bi_' + name;
+    let inner = '';
+    for(const [day, exs] of Object.entries(prog)){
+      const dk = name + '_' + day.replace(/ /g, '_');
+      inner += `<div class="day-card" style="margin:0 0 6px;border-radius:10px;">
+        <div class="day-head" onclick="togDay('${dk}')">
+          <div class="day-icon ${icc[day]||'ic-u'}">${icons[day]||'🏋️'}</div>
+          <div style="flex:1;"><div style="font-size:14px;font-weight:700;">${day} Day</div><div style="font-size:11px;color:var(--text2);">${exs.length} exercises</div></div>
+          <div style="color:var(--text2);font-size:13px;" id="arr-${dk}">▼</div>
+        </div>
+        <div id="dd-${dk}" style="display:none;">`;
+      exs.forEach(ex => {
+        const wt = ex.weight ? ex.weight + 'kg' : ex.bw ? 'BW' : '–';
+        inner += `<div class="ex-row"><div style="flex:1;"><div style="font-size:13px;font-weight:600;">${ex.name}</div><div style="font-size:11px;color:var(--text2);">${ex.sets} sets · ${ex.reps}${ex.type ? ' · ' + ex.type : ''}</div></div><div style="font-size:15px;font-weight:800;color:var(--accent);">${wt}</div></div>`;
+      });
+      const startCall = name === 'ULF' ? `startSessionULF('${day}')` : `startSession('${day}',PPL)`;
+      inner += `<div style="padding:10px 16px 14px;"><button class="btn-p" style="width:100%;padding:11px;font-size:13px;" onclick="${startCall}">▶ Start ${day} Day</button></div></div></div>`;
+    }
+    return `<div style="margin:0 16px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:14px;overflow:hidden;">
+      <div onclick="togDay('${k}')" style="padding:12px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;">
+        <div style="font-size:22px;">🏋️</div>
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div style="font-size:15px;font-weight:800;">${name}</div>
+            <span style="background:var(--surface3);color:var(--text2);font-size:9px;font-weight:800;padding:2px 7px;border-radius:5px;letter-spacing:0.5px;">BUILT-IN</span>
+          </div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px;">${descLine}</div>
+        </div>
+        <div style="color:var(--text2);font-size:13px;" id="arr-${k}">▼</div>
+      </div>
+      <div id="dd-${k}" style="display:none;padding:0 12px 12px;">${inner}</div>
+    </div>`;
+  };
+
+  // Render a custom programme card
+  const renderCustom = (prog, idx) => {
+    const k = 'cp_' + idx;
+    const totalEx = prog.subcategories.reduce((s, sub) => s + sub.exercises.length, 0);
+    let inner = '';
+    prog.subcategories.forEach((sub, si) => {
+      const dk = 'cp_' + idx + '_' + si;
+      inner += `<div class="day-card" style="margin:0 0 6px;border-radius:10px;">
+        <div class="day-head" onclick="togDay('${dk}')">
+          <div class="day-icon ic-u">💪</div>
+          <div style="flex:1;"><div style="font-size:14px;font-weight:700;">${sub.name}</div><div style="font-size:11px;color:var(--text2);">${sub.exercises.length} exercises</div></div>
+          <div style="color:var(--text2);font-size:13px;" id="arr-${dk}">▼</div>
+        </div>
+        <div id="dd-${dk}" style="display:none;">`;
+      sub.exercises.forEach(ex => {
+        inner += `<div class="ex-row"><div style="flex:1;"><div style="font-size:13px;font-weight:600;">${ex.name}</div><div style="font-size:11px;color:var(--text2);">${ex.sets} sets · ${ex.reps}</div></div><div style="font-size:14px;font-weight:800;color:var(--accent);">${ex.weight ? ex.weight + 'kg' : ex.bw ? 'BW' : '–'}</div></div>`;
+      });
+      inner += `<div style="padding:10px 16px 14px;"><button class="btn-p" style="width:100%;padding:11px;font-size:13px;" onclick="startCustomSubSession(${idx},${si})">▶ Start ${sub.name}</button></div></div></div>`;
+    });
+    return `<div style="margin:0 16px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:14px;overflow:hidden;">
+      <div onclick="togDay('${k}')" style="padding:12px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;">
+        <div style="font-size:22px;">🛠️</div>
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div style="font-size:15px;font-weight:800;">${prog.name}</div>
+            <span style="background:rgba(200,255,0,0.12);color:var(--accent);font-size:9px;font-weight:800;padding:2px 7px;border-radius:5px;letter-spacing:0.5px;">CUSTOM</span>
+          </div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px;">${prog.subcategories.length} day${prog.subcategories.length !== 1 ? 's' : ''} · ${totalEx} exercises</div>
+        </div>
+        <div style="color:var(--text2);font-size:13px;" id="arr-${k}">▼</div>
+      </div>
+      <div id="dd-${k}" style="display:none;padding:0 12px 12px;">
+        <div style="display:flex;gap:6px;margin-bottom:10px;">
+          <button onclick="event.stopPropagation();editCustomProgramme(${idx})" style="flex:1;background:var(--surface3);border:0.5px solid var(--border);border-radius:8px;padding:8px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;">Edit</button>
+          <button onclick="event.stopPropagation();deleteCustomProgramme(${idx})" style="flex:1;background:rgba(255,77,106,0.1);border:0.5px solid rgba(255,77,106,0.3);border-radius:8px;padding:8px;font-size:12px;font-weight:700;color:var(--red);cursor:pointer;">Delete</button>
+        </div>
+        ${inner}
+      </div>
+    </div>`;
+  };
+
+  let html = `<div class="section-label">🛠️ MY PROGRAMMES</div>`;
+  html += renderBuiltIn('ULF', ULF, 'Upper · Lower · Full Body — 3 days');
+  html += renderBuiltIn('PPL', PPL, 'Push · Pull · Legs — 3 or 6 days');
+  customWorkouts.forEach((prog, idx) => { html += renderCustom(prog, idx); });
+  // Create button — disabled style if at cap (5)
+  const atCap = customWorkouts.length >= 5;
+  html += `<div style="margin:0 16px 4px;">
+    <button onclick="openCreateProgramme()" ${atCap ? 'disabled' : ''}
+      style="width:100%;background:transparent;border:1px dashed var(--border);border-radius:12px;padding:12px;font-size:13px;font-weight:700;color:${atCap ? 'var(--text2)' : 'var(--accent)'};cursor:${atCap ? 'not-allowed' : 'pointer'};opacity:${atCap ? '0.5' : '1'};">
+      ${atCap ? '✓ Custom programme limit reached (5/5)' : '+ Create your own programme'}
+    </button>
+  </div>`;
+  return html;
+}
+
+function setHIITSearch(q){
+  _hiitSearchQuery = q;
+  // Re-render only the HIIT cards container, not the entire feed (keeps input focus)
+  const cardsEl = document.getElementById('hiitStudioCards');
+  if(cardsEl) cardsEl.innerHTML = _renderHIITStudioCards();
+}
+
+function _renderHIITStudioCards(){
+  const diffLabels = ['','Beginner','Intermediate','Advanced','Elite'];
+  const diffColors = ['','var(--green)','var(--accent)','var(--orange)','var(--red)'];
+  const brackets = [
+    { label:'10–15 min', min:0,  max:16 },
+    { label:'20–25 min', min:16, max:26 },
+    { label:'30–35 min', min:26, max:36 },
+    { label:'40–45 min', min:36, max:46 },
+    { label:'50–60 min', min:46, max:61 },
+  ];
+  const q = _hiitSearchQuery.trim().toLowerCase();
+  const matches = (w) => !q || (w.name && w.name.toLowerCase().includes(q)) || (w.format && w.format.toLowerCase().includes(q)) || (w.desc && w.desc.toLowerCase().includes(q));
+
+  // Custom HIIT card row
+  const customHTML = (w, ci) => {
+    const fc = HIIT_FORMAT_COLORS[w.format] || 'var(--text2)';
+    const k = 'chiit_' + ci;
+    return `<div class="day-card" style="margin:0 0 6px;border-radius:10px;">
+      <div class="day-head" onclick="togDay('${k}')">
+        <div class="day-icon" style="background:${fc}22;font-size:14px;font-weight:900;color:${fc};">${w.duration}m</div>
+        <div style="flex:1;"><div style="font-size:14px;font-weight:700;">${w.name}</div>
+          <div style="display:flex;gap:5px;margin-top:2px;flex-wrap:wrap;">
+            <span style="font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;background:${fc}22;color:${fc};">${w.format}</span>
+            <span style="font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;background:rgba(200,255,0,0.15);color:var(--accent);">CUSTOM</span>
+          </div>
+        </div>
+        <div style="color:var(--text2);font-size:13px;" id="arr-${k}">▼</div>
+      </div>
+      <div id="dd-${k}" style="display:none;">
+        ${w.desc ? `<div style="padding:8px 16px 4px;font-size:12px;color:var(--text2);">${w.desc}</div>` : ''}
+        ${(w.exercises || []).map(ex => `<div class="ex-row"><div style="flex:1;"><div style="font-size:13px;font-weight:600;">${ex.name}</div><div style="font-size:11px;color:var(--text2);">${ex.reps || ''}</div></div></div>`).join('')}
+        <div style="padding:10px 16px 14px;display:flex;gap:8px;">
+          <button class="btn-p" style="flex:1;padding:11px;font-size:13px;" onclick="startCustomHIIT(${ci})">▶ Start</button>
+          <button onclick="deleteCustomHIIT(${ci})" style="background:rgba(255,77,106,0.1);border:0.5px solid rgba(255,77,106,0.3);border-radius:10px;padding:8px 12px;font-size:12px;font-weight:700;color:var(--red);cursor:pointer;">Delete</button>
+        </div>
+      </div></div>`;
+  };
+
+  // Built-in HIIT card row
+  const builtInHTML = (w) => {
+    const hiitIdx = HIIT.indexOf(w);
+    const fc = HIIT_FORMAT_COLORS[w.format] || 'var(--text2)';
+    const k = 'hiit_' + hiitIdx;
+    const blockExs = w.blocks
+      ? w.blocks.flatMap(block => block.exercises.map(ex => `<div style="display:flex;align-items:center;padding:6px 0;border-bottom:0.5px solid var(--border);gap:8px;"><div style="flex:1;"><div style="font-size:13px;font-weight:600;">${ex.name}</div><div style="font-size:10px;color:var(--text2);">${block.type} · ${ex.duration}s</div></div></div>`))
+      : (w.exercises || []).map(ex => `<div style="display:flex;align-items:center;padding:6px 0;border-bottom:0.5px solid var(--border);gap:8px;"><div style="flex:1;font-size:13px;font-weight:600;">${ex.name}</div><div style="font-size:12px;color:var(--accent);">${ex.sets}×${ex.reps}</div></div>`);
+    return `<div class="day-card" style="margin:0 0 6px;border-radius:10px;">
+      <div class="day-head" onclick="togDay('${k}')">
+        <div class="day-icon" style="background:${fc}22;font-size:14px;font-weight:900;color:${fc};">${w.duration}m</div>
+        <div style="flex:1;"><div style="font-size:14px;font-weight:700;">${w.name}</div>
+          <div style="display:flex;gap:5px;margin-top:2px;flex-wrap:wrap;">
+            <span style="font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;background:${fc}22;color:${fc};">${w.format}</span>
+            <span style="font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;background:${diffColors[w.diff]}22;color:${diffColors[w.diff]};">${diffLabels[w.diff]}</span>
+          </div>
+        </div>
+        <div style="color:var(--text2);font-size:13px;" id="arr-${k}">▼</div>
+      </div>
+      <div id="dd-${k}" style="display:none;">
+        <div style="padding:10px 16px;font-size:13px;color:var(--text2);line-height:1.5;">${w.desc}</div>
+        <div style="padding:0 16px 10px;">${blockExs.join('')}</div>
+        <div style="padding:10px 16px 14px;"><button class="btn-p" style="width:100%;padding:11px;font-size:13px;" onclick="startHIIT(${hiitIdx})">▶ Start ${w.name}</button></div>
+      </div></div>`;
+  };
+
+  // Wrap a group in a collapsible "bracket" container
+  const groupHTML = (label, groupKey, items, renderRow) => {
+    if(!items.length) return '';
+    const k = 'hgrp_' + groupKey;
+    return `<div style="margin:0 16px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:14px;overflow:hidden;">
+      <div onclick="togDay('${k}')" style="padding:11px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;">
+        <div style="flex:1;">
+          <div style="font-size:14px;font-weight:800;">${label}</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px;">${items.length} workout${items.length !== 1 ? 's' : ''}</div>
+        </div>
+        <div style="color:var(--text2);font-size:13px;" id="arr-${k}">${q ? '▲' : '▼'}</div>
+      </div>
+      <div id="dd-${k}" style="display:${q ? 'block' : 'none'};padding:0 12px 12px;">
+        ${items.map(renderRow).join('')}
+      </div>
+    </div>`;
+  };
+
+  let html = '';
+  // Custom HIIT first (always expanded if any match search)
+  const customMatches = customHIITs.map((w, ci) => ({ w, ci })).filter(({ w }) => matches(w));
+  if(customMatches.length){
+    html += groupHTML('Your Custom HIIT', 'custom', customMatches, ({ w, ci }) => customHTML(w, ci));
   }
-  document.getElementById('progContent').innerHTML=html;
+  brackets.forEach(b => {
+    const group = HIIT.filter(w => w.duration >= b.min && w.duration <= b.max && matches(w));
+    html += groupHTML(b.label, 'b' + b.min, group, builtInHTML);
+  });
+  if(!html){
+    html = `<div style="margin:0 16px;padding:20px;text-align:center;color:var(--text2);font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:14px;">No HIIT workouts match "${q}". <a onclick="setHIITSearch('');document.getElementById('hiitSearchInput').value='';" style="color:var(--accent);cursor:pointer;font-weight:700;">Clear search</a></div>`;
+  }
+  return html;
+}
+
+function _renderHIITStudioSection(){
+  return `
+    <div class="section-label">⚡ HIIT STUDIO</div>
+    <div style="margin:0 16px 8px;display:flex;gap:8px;">
+      <div style="flex:1;position:relative;">
+        <input id="hiitSearchInput" type="text" placeholder="Search HIIT workouts…"
+          oninput="setHIITSearch(this.value)"
+          style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--text);box-sizing:border-box;font-family:inherit;">
+      </div>
+      <button onclick="openCreateHIIT()"
+        style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:10px 14px;font-size:12px;font-weight:800;color:var(--accent);cursor:pointer;white-space:nowrap;">+ HIIT</button>
+    </div>
+    <div id="hiitStudioCards">${_renderHIITStudioCards()}</div>`;
+}
+
+// Re-export for legacy custom programme detail flow (kept for path-style start route)
+function renderCustomProgView(customIdx){
+  // Now folded into the My Programmes feed — just re-render the feed and expand the target card
+  renderProgrammeFeed();
+  const k = 'cp_' + customIdx;
+  setTimeout(() => {
+    const dd = document.getElementById('dd-' + k);
+    const arr = document.getElementById('arr-' + k);
+    if(dd) dd.style.display = 'block';
+    if(arr) arr.textContent = '▲';
+  }, 0);
 }
 
 // ── CUSTOM PROGRAMMES (max 3, each with subcategories) ──
@@ -7388,8 +7554,8 @@ function openCreateChooser(){
 }
 
 function openCreateProgramme(){
-  if(customWorkouts.length>=3){
-    alert('You can have a maximum of 3 custom programmes. Delete one to create a new one.');
+  if(customWorkouts.length>=5){
+    alert('You can have a maximum of 5 custom programmes. Delete one to create a new one.');
     return;
   }
   editingCustomIdx=-1;
@@ -7649,30 +7815,8 @@ function saveCustomWorkout(){
   else customWorkouts.push(buildingProg);
   saveCustomWorkoutsStore();
   document.getElementById('customProgMod').classList.remove('open');
-  rebuildProgTabs();
   renderTodayToggle();
-  renderProg();
-}
-
-function renderCustomProgView(customIdx){
-  const prog=customWorkouts[customIdx];
-  if(!prog){document.getElementById('progContent').innerHTML='<div style="padding:20px;text-align:center;color:var(--text2);">Programme not found</div>';return;}
-  let html=`<div style="display:flex;align-items:center;justify-content:space-between;padding:0 16px 10px;">
-    <div style="font-size:13px;font-weight:700;color:var(--text2);">${prog.subcategories.length} days</div>
-    <div style="display:flex;gap:8px;">
-      <button onclick="editCustomProgramme(${customIdx})" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;">Edit</button>
-      <button onclick="deleteCustomProgramme(${customIdx})" style="background:rgba(255,77,106,0.1);border:0.5px solid rgba(255,77,106,0.3);border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;color:var(--red);cursor:pointer;">Delete</button>
-    </div>
-  </div>`;
-  prog.subcategories.forEach((sub,si)=>{
-    const k='cp_'+customIdx+'_'+si;
-    html+=`<div class="day-card"><div class="day-head" onclick="togDay('${k}')"><div class="day-icon ic-u">💪</div><div style="flex:1;"><div style="font-size:15px;font-weight:700;">${sub.name}</div><div style="font-size:12px;color:var(--text2);">${sub.exercises.length} exercises</div></div><div style="color:var(--text2);font-size:13px;" id="arr-${k}">▼</div></div>
-    <div id="dd-${k}" style="display:none;">
-      ${sub.exercises.map(ex=>`<div class="ex-row"><div style="flex:1;"><div style="font-size:13px;font-weight:600;">${ex.name}</div><div style="font-size:11px;color:var(--text2);">${ex.sets} sets · ${ex.reps}</div></div><div style="font-size:14px;font-weight:800;color:var(--accent);">${ex.weight?ex.weight+'kg':ex.bw?'BW':'–'}</div></div>`).join('')}
-      <div style="padding:10px 16px 14px;"><button class="btn-p" style="width:100%;padding:12px;font-size:13px;" onclick="startCustomSubSession(${customIdx},${si})">▶ Start ${sub.name}</button></div>
-    </div></div>`;
-  });
-  document.getElementById('progContent').innerHTML=html;
+  renderProgrammeFeed();
 }
 
 function editCustomProgramme(idx){
@@ -7692,11 +7836,8 @@ function deleteCustomProgramme(idx){
   if(todayProg===name){todayProg='ULF';saveLocalCache();cloudSaveProfile();}
   customWorkouts.splice(idx,1);
   saveCustomWorkoutsStore();
-  rebuildProgTabs();
   renderTodayToggle();
-  curProg=0;
-  rebuildProgTabs();
-  renderProg();
+  renderProgrammeFeed();
 }
 
 function startCustomSubSession(progIdx,subIdx){
@@ -8899,9 +9040,9 @@ function saveCustomHIIT(){
   // Register into main HIIT array so it appears everywhere
   if(!HIIT.find(h => h.name === newHIIT.name)) HIIT.push(newHIIT);
   document.getElementById('createHIITMod').classList.remove('open');
-  
-  // Re-render the HIIT programme tab
-  if(curProg === 2) renderHIITProg();
+
+  // Re-render the Programme tab if it's currently visible
+  if(document.getElementById('s-workout')?.classList.contains('active')) renderProgrammeFeed();
 }
 
 function deleteCustomHIIT(idx){
@@ -12110,8 +12251,7 @@ const ABDOMINAL_EXERCISES=[
 
 renderTodayToggle();
 renderToday();
-rebuildProgTabs();
-renderProg();
+renderProgrammeFeed();
 
 // ── SPLASH SCREEN ──
 // Load auth state FIRST before splash timer
