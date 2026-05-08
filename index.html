@@ -642,6 +642,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
       <div class="section-label">REST TIME ANALYSIS</div>
       <div class="card" style="padding:16px;"><div id="restAnalysis"></div></div>
 
+      <div class="section-label">TRAINING FREQUENCY</div>
+      <div class="card" style="padding:16px;"><div id="trainingFrequency"></div></div>
+
       <div class="section-label">RECENT SESSIONS</div>
       <div class="card" id="recentSess"></div>
     </div>
@@ -10376,6 +10379,7 @@ function renderProgress(){
   renderCompoundIsolation();
   renderTimeUnderTension();
   renderRestAnalysis();
+  renderTrainingFrequency();
   const sorted=[...completedSessions].sort((a,b)=>b.date-a.date).slice(0,8);
   if(!sorted.length){document.getElementById('recentSess').innerHTML='<div style="padding:20px;text-align:center;color:var(--text2);font-size:13px;">No sessions yet — start your first workout!</div>';}
   else {
@@ -11387,6 +11391,129 @@ function renderRestAnalysis(){
   // Footer
   html += `<div style="margin-top:6px;padding-top:10px;border-top:0.5px solid var(--border);font-size:10px;color:var(--text2);line-height:1.45;">
     <strong style="color:var(--text);">${data.dataAvailable}</strong> rest periods analysed${data.dataMissing > 0 ? ` · ${data.dataMissing} from older sessions skipped (no timestamp data)` : ''}
+  </div>`;
+
+  el.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// TRAINING FREQUENCY — days since each muscle group was last trained
+// ─────────────────────────────────────────────────────────────────────
+function calcFrequency(){
+  const now = Date.now();
+  const broad = { push:null, pull:null, legs:null, core:null };
+  const fine = {};
+  ['chest','shoulders','rear_delts','traps','lats','biceps','triceps','abs','quads','hamstrings','glutes','calves'].forEach(m => fine[m] = null);
+
+  completedSessions.filter(s => !s.manualActivity && s.setLog).forEach(s => {
+    const sd = s.date instanceof Date ? s.date : new Date(s.date);
+    Object.keys(s.setLog).forEach(exName => {
+      // Update broad groups via getSplits
+      const splits = getSplits(exName);
+      if(splits){
+        splits.forEach(({cat}) => {
+          if(broad[cat] === null || sd > broad[cat]) broad[cat] = sd;
+        });
+      }
+      // Update fine muscles via resolveExerciseMuscles
+      const targets = resolveExerciseMuscles(exName);
+      targets.forEach(m => {
+        if(m in fine && (fine[m] === null || sd > fine[m])) fine[m] = sd;
+      });
+    });
+  });
+
+  const dayDiff = d => d ? Math.floor((now - d.getTime()) / 86400000) : null;
+  const broadDays = {}; Object.entries(broad).forEach(([k, d]) => broadDays[k] = dayDiff(d));
+  const fineDays  = {}; Object.entries(fine).forEach(([k, d])  => fineDays[k]  = dayDiff(d));
+  return { broad, broadDays, fine, fineDays };
+}
+
+function _freqStatus(days, thresholdGood, thresholdWarn){
+  if(days === null)              return { label:'Never', color:'#ff4d6a', bg:'rgba(255,77,106,0.10)', border:'rgba(255,77,106,0.35)' };
+  if(days <= thresholdGood)      return { label:'✓ Recent', color:'#4cff91', bg:'rgba(76,255,145,0.08)', border:'rgba(76,255,145,0.35)' };
+  if(days <= thresholdWarn)      return { label:'~ Stale', color:'#ff8c42', bg:'rgba(255,140,66,0.08)', border:'rgba(255,140,66,0.35)' };
+  return                                  { label:'⚠ Neglected', color:'#ff4d6a', bg:'rgba(255,77,106,0.10)', border:'rgba(255,77,106,0.40)' };
+}
+
+function _daysAgoLabel(d){
+  if(d === null) return 'never';
+  if(d === 0)    return 'today';
+  if(d === 1)    return 'yesterday';
+  return d + ' days ago';
+}
+
+function renderTrainingFrequency(){
+  const el = document.getElementById('trainingFrequency');
+  if(!el) return;
+  const data = calcFrequency();
+
+  if(Object.values(data.broadDays).every(d => d === null)){
+    el.innerHTML = `<div style="padding:8px;text-align:center;color:var(--text2);font-size:13px;">No training history yet. Log a session to see frequency.</div>`;
+    return;
+  }
+
+  const broadGroups = [
+    { key:'push',  label:'Push', icon:'🏋️', desc:'Chest · Shoulders · Triceps' },
+    { key:'pull',  label:'Pull', icon:'💪', desc:'Back · Biceps' },
+    { key:'legs',  label:'Legs', icon:'🦵', desc:'Quads · Hams · Glutes · Calves' },
+    { key:'core',  label:'Core', icon:'⚡', desc:'Abs · Obliques' },
+  ];
+
+  // Hero — 4 group cards in a 2×2 grid
+  let html = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">`;
+  broadGroups.forEach(g => {
+    const d = data.broadDays[g.key];
+    const st = _freqStatus(d, 4, 7);
+    html += `<div style="background:${st.bg};border:1px solid ${st.border};border-radius:12px;padding:12px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+        <div style="font-size:18px;">${g.icon}</div>
+        <div style="font-size:12px;font-weight:800;color:var(--text);">${g.label}</div>
+      </div>
+      <div style="font-size:24px;font-weight:900;color:${st.color};line-height:1;">${d === null ? '—' : d + 'd'}</div>
+      <div style="font-size:10px;color:var(--text2);margin-top:4px;line-height:1.3;">${_daysAgoLabel(d)}</div>
+      <div style="font-size:9px;font-weight:700;color:${st.color};margin-top:4px;">${st.label}</div>
+    </div>`;
+  });
+  html += `</div>`;
+
+  // Top-line callout — most-neglected broad group, if any are stale/neglected
+  const sortedBroad = broadGroups
+    .map(g => ({ ...g, days: data.broadDays[g.key] }))
+    .filter(x => x.days !== null && x.days > 5)
+    .sort((a, b) => b.days - a.days);
+  if(sortedBroad.length){
+    const worst = sortedBroad[0];
+    if(worst.days >= 7){
+      html += `<div style="margin-bottom:14px;padding:12px 14px;background:rgba(255,140,66,0.10);border:1px solid rgba(255,140,66,0.35);border-radius:12px;">
+        <div style="font-size:13px;font-weight:800;color:var(--text);margin-bottom:3px;">⚠ You haven't trained ${worst.label.toLowerCase()} in ${worst.days} days</div>
+        <div style="font-size:11px;color:var(--text2);line-height:1.45;">Aim for at least 1× per week per major group. Schedule a ${worst.label.toLowerCase()} session this week.</div>
+      </div>`;
+    }
+  }
+
+  // Fine-muscle watchouts — any of the 12 muscles >14 days untrained AND ever trained
+  const fineWatchouts = Object.entries(data.fineDays)
+    .filter(([m, d]) => d !== null && d >= 14)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4);
+  if(fineWatchouts.length){
+    html += `<div style="padding:10px 12px;background:rgba(255,77,106,0.06);border:1px solid rgba(255,77,106,0.25);border-radius:10px;margin-bottom:8px;">
+      <div style="font-size:10px;font-weight:700;color:#ff4d6a;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Specific muscles overdue</div>
+      ${fineWatchouts.map(([m, d]) => `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;">
+        <span style="color:var(--text);">${MUSCLE_LABELS[m] || m}</span>
+        <span style="color:var(--text2);">${d} days ago</span>
+      </div>`).join('')}
+    </div>`;
+  }
+
+  // Footer — total sessions logged
+  const totalSessions = completedSessions.filter(s => !s.manualActivity).length;
+  const lastSessionDays = data.broadDays.push !== null || data.broadDays.pull !== null || data.broadDays.legs !== null
+    ? Math.min(...Object.values(data.broadDays).filter(d => d !== null))
+    : null;
+  html += `<div style="margin-top:6px;padding-top:10px;border-top:0.5px solid var(--border);font-size:10px;color:var(--text2);line-height:1.45;">
+    ${totalSessions} session${totalSessions !== 1 ? 's' : ''} logged${lastSessionDays !== null ? ` · last session ${_daysAgoLabel(lastSessionDays)}` : ''}
   </div>`;
 
   el.innerHTML = html;
