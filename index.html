@@ -6892,19 +6892,18 @@ function startHIITSession(){
     // Show 3-second countdown before starting
     showCountdownTimer(3, () => {
       // console.log('[HIIT] Countdown complete, starting workout');
-      
-      // NOW start the session timer (0:00 counter in top right) - starts WITH the 20s work timer
-      clearInterval(sessInterval);
+
+      // NOW start the session timer (0:00 counter in top right) — starts WITH the 20s work timer.
+      // startTimer auto-clears any prior 'session' timer.
       sessStartTime = Date.now();
       sessTimeSec = 0;
-      sessInterval = setInterval(()=>{sessTimeSec=Math.floor((Date.now()-sessStartTime)/1000);updateSessTimer();},1000);
-      // console.log('[HIIT] Started session timer interval (in sync with 20s work timer)');
-      
+      sessInterval = startTimer('session', () => {
+        sessTimeSec = Math.floor((Date.now() - sessStartTime) / 1000);
+        updateSessTimer();
+      }, 1000);
+
       startHIITRound();
-      // console.log('[HIIT] Called startHIITRound');
-      
       updateSessUI();
-      // console.log('[HIIT] Called updateSessUI - display should now be visible');
     });
   } else {
     // console.log('[HIIT] ERROR: startHIITSession called but hiitState is null!');
@@ -8329,10 +8328,12 @@ function startHIIT(idx){
     };
   });
   curIdx=0;setsDone={};repsLogged={};totalSets=0;sessTimeSec=0;
-  sessStartTime=null; // Don't set until user clicks start
+  sessStartTime=null; // Don't set until user clicks start (and post-countdown for HIIT)
   supersets={};warmupShown={};warmupDone={};equipOverride={};setWeights={};setTimestamps={};
   coreCircuitExs=[];twoPhaseState=null;clearInterval(twoPhaseInterval);
-  clearInterval(sessInterval);
+  // Ensure no stale 'session' timer carries over from a previous session
+  stopTimer('session'); clearInterval(sessInterval);
+  updateSessTimer(); // force display to 0:00 immediately
   document.getElementById('nav-active').style.display='flex';
   
   // Initialize HIIT/Tabata state (Tabata only) or set pending start flag for others
@@ -8382,29 +8383,42 @@ function startNonTabataSession(){
 
   if(forceAutoTimer || !firstEx || !isTimedExercise(firstEx)){
     window._nonTabataSessionStarted = true;
-    clearInterval(sessInterval);
-    sessStartTime = Date.now();
+    // Stop any prior session timer and force display to 0:00 immediately —
+    // the actual session timer will start INSIDE the 3-second countdown
+    // callback, in sync with the AMRAP/EMOM/Core-Timed work timer.
+    stopTimer('session');
+    sessStartTime = null;
     sessTimeSec = 0;
-    sessInterval = setInterval(()=>{
-      sessTimeSec = Math.floor((Date.now()-sessStartTime)/1000);
-      updateSessTimer();
-    }, 1000);
+    updateSessTimer();
 
-    // Start format-specific timers
+    // Helper that kicks off the top session timer; called from each callback.
+    const _startSessionClock = () => {
+      sessStartTime = Date.now();
+      sessTimeSec = 0;
+      sessInterval = startTimer('session', () => {
+        sessTimeSec = Math.floor((Date.now() - sessStartTime) / 1000);
+        updateSessTimer();
+      }, 1000);
+    };
+
+    // Start format-specific timers (each waits 3s, then starts the top clock + the work timer in sync)
     if(isAMRAP){
       _amrapRounds = 0;
       showCountdownTimer(3, () => {
+        _startSessionClock();
         renderAmrapCircuit(); // create the live-timer UI (amrapLiveCountdown element)
         startAmrapTimer(w.amrapMinutes * 60);
       });
     }
     if(isEMOM){
       showCountdownTimer(3, () => {
+        _startSessionClock();
         startEmomAutoTimer(w);
       });
     }
     if(isCoreTimed){
       showCountdownTimer(3, () => {
+        _startSessionClock();
         startCoreTimedAutoTimer(w);
       });
     }
@@ -8419,31 +8433,38 @@ function startNonTabataSession(){
   // Hide start button
   const hiitStartBtn = document.getElementById('hiitStartBtn');
   if(hiitStartBtn) hiitStartBtn.style.display = 'none';
-  
-  // Start session timer BEFORE countdown (will be synced in callback)
-  clearInterval(sessInterval);
-  sessStartTime = Date.now();
+
+  // Stop any prior session timer and force display to 0:00 — the actual
+  // session timer will start INSIDE the countdown callback, in sync with
+  // the first work interval.
+  stopTimer('session');
+  sessStartTime = null;
   sessTimeSec = 0;
-  sessInterval = setInterval(()=>{
-    sessTimeSec = Math.floor((Date.now()-sessStartTime)/1000);
-    updateSessTimer();
-  }, 1000);
-  
+  updateSessTimer();
+
   // Show countdown in hiitDisplay
   const display = document.getElementById('hiitDisplay');
   if(display) display.style.display = 'block';
-  
+
   // console.log('[BARRY] Calling showCountdownTimer');
   showCountdownTimer(3, () => {
     // console.log('[BARRY] Countdown complete, starting exercise');
-    
+
     // Clear countdown display
     if(display) display.innerHTML = '';
-    
+
+    // NOW start the session timer — synchronised with the first work interval
+    sessStartTime = Date.now();
+    sessTimeSec = 0;
+    sessInterval = startTimer('session', () => {
+      sessTimeSec = Math.floor((Date.now() - sessStartTime) / 1000);
+      updateSessTimer();
+    }, 1000);
+
     // Auto-start timed exercises (like treadmill intervals)
     const ex = sessExs[curIdx];
     // console.log('[BARRY] After countdown, curIdx:', curIdx, 'exercise:', ex?.name);
-    
+
     if(ex && isTimedExercise(ex)){
       if(isTwoPhaseInterval(ex.reps)){
         // console.log('[BARRY] Starting two-phase:', ex.name);
@@ -8454,7 +8475,7 @@ function startNonTabataSession(){
         setupTimedExercise(ex);
       }
     }
-    
+
     // Update UI to show current exercise
     updateSessUI();
   });
