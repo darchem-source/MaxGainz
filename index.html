@@ -131,6 +131,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
 #offlineBanner { position:fixed; bottom:68px; left:50%; transform:translateX(-50%) translateY(20px); width:100%; max-width:420px; z-index:99; background:#1a1a1a; border:1px solid rgba(255,140,66,0.35); border-radius:10px 10px 0 0; color:#ff8c42; font-size:12px; font-weight:700; text-align:center; padding:8px 16px; opacity:0; transition:opacity 0.25s ease, transform 0.25s ease; pointer-events:none; }
 #offlineBanner.show { opacity:1; transform:translateX(-50%) translateY(0); }
+#syncBanner { position:fixed; bottom:68px; left:50%; transform:translateX(-50%) translateY(20px); width:100%; max-width:420px; z-index:99; background:#1a1a1a; border:1px solid rgba(0,212,255,0.35); border-radius:10px 10px 0 0; color:var(--accent2); font-size:12px; font-weight:700; text-align:center; padding:8px 16px; opacity:0; transition:opacity 0.25s ease, transform 0.25s ease; pointer-events:none; display:flex; align-items:center; justify-content:center; gap:8px; }
+#syncBanner.show { opacity:1; transform:translateX(-50%) translateY(0); }
+#syncBanner .sync-dot { display:inline-block; width:6px; height:6px; background:var(--accent2); border-radius:50%; animation:syncPulse 1.2s ease-in-out infinite; }
+@keyframes syncPulse { 0%,100% { opacity:0.3; transform:scale(0.85); } 50% { opacity:1; transform:scale(1.1); } }
+
+/* ── Skeleton shimmer placeholders ── */
+.skeleton { background:linear-gradient(90deg, var(--surface2) 0%, var(--surface3) 50%, var(--surface2) 100%); background-size:200% 100%; animation:skeletonShimmer 1.4s linear infinite; border-radius:8px; pointer-events:none; }
+@keyframes skeletonShimmer { 0% { background-position:200% 0; } 100% { background-position:-200% 0; } }
 .wadj { display:flex; align-items:center; background:var(--surface2); border-radius:14px; padding:4px; width:fit-content; }
 .wadj-btn { width:48px; height:48px; border-radius:12px; border:none; background:transparent; color:var(--text); font-size:24px; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.12s; }
 .wadj-btn:active { background:var(--accent); color:#000; transform:scale(0.9); }
@@ -253,6 +261,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
   .nav { max-width: 100%; }
   .modal { max-width: 600px; }
   #offlineBanner { max-width: 100%; }
+  #syncBanner { max-width: 100%; }
 }
 
 /* Phone landscape: tighten vertical spacing since height is limited */
@@ -267,6 +276,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 </head>
 <body>
 <div id="offlineBanner">📵 Offline — your workouts are saved locally</div>
+<div id="syncBanner"><span class="sync-dot"></span>Syncing your data…</div>
 <div class="toast" id="appToast"></div>
 <div class="splash" id="splash" onclick="dismissSplash()">
   <div class="splash-logo">
@@ -2530,12 +2540,37 @@ async function saveStore(newSession = null, newWeights = null) {
 }
 
 // ── SYNC STATUS UI ──
+// Tracks whether a cloud sync is in flight — used to drive skeleton placeholders
+let _isCloudSyncing = false;
+
+function _isColdSyncing(){
+  // True only when syncing AND there's no cached data yet (first-time/new-device sign-in)
+  return _isCloudSyncing && (typeof completedSessions === 'undefined' || completedSessions.length === 0);
+}
+
 function setSyncStatus(status) {
+  const wasCold = _isColdSyncing();
+  _isCloudSyncing = (status === 'syncing');
+  // Update small text indicator (Profile tab)
   const el = document.getElementById('syncStatus');
-  if (!el) return;
-  const states = { syncing:'🔄 Syncing…', synced:'☁️ Synced', offline:'📱 Offline (local)', error:'⚠️ Sync failed' };
-  el.textContent = states[status] || '';
-  el.style.color = status === 'synced' ? 'var(--green)' : status === 'offline' ? 'var(--orange)' : 'var(--text2)';
+  if (el) {
+    const states = { syncing:'🔄 Syncing…', synced:'☁️ Synced', offline:'📱 Offline (local)', error:'⚠️ Sync failed' };
+    el.textContent = states[status] || '';
+    el.style.color = status === 'synced' ? 'var(--green)' : status === 'offline' ? 'var(--orange)' : 'var(--text2)';
+  }
+  // Toggle floating sync banner — only when actually cold-syncing (no cached data)
+  const banner = document.getElementById('syncBanner');
+  if(banner) banner.classList.toggle('show', _isColdSyncing());
+  // Skeleton transitions: if we WERE cold-syncing and now we're not, refresh active tab so placeholders are replaced
+  if(wasCold && !_isCloudSyncing){
+    if(document.getElementById('s-today')?.classList.contains('active'))    { try{ renderToday();    }catch(e){} }
+    if(document.getElementById('s-progress')?.classList.contains('active')) { try{ renderProgress(); }catch(e){} }
+  }
+  // Initial entry into cold-sync: paint skeletons immediately on the active tab
+  if(!wasCold && _isColdSyncing()){
+    if(document.getElementById('s-today')?.classList.contains('active'))    { try{ renderToday();    }catch(e){} }
+    if(document.getElementById('s-progress')?.classList.contains('active')) { try{ renderProgress(); }catch(e){} }
+  }
 }
 
 function updateStorageBadge() {
@@ -2893,8 +2928,47 @@ function calcProgrammeCycle(progName){
 }
 
 function renderToday(){
+  if(_isColdSyncing()){ _renderTodaySkeleton(); return; }
   if(isPathActive()){ renderTodayWithPath(); return; }
   renderTodayLegacy();
+}
+
+// Skeleton placeholder for the Today tab during cold-start cloud sync
+function _renderTodaySkeleton(){
+  // Hide the path-content container (used by renderTodayWithPath); show legacy slots filled with skeletons
+  const tcEl = document.getElementById('todayContent');
+  if(tcEl){ tcEl.style.display='none'; tcEl.innerHTML=''; }
+  const pickerEl = document.getElementById('dayPicker');
+  if(pickerEl) pickerEl.style.display='none';
+  const heroEl = document.getElementById('todayHeroWrap');
+  if(heroEl){
+    heroEl.style.display='';
+    heroEl.innerHTML = `<div class="hero" style="background:var(--surface2);border:0.5px solid var(--border);">
+      <div class="skeleton" style="width:60%;height:14px;margin-bottom:10px;"></div>
+      <div class="skeleton" style="width:80%;height:24px;margin-bottom:8px;"></div>
+      <div class="skeleton" style="width:40%;height:12px;"></div>
+    </div>`;
+  }
+  const labelEl = document.getElementById('todayListLabel');
+  if(labelEl){ labelEl.style.display=''; labelEl.textContent = "TODAY'S WORKOUT"; }
+  const listEl = document.getElementById('todayList');
+  if(listEl){
+    listEl.style.display='';
+    let rows = '';
+    for(let i = 0; i < 5; i++){
+      rows += `<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:0.5px solid var(--border);">
+        <div class="skeleton" style="width:36px;height:36px;border-radius:10px;flex-shrink:0;"></div>
+        <div style="flex:1;min-width:0;">
+          <div class="skeleton" style="width:${50+(i*7)%30}%;height:13px;margin-bottom:6px;"></div>
+          <div class="skeleton" style="width:${30+(i*11)%25}%;height:10px;"></div>
+        </div>
+      </div>`;
+    }
+    listEl.innerHTML = rows;
+  }
+  // Update greeting if we have it
+  const greetEl = document.getElementById('todayGreeting');
+  if(greetEl && !greetEl.textContent){ greetEl.innerHTML = '<span class="ac">Loading…</span>'; }
 }
 
 function renderTodayLegacy(){
@@ -8045,6 +8119,29 @@ function getLiftHistoryByName(name){
 }
 
 function renderPBCards(){
+  const el=document.getElementById('pbCards');
+  if(!el) return;
+  // During cold-start cloud sync, show shimmer placeholders for PB tiles
+  if(_isColdSyncing()){
+    let skel = '';
+    const rows = Math.min(3, Math.ceil(pbLifts.length / 2) || 2);
+    for(let r = 0; r < rows; r++){
+      skel += `<div class="stat-row">
+        <div class="stat-card" style="position:relative;">
+          <div class="skeleton" style="width:50%;height:9px;margin-bottom:8px;"></div>
+          <div class="skeleton" style="width:60%;height:28px;margin-bottom:4px;"></div>
+          <div class="skeleton" style="width:40%;height:9px;"></div>
+        </div>
+        <div class="stat-card" style="position:relative;">
+          <div class="skeleton" style="width:50%;height:9px;margin-bottom:8px;"></div>
+          <div class="skeleton" style="width:60%;height:28px;margin-bottom:4px;"></div>
+          <div class="skeleton" style="width:40%;height:9px;"></div>
+        </div>
+      </div>`;
+    }
+    el.innerHTML = skel;
+    return;
+  }
   const colors=['var(--accent)','var(--accent2)','var(--purple)','var(--green)','var(--orange)','var(--red)','#9d7bff','#ff8cdd'];
   let html='';
   for(let i=0;i<pbLifts.length;i+=2){
@@ -8072,8 +8169,7 @@ function renderPBCards(){
   if(pbLifts.length<8){
     html+=`<div style="padding:0 16px 10px;"><button onclick="addPBTile()" style="width:100%;background:var(--surface);border:0.5px dashed var(--border);border-radius:14px;padding:12px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;">+ Add lift (${pbLifts.length}/8)</button></div>`;
   }
-  const el=document.getElementById('pbCards');
-  if(el) el.innerHTML=html;
+  el.innerHTML = html;
   // Update bench PB in today card if shown
   const benchEl=document.getElementById('todayBenchPB');
   if(benchEl){const b=getPBForLabel('Bench Press');benchEl.textContent=b!==null?b:'–';}
