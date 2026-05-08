@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Max Gainz">
@@ -53,9 +53,9 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 }
 .app { max-width: 420px; margin: 0 auto; height: 100vh; height: 100dvh; display: flex; flex-direction: column; background: var(--bg); opacity: 1; z-index: 1; }
 .app.hidden { display: none !important; }
-.tab-content { flex: 1; overflow-y: auto; padding-bottom: 90px; min-height: 0; }
+.tab-content { flex: 1; overflow-y: auto; padding-top: env(safe-area-inset-top, 0px); padding-bottom: calc(90px + env(safe-area-inset-bottom, 0px)); padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); min-height: 0; }
 .tab-content::-webkit-scrollbar { display: none; }
-.nav { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 420px; background: rgba(10,10,15,0.97); backdrop-filter: blur(20px); border-top: 0.5px solid var(--border); display: flex; padding: 8px 0 20px; z-index: 100; }
+.nav { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 420px; background: rgba(10,10,15,0.97); backdrop-filter: blur(20px); border-top: 0.5px solid var(--border); display: flex; padding: 8px 0 max(20px, env(safe-area-inset-bottom, 20px)); padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); z-index: var(--z-app); }
 .nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; padding: 4px; }
 .nav-label { font-size: 10px; font-weight: 500; color: var(--text2); }
 .nav-item.active .nav-label { color: var(--accent); }
@@ -101,7 +101,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 .modal-ov.open { display:flex; }
 #authMod { display:none; position:fixed; top:0; left:0; right:0; bottom:0; width:100%; height:100vh; z-index:9999; background:#0a0a0f; align-items:center; justify-content:center; flex-direction:column; overflow-y:auto; }
 #authMod.show { display:flex; }
-.modal { background:var(--surface); border-radius:var(--radius-xl) var(--radius-xl) 0 0; width:100%; max-width:420px; padding:var(--space-5); max-height:82vh; overflow-y:auto; animation:slideUp 0.3s var(--ease-out); }
+.modal { background:var(--surface); border-radius:var(--radius-xl) var(--radius-xl) 0 0; width:100%; max-width:420px; padding:var(--space-5) var(--space-5) calc(var(--space-5) + env(safe-area-inset-bottom, 0px)); max-height:82vh; overflow-y:auto; animation:slideUp 0.3s var(--ease-out); }
 @keyframes slideUp { from { transform:translateY(100%); } to { transform:translateY(0); } }
 .modal-handle { width:36px; height:4px; background:var(--surface3); border-radius:2px; margin:0 auto 16px; position:relative; cursor:grab; touch-action:none; transition:background 0.15s; }
 .modal-handle::before { content:''; position:absolute; left:-40px; right:-40px; top:-10px; bottom:-10px; }
@@ -170,15 +170,15 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 .exercise-info-icon:hover { opacity:1; transform:scale(1.15); }
 @keyframes iconPulse { 0%,100%{opacity:1;} 50%{opacity:0.4;color:var(--accent);} }
 .curr-name.pulse-first-time { animation:iconPulse 1.4s ease-in-out 2; }
-.toast { position:fixed; bottom:100px; left:50%; transform:translateX(-50%) translateY(20px); background:var(--surface2); border:0.5px solid var(--border); color:var(--text); font-size:13px; font-weight:700; padding:10px 18px; border-radius:var(--radius-pill); z-index:var(--z-toast); opacity:0; transition:opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out); pointer-events:none; white-space:normal; max-width:min(90vw, 360px); text-align:center; line-height:1.4; }
+.toast { position:fixed; bottom:calc(100px + env(safe-area-inset-bottom, 0px)); left:50%; transform:translateX(-50%) translateY(20px); background:var(--surface2); border:0.5px solid var(--border); color:var(--text); font-size:13px; font-weight:700; padding:10px 18px; border-radius:var(--radius-pill); z-index:var(--z-toast); opacity:0; transition:opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out); pointer-events:none; white-space:normal; max-width:min(90vw, 360px); text-align:center; line-height:1.4; }
 .toast.tone-info    { border-color:rgba(0,212,255,0.4); color:var(--accent2); }
 .toast.tone-success { border-color:rgba(76,255,145,0.4); color:#4cff91; }
 .toast.tone-warning { border-color:rgba(255,165,0,0.45); color:#ffb547; }
 .toast.tone-error   { border-color:rgba(255,77,106,0.4); color:#ff4d6a; }
 .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
-#offlineBanner { position:fixed; bottom:68px; left:50%; transform:translateX(-50%) translateY(20px); width:100%; max-width:420px; z-index:var(--z-banner); background:#1a1a1a; border:1px solid rgba(255,140,66,0.35); border-radius:var(--radius-sm) var(--radius-sm) 0 0; color:#ff8c42; font-size:12px; font-weight:700; text-align:center; padding:var(--space-2) var(--space-4); opacity:0; transition:opacity var(--dur-base) ease, transform var(--dur-base) ease; pointer-events:none; }
+#offlineBanner { position:fixed; bottom:calc(68px + env(safe-area-inset-bottom, 0px)); left:50%; transform:translateX(-50%) translateY(20px); width:100%; max-width:420px; z-index:var(--z-banner); background:#1a1a1a; border:1px solid rgba(255,140,66,0.35); border-radius:var(--radius-sm) var(--radius-sm) 0 0; color:#ff8c42; font-size:12px; font-weight:700; text-align:center; padding:var(--space-2) var(--space-4); opacity:0; transition:opacity var(--dur-base) ease, transform var(--dur-base) ease; pointer-events:none; }
 #offlineBanner.show { opacity:1; transform:translateX(-50%) translateY(0); }
-#syncBanner { position:fixed; bottom:68px; left:50%; transform:translateX(-50%) translateY(20px); width:100%; max-width:420px; z-index:var(--z-banner); background:#1a1a1a; border:1px solid rgba(0,212,255,0.35); border-radius:var(--radius-sm) var(--radius-sm) 0 0; color:var(--accent2); font-size:12px; font-weight:700; text-align:center; padding:var(--space-2) var(--space-4); opacity:0; transition:opacity var(--dur-base) ease, transform var(--dur-base) ease; pointer-events:none; display:flex; align-items:center; justify-content:center; gap:var(--space-2); }
+#syncBanner { position:fixed; bottom:calc(68px + env(safe-area-inset-bottom, 0px)); left:50%; transform:translateX(-50%) translateY(20px); width:100%; max-width:420px; z-index:var(--z-banner); background:#1a1a1a; border:1px solid rgba(0,212,255,0.35); border-radius:var(--radius-sm) var(--radius-sm) 0 0; color:var(--accent2); font-size:12px; font-weight:700; text-align:center; padding:var(--space-2) var(--space-4); opacity:0; transition:opacity var(--dur-base) ease, transform var(--dur-base) ease; pointer-events:none; display:flex; align-items:center; justify-content:center; gap:var(--space-2); }
 #syncBanner.show { opacity:1; transform:translateX(-50%) translateY(0); }
 #syncBanner .sync-dot { display:inline-block; width:6px; height:6px; background:var(--accent2); border-radius:50%; animation:syncPulse 1.2s ease-in-out infinite; }
 @keyframes syncPulse { 0%,100% { opacity:0.3; transform:scale(0.85); } 50% { opacity:1; transform:scale(1.1); } }
@@ -195,7 +195,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 .swipe-card.dragging { transition:none; }
 
 /* ── Pull-to-refresh indicator ── */
-.ptr-indicator { position:fixed; top:0; left:50%; transform:translate(-50%,-60px); width:40px; height:40px; border-radius:50%; background:var(--surface2); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:18px; color:var(--accent); z-index:60; opacity:0; pointer-events:none; box-shadow:0 4px 12px rgba(0,0,0,0.5); }
+.ptr-indicator { position:fixed; top:env(safe-area-inset-top, 0px); left:50%; transform:translate(-50%,-60px); width:40px; height:40px; border-radius:50%; background:var(--surface2); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:18px; color:var(--accent); z-index:60; opacity:0; pointer-events:none; box-shadow:0 4px 12px rgba(0,0,0,0.5); }
 .ptr-indicator.spring { transition:transform 0.28s cubic-bezier(0.32,0.72,0,1), opacity 0.28s ease; }
 .ptr-indicator .ptr-icon { display:inline-block; }
 .ptr-indicator.spinning .ptr-icon { animation:ptrSpin 0.8s linear infinite; }
@@ -337,8 +337,8 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 
 /* Phone landscape: tighten vertical spacing since height is limited */
 @media (orientation: landscape) and (max-height: 500px) {
-  .nav { padding: 6px 0 env(safe-area-inset-bottom, 8px); }
-  .tab-content { padding-bottom: 68px; }
+  .nav { padding: 6px 0 max(8px, env(safe-area-inset-bottom, 8px)); }
+  .tab-content { padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px)); }
   .page-header { padding: 10px 20px 8px; }
   .section-label { padding: 8px 20px 4px; }
 }
@@ -363,7 +363,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 <div class="app hidden">
 
   <!-- PROFILE BUTTON (top-right) -->
-  <button onclick="goTab('profile',document.getElementById('nav-profile-btn'))" id="nav-profile-btn" style="position:fixed;top:8px;right:16px;width:44px;height:44px;border-radius:50%;background:var(--surface);border:0.5px solid var(--border);color:var(--accent);font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:100;transition:all 0.2s;box-shadow:0 2px 8px rgba(0,0,0,0.3);">👤</button>
+  <button onclick="goTab('profile',document.getElementById('nav-profile-btn'))" id="nav-profile-btn" style="position:fixed;top:calc(8px + env(safe-area-inset-top, 0px));right:calc(16px + env(safe-area-inset-right, 0px));width:44px;height:44px;border-radius:50%;background:var(--surface);border:0.5px solid var(--border);color:var(--accent);font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:100;transition:all 0.2s;box-shadow:0 2px 8px rgba(0,0,0,0.3);">👤</button>
 
   <div class="tab-content">
 
