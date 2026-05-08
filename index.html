@@ -56,7 +56,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 #authMod.show { display:flex; }
 .modal { background:var(--surface); border-radius:24px 24px 0 0; width:100%; max-width:420px; padding:20px; max-height:82vh; overflow-y:auto; animation:slideUp 0.3s ease; }
 @keyframes slideUp { from { transform:translateY(100%); } to { transform:translateY(0); } }
-.modal-handle { width:36px; height:4px; background:var(--surface3); border-radius:2px; margin:0 auto 16px; }
+.modal-handle { width:36px; height:4px; background:var(--surface3); border-radius:2px; margin:0 auto 16px; position:relative; cursor:grab; touch-action:none; transition:background 0.15s; }
+.modal-handle::before { content:''; position:absolute; left:-40px; right:-40px; top:-10px; bottom:-10px; }
+.modal-handle:hover { background:var(--text2); }
+.modal-handle:active { cursor:grabbing; background:var(--text2); }
+.modal-dragging { transition:none !important; }
 /* ── SPLASH SCREEN ── */
 .splash { position:fixed; inset:0; background:#000; z-index:9998; display:flex; flex-direction:column; align-items:center; justify-content:center; transition:opacity 0.8s ease; cursor:pointer; }
 .splash.fade-out { opacity:0; pointer-events:none; }
@@ -1144,7 +1148,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
 
 <!-- BODY WEIGHT LOG MODAL -->
 <div class="modal-ov" id="bwLogMod" onclick="if(event.target===this)this.classList.remove('open')">
-  <div class="modal-box" style="max-width:320px;">
+  <div class="modal" style="max-width:320px;">
+    <div class="modal-handle"></div>
     <div style="font-size:17px;font-weight:800;margin-bottom:4px;">Log Body Weight</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:18px;">Track your weight over time</div>
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;">
@@ -2100,6 +2105,92 @@ function showInfoModal(title, body){
   document.getElementById('infoModalGenericBody').textContent  = body  || '';
   m.classList.add('open');
 }
+
+// ── BOTTOM-SHEET DRAG-TO-DISMISS ──
+// Touching the modal-handle and dragging downward dismisses the modal.
+// Uses event delegation so dynamically-created modals (like infoModalGeneric) work too.
+(function _initBottomSheetDrag(){
+  let drag = null;
+
+  function onStart(clientY, target){
+    const handle = target && target.closest && target.closest('.modal-handle');
+    if(!handle) return;
+    const modal = handle.closest('.modal');
+    if(!modal) return;
+    const overlay = modal.parentElement;
+    if(!overlay || !overlay.classList.contains('open')) return;
+    drag = {
+      modal, overlay, handle,
+      startY: clientY,
+      lastY:  clientY,
+      lastT:  Date.now(),
+      startT: Date.now(),
+    };
+    modal.classList.add('modal-dragging');
+  }
+
+  function onMove(clientY){
+    if(!drag) return;
+    const dy = Math.max(0, clientY - drag.startY); // only allow downward drag
+    drag.modal.style.transform = 'translateY(' + dy + 'px)';
+    drag.lastY = clientY;
+    drag.lastT = Date.now();
+  }
+
+  function onEnd(){
+    if(!drag) return;
+    const dy = drag.lastY - drag.startY;
+    const dt = Math.max(1, drag.lastT - drag.startT);
+    const velocity = dy / dt; // px per ms
+    const dismiss = dy > 110 || velocity > 0.55;
+
+    drag.modal.classList.remove('modal-dragging');
+    drag.modal.style.transition = 'transform 0.28s cubic-bezier(0.32,0.72,0,1)';
+
+    if(dismiss){
+      drag.modal.style.transform = 'translateY(110%)';
+      const ov = drag.overlay, mo = drag.modal;
+      setTimeout(() => {
+        ov.classList.remove('open');
+        // Reset for next open (slideUp animation re-runs cleanly)
+        mo.style.transform = '';
+        mo.style.transition = '';
+      }, 280);
+    } else {
+      drag.modal.style.transform = '';
+      const mo = drag.modal;
+      setTimeout(() => { mo.style.transition = ''; }, 280);
+    }
+    drag = null;
+  }
+
+  // Touch (mobile)
+  document.addEventListener('touchstart', (e) => {
+    if(e.touches.length !== 1) return;
+    onStart(e.touches[0].clientY, e.target);
+  }, { passive: true });
+  document.addEventListener('touchmove',  (e) => {
+    if(!drag) return;
+    onMove(e.touches[0].clientY);
+  }, { passive: true });
+  document.addEventListener('touchend',   onEnd, { passive: true });
+  document.addEventListener('touchcancel', onEnd, { passive: true });
+
+  // Pointer (desktop trackpad / mouse) — only fire for primary button
+  document.addEventListener('pointerdown', (e) => {
+    if(e.pointerType === 'touch') return; // touch handled above
+    if(e.button !== 0) return;
+    onStart(e.clientY, e.target);
+  });
+  document.addEventListener('pointermove', (e) => {
+    if(!drag || e.pointerType === 'touch') return;
+    onMove(e.clientY);
+  });
+  document.addEventListener('pointerup',   (e) => {
+    if(e.pointerType === 'touch') return;
+    onEnd();
+  });
+})();
 
 async function sbFetch(path, options = {}, _isRetry = false) {
   const controller = new AbortController();
@@ -13074,6 +13165,7 @@ window.addEventListener('offline', updateOnlineStatus);
 <!-- DELETE ACCOUNT MODAL -->
 <div class="modal-ov" id="deleteAccountMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal">
+    <div class="modal-handle"></div>
     <div style="font-size:18px;font-weight:800;margin-bottom:8px;">Delete Account</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:20px;">Would you like us to email your workout data before we delete your account?</div>
     <div style="display:flex;gap:10px;margin-bottom:16px;">
@@ -13087,6 +13179,7 @@ window.addEventListener('offline', updateOnlineStatus);
 <!-- EMAIL DATA CONFIRMATION MODAL -->
 <div class="modal-ov" id="emailDataMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal">
+    <div class="modal-handle"></div>
     <div style="font-size:18px;font-weight:800;margin-bottom:8px;">Email Your Data</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:12px;">We'll send your complete workout history to your email address:</div>
     <div style="background:var(--surface);border:0.5px solid var(--border);border-radius:8px;padding:12px;margin-bottom:20px;font-size:13px;font-weight:700;" id="emailConfirm">your@email.com</div>
@@ -13099,6 +13192,7 @@ window.addEventListener('offline', updateOnlineStatus);
 <!-- FINAL CONFIRMATION MODAL -->
 <div class="modal-ov" id="finalDeleteMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal">
+    <div class="modal-handle"></div>
     <div style="font-size:18px;font-weight:800;margin-bottom:8px;color:var(--red);">⚠️ Final Confirmation</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:20px;line-height:1.6;">Your account and all associated data will be permanently deleted. This cannot be undone.<br><br>Are you absolutely sure?</div>
     <button style="width:100%;background:var(--red);color:#fff;border:none;border-radius:10px;padding:14px;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:8px;" onclick="confirmFinalDelete()">Yes, Delete My Account Permanently</button>
@@ -13109,6 +13203,7 @@ window.addEventListener('offline', updateOnlineStatus);
 <!-- ── FEEDBACK MODAL ── -->
 <div class="modal-ov" id="feedbackMod" onclick="if(event.target===this)closeFeedbackModal()">
   <div class="modal">
+    <div class="modal-handle"></div>
     <!-- Header -->
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
       <div style="font-size:18px;font-weight:800;">📬 Send Feedback</div>
