@@ -383,6 +383,8 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
         <div class="page-title" id="todayGreeting">Good morning, <span class="ac">Max</span></div>
         <div style="font-size:13px;color:var(--text2);margin-top:2px;" id="todayMeta"></div>
       </div>
+      <!-- Reminder banner — shown when a major group is overdue, dismissible per-day -->
+      <div id="todayReminder" style="display:none;margin:0 16px 10px;"></div>
       <!-- Dynamic programme toggle — rebuilt by renderTodayToggle() -->
       <div id="todayToggleWrap" style="padding:0 16px 8px;overflow-x:auto;display:none;gap:6px;"></div>
       <!-- Path view content (shown when path is active, replaces legacy elements) -->
@@ -939,6 +941,8 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
           </div>
           <!-- Path -->
           <button onclick="openPathWizard()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🎯 Change My Path</button>
+          <!-- Reminders -->
+          <button id="notifEnableBtn" onclick="requestNotificationPermission()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;margin-bottom:10px;">🔔 Enable training reminders</button>
           <!-- Feedback -->
           <button onclick="openFeedbackModal()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;">📬 Send Feedback</button>
         </div>
@@ -3179,6 +3183,146 @@ function saveLocalCache() {
 // Legacy alias so nothing breaks
 function saveLocalFallback() { saveLocalCache(); }
 
+// ── TRAINING REMINDERS ──
+// Two-layer system:
+//  1) In-app banner at top of Today tab (works everywhere, no permission)
+//  2) OS-level Notification — best-effort, fires when app is opened AND a
+//     group is overdue AND user has granted Notification permission.
+// True scheduled push requires a backend; out of scope for this PWA.
+
+const REMINDER_OVERDUE_DAYS = 7; // a major group >= this many days untrained = overdue
+
+function getTrainingReminder(){
+  if(typeof calcFrequency !== 'function') return null;
+  const freq = calcFrequency();
+  if(!freq || !freq.broadDays) return null;
+  const groups = [
+    { key:'legs',  label:'Legs',  emoji:'🦵' },
+    { key:'pull',  label:'Pull',  emoji:'💪' },
+    { key:'push',  label:'Push',  emoji:'🏋️' },
+    { key:'core',  label:'Core',  emoji:'⚡' },
+  ];
+  const overdue = groups
+    .map(g => ({ ...g, days: freq.broadDays[g.key] }))
+    .filter(x => x.days !== null && x.days >= REMINDER_OVERDUE_DAYS)
+    .sort((a, b) => b.days - a.days);
+  if(!overdue.length) return null;
+  const w = overdue[0];
+  return {
+    group: w.key,
+    label: w.label,
+    emoji: w.emoji,
+    days:  w.days,
+    title: w.emoji + ' ' + w.label + ' overdue',
+    body:  "You haven't trained " + w.label.toLowerCase() + ' in ' + w.days + ' days — schedule a session today.',
+  };
+}
+
+function _todayDateKey(){ return new Date().toISOString().slice(0, 10); }
+function _isReminderDismissedToday(){
+  return localStorage.getItem('maxgainz_reminderDismissed') === _todayDateKey();
+}
+function dismissReminderToday(){
+  localStorage.setItem('maxgainz_reminderDismissed', _todayDateKey());
+  const el = document.getElementById('todayReminder');
+  if(el) el.style.display = 'none';
+}
+
+function renderTrainingReminder(){
+  const el = document.getElementById('todayReminder');
+  if(!el) return;
+  if(_isReminderDismissedToday()){ el.style.display = 'none'; return; }
+  const r = getTrainingReminder();
+  if(!r){ el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.innerHTML = `
+    <div style="background:linear-gradient(135deg, rgba(255,140,66,0.12), rgba(255,140,66,0.04));border:1px solid rgba(255,140,66,0.35);border-radius:14px;padding:14px;display:flex;align-items:center;gap:12px;">
+      <div style="font-size:32px;flex-shrink:0;">${r.emoji}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:14px;font-weight:800;color:var(--text);">${r.label} overdue · ${r.days} days</div>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px;line-height:1.4;">Aim for at least 1× per week per major group.</div>
+      </div>
+      <button onclick="dismissReminderToday()" style="background:transparent;border:none;color:var(--text2);font-size:18px;cursor:pointer;padding:4px 8px;line-height:1;flex-shrink:0;" title="Dismiss for today">✕</button>
+    </div>`;
+}
+
+// OS-level notification (best-effort)
+function maybeFireOSNotification(){
+  if(!('Notification' in window)) return;
+  if(Notification.permission !== 'granted') return;
+  if(_isReminderDismissedToday()) return;
+  const r = getTrainingReminder();
+  if(!r) return;
+  // Dedupe across the same day with `tag`
+  try {
+    const n = new Notification(r.title, {
+      body: r.body,
+      tag:  'maxgainz-reminder-' + _todayDateKey(),
+      silent: false,
+      requireInteraction: false,
+    });
+    n.onclick = () => { window.focus(); n.close(); };
+  } catch(e){ console.warn('[Notification] failed:', e); }
+}
+
+async function requestNotificationPermission(){
+  if(!('Notification' in window)){
+    showToast('⚠️ Notifications not supported in this browser', { tone:'warning', duration: 3000 });
+    return;
+  }
+  if(Notification.permission === 'granted'){
+    showToast('✅ Reminders already enabled', { duration: 2500 });
+    maybeFireOSNotification();
+    _refreshNotificationButton();
+    return;
+  }
+  if(Notification.permission === 'denied'){
+    showToast('⚠️ Blocked — re-enable notifications in your browser settings', { tone:'warning', duration: 4500 });
+    return;
+  }
+  try {
+    const result = await Notification.requestPermission();
+    if(result === 'granted'){
+      showToast('✅ Reminders enabled · we\'ll nudge you when a group is overdue', { duration: 3500 });
+      maybeFireOSNotification();
+    } else {
+      showToast('Notifications not enabled', { duration: 2500 });
+    }
+    _refreshNotificationButton();
+  } catch(e){
+    showToast('⚠️ Could not enable notifications', { tone:'warning', duration: 3000 });
+  }
+}
+
+function _refreshNotificationButton(){
+  const btn = document.getElementById('notifEnableBtn');
+  if(!btn) return;
+  if(!('Notification' in window)){
+    btn.textContent = 'Notifications not supported';
+    btn.disabled = true;
+    btn.style.opacity = '0.5';
+    return;
+  }
+  const p = Notification.permission;
+  if(p === 'granted'){
+    btn.textContent = '✅ Reminders enabled';
+    btn.style.color = 'var(--green)';
+  } else if(p === 'denied'){
+    btn.textContent = '🔕 Notifications blocked (settings)';
+    btn.style.color = 'var(--text2)';
+  } else {
+    btn.textContent = '🔔 Enable training reminders';
+    btn.style.color = 'var(--accent)';
+  }
+}
+
+// Fire OS notification when the app becomes visible (tab focus / app foreground)
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible'){
+    maybeFireOSNotification();
+  }
+});
+
 // ── DATA EXPORT / IMPORT ──
 // Bundles every piece of locally-persisted Max Gainz state into a single
 // JSON payload the user can download. Auth tokens and Supabase identifiers
@@ -3766,6 +3910,7 @@ function calcProgrammeCycle(progName){
 
 function renderToday(){
   if(_isColdSyncing()){ _renderTodaySkeleton(); return; }
+  if(typeof renderTrainingReminder === 'function') renderTrainingReminder();
   if(isPathActive()){ renderTodayWithPath(); return; }
   renderTodayLegacy();
 }
@@ -14976,6 +15121,8 @@ const AVATARS=['🏋️','💪','🏆','⚡','🔥','🎯','🚀','💯','😤',
 function renderProfile(){
   // Body weight history chart (moved from Progress tab)
   if(typeof renderBWChart === 'function') renderBWChart();
+  // Refresh notification button label per current permission state
+  if(typeof _refreshNotificationButton === 'function') _refreshNotificationButton();
   document.getElementById('profileFirstName').value=userProfile.firstName||'';
   document.getElementById('profileLastName').value=userProfile.lastName||'';
   // Populate email from authenticated user if not already set
