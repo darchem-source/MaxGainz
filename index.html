@@ -942,7 +942,18 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
           <!-- Feedback -->
           <button onclick="openFeedbackModal()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;">📬 Send Feedback</button>
         </div>
-        
+
+        <!-- Data Backup -->
+        <div style="margin-top:20px;padding-top:20px;border-top:0.5px solid var(--border);">
+          <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px;">DATA BACKUP</div>
+          <div style="font-size:11px;color:var(--text2);margin-bottom:10px;line-height:1.5;">Export everything (sessions, custom programmes, body weight, prefs) as a JSON file. Import to restore on a new device or roll back.</div>
+          <div style="display:flex;gap:8px;">
+            <button onclick="exportAllData()" style="flex:1;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;">⬇️ Export</button>
+            <button onclick="document.getElementById('importDataInput').click()" style="flex:1;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--accent2);cursor:pointer;">⬆️ Import</button>
+            <input type="file" id="importDataInput" accept="application/json,.json" style="display:none;" onchange="handleImportFile(event)">
+          </div>
+        </div>
+
         <!-- Delete Account Section -->
         <div style="margin-top:20px;padding-top:20px;border-top:0.5px solid var(--border);">
           <div style="background:rgba(255,77,106,0.1);border:0.5px solid rgba(255,77,106,0.25);border-radius:10px;padding:12px;margin-bottom:12px;">
@@ -3167,6 +3178,167 @@ function saveLocalCache() {
 
 // Legacy alias so nothing breaks
 function saveLocalFallback() { saveLocalCache(); }
+
+// ── DATA EXPORT / IMPORT ──
+// Bundles every piece of locally-persisted Max Gainz state into a single
+// JSON payload the user can download. Auth tokens and Supabase identifiers
+// are intentionally NOT included — those should re-issue on next sign-in.
+const EXPORT_VERSION = 1;
+
+function _buildExportPayload(){
+  const lsRead = (key, fallback = null) => {
+    try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); } catch(e) { return fallback; }
+  };
+  const lsReadRaw = (key) => { try { return localStorage.getItem(key); } catch(e) { return null; } };
+  return {
+    version: EXPORT_VERSION,
+    exportedAt: new Date().toISOString(),
+    appName: 'Max Gainz',
+    // Core training history
+    sessions: completedSessions.map(s => ({...s, date: s.date instanceof Date ? s.date.toISOString() : s.date})),
+    customWeights: customWeights || {},
+    // User-created programmes & workouts
+    customWorkouts: lsRead('maxgainz_custom', []),
+    customHIITs:    lsRead('maxgainz_custom_hiits', []),
+    // Profile + path
+    userProfile:    userProfile || {},
+    userPath:       lsRead('maxgainz_path', null),
+    // Body weight history
+    bodyWeightLog:  bodyWeightLog || [],
+    // Preferences
+    prefs: {
+      speedUnit:    lsReadRaw('userSpeedUnit')    || 'mph',
+      weightUnit:   lsReadRaw('userWeightUnit')   || 'kg',
+      audioEnabled: lsReadRaw('userAudioEnabled') === '1',
+    },
+    // Optional UI state
+    progSections:  lsRead('maxgainz_progSections', {}),
+    formGuideSeen: lsRead('maxgainz_fg_seen', []),
+    onboarded:     lsReadRaw('maxgainz_onboarded') === '1',
+    pathSkipped:   lsReadRaw('maxgainz_path_skipped') === '1',
+  };
+}
+
+function exportAllData(){
+  try {
+    const payload = _buildExportPayload();
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    a.href = url;
+    a.download = 'max-gainz-backup-' + ts + '.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast('✅ Backup downloaded · ' + payload.sessions.length + ' sessions', { duration: 3000 });
+  } catch(err){
+    console.error('Export failed:', err);
+    showToast('❌ Export failed: ' + (err?.message || 'unknown error'), { tone:'error', duration: 4000 });
+  }
+}
+
+function handleImportFile(event){
+  const file = event.target.files && event.target.files[0];
+  event.target.value = ''; // reset so re-selecting the same file fires onchange
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    let payload;
+    try { payload = JSON.parse(reader.result); }
+    catch(e){ showToast('❌ Invalid JSON — file is not a valid backup', { tone:'error', duration: 4000 }); return; }
+    if(!payload || typeof payload !== 'object' || !Array.isArray(payload.sessions)){
+      showToast('❌ Not a Max Gainz backup file', { tone:'error', duration: 4000 });
+      return;
+    }
+    const sessCount = payload.sessions.length;
+    const customCount = (payload.customWorkouts || []).length;
+    const hiitCount = (payload.customHIITs || []).length;
+    const ok = confirm(
+      'Import this backup?\n\n' +
+      sessCount + ' session' + (sessCount !== 1 ? 's' : '') + '\n' +
+      customCount + ' custom programme' + (customCount !== 1 ? 's' : '') + '\n' +
+      hiitCount + ' custom HIIT workout' + (hiitCount !== 1 ? 's' : '') + '\n\n' +
+      'This will REPLACE all your current local data. Your cloud account (if signed in) will be re-synced from this backup on the next save.'
+    );
+    if(!ok) return;
+    try { applyImportPayload(payload); }
+    catch(err){
+      console.error('Import failed:', err);
+      showToast('❌ Import failed: ' + (err?.message || 'unknown error'), { tone:'error', duration: 5000 });
+    }
+  };
+  reader.onerror = () => showToast('❌ Could not read file', { tone:'error' });
+  reader.readAsText(file);
+}
+
+function applyImportPayload(payload){
+  // Replace in-memory state
+  completedSessions.length = 0;
+  (payload.sessions || []).forEach(s => completedSessions.push({...s, date: new Date(s.date)}));
+
+  Object.keys(customWeights).forEach(k => delete customWeights[k]);
+  Object.assign(customWeights, payload.customWeights || {});
+
+  customWorkouts.length = 0;
+  (payload.customWorkouts || []).forEach(w => customWorkouts.push(w));
+  localStorage.setItem('maxgainz_custom', JSON.stringify(customWorkouts));
+
+  if(typeof customHIITs !== 'undefined'){
+    customHIITs.length = 0;
+    (payload.customHIITs || []).forEach(w => customHIITs.push(w));
+    localStorage.setItem('maxgainz_custom_hiits', JSON.stringify(customHIITs));
+    // Merge into HIIT runtime array (avoid duplicates by name)
+    customHIITs.forEach(w => { if(!HIIT.find(h => h.name === w.name)) HIIT.push(w); });
+  }
+
+  // Profile + path
+  Object.keys(userProfile).forEach(k => delete userProfile[k]);
+  Object.assign(userProfile, payload.userProfile || {});
+
+  if(payload.userPath){
+    userPath = payload.userPath;
+    localStorage.setItem('maxgainz_path', JSON.stringify(userPath));
+  } else {
+    userPath = null;
+    localStorage.removeItem('maxgainz_path');
+  }
+
+  // Body weight log
+  if(typeof bodyWeightLog !== 'undefined'){
+    bodyWeightLog.length = 0;
+    (payload.bodyWeightLog || []).forEach(e => bodyWeightLog.push(e));
+  }
+
+  // Preferences
+  const p = payload.prefs || {};
+  if(p.speedUnit)    { localStorage.setItem('userSpeedUnit',    p.speedUnit);    userPreferences.speedUnit    = p.speedUnit; }
+  if(p.weightUnit)   { localStorage.setItem('userWeightUnit',   p.weightUnit);   userPreferences.weightUnit   = p.weightUnit; }
+  if(p.audioEnabled !== undefined){
+    userPreferences.audioEnabled = !!p.audioEnabled;
+    localStorage.setItem('userAudioEnabled', userPreferences.audioEnabled ? '1' : '0');
+  }
+
+  // Optional UI state
+  if(payload.progSections)  localStorage.setItem('maxgainz_progSections', JSON.stringify(payload.progSections));
+  if(payload.formGuideSeen) localStorage.setItem('maxgainz_fg_seen',      JSON.stringify(payload.formGuideSeen));
+  if(payload.onboarded)     localStorage.setItem('maxgainz_onboarded', '1'); else localStorage.removeItem('maxgainz_onboarded');
+  if(payload.pathSkipped)   localStorage.setItem('maxgainz_path_skipped','1'); else localStorage.removeItem('maxgainz_path_skipped');
+
+  // Apply weight overrides + persist + cloud sync
+  if(typeof applyCustomWeights === 'function') applyCustomWeights();
+  saveLocalCache();
+  if(typeof cloudSaveProfile === 'function') cloudSaveProfile();
+
+  // Re-render whatever's currently visible
+  if(typeof renderToday   === 'function') renderToday();
+  if(typeof renderProgress=== 'function') renderProgress();
+  if(typeof renderProfile === 'function') renderProfile();
+  if(typeof renderProgrammeFeed === 'function') renderProgrammeFeed();
+
+  showToast('✅ Imported · ' + completedSessions.length + ' sessions restored', { duration: 3500 });
+}
 
 // Master save: write-through to Supabase, always update local cache
 async function saveStore(newSession = null, newWeights = null) {
