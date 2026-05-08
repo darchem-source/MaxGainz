@@ -4875,7 +4875,8 @@ function _setWeightAdjEditable(editable){
   });
 }
 
-// Render "Last time" reference panel for current exercise (consolidated: last data + recommendation)
+// Render "Last time" reference panel for current exercise.
+// Shows: ⏱ Last time · X days ago · weight × reps · 📈 coach hint with optional Apply button
 function renderLastTimeRef(ex){
   const panel = document.getElementById('lastTimeRef');
   if(!panel) return;
@@ -4903,34 +4904,114 @@ function renderLastTimeRef(ex){
   else dateStr = `${Math.floor(daysAgo/30)} mo ago`;
 
   const unit = getEquipType(ex) === 'dumbbell' ? 'kg/h' : 'kg';
+  const repsArr = (last.reps || []).map(r => parseInt(r) || 0).filter(r => r > 0);
   const wt = last.weight ? `${last.weight}${unit} × ` : '';
-  const avgReps = last.reps.length ? Math.round(last.reps.reduce((a,b)=>a+b,0)/last.reps.length) : null;
-  const repsDisplay = avgReps ? `${avgReps} reps` : last.reps.join(', ');
+  // Show per-set reps when 4 or fewer (most common), avg when more
+  const repsDisplay = repsArr.length === 0
+    ? ''
+    : repsArr.length <= 4
+      ? repsArr.join('/')
+      : `${Math.round(repsArr.reduce((a,b)=>a+b,0)/repsArr.length)} reps`;
 
-  // Build recommendation line
+  // Compute multi-rule pre-session suggestion based on last session's performance
   const editInfo = getWeightEditability(ex.name);
-  let recHtml = '';
-  if(editInfo.status === 'deload'){
+  const repsSpec = String(ex.reps || '8').split('–');
+  const lo = parseInt(repsSpec[0]) || 5;
+  const hi = parseInt(repsSpec[1]) || lo;
+  const minSet = repsArr.length ? Math.min(...repsArr) : 0;
+  const maxSet = repsArr.length ? Math.max(...repsArr) : 0;
+  const avgReps = repsArr.length ? Math.round((repsArr.reduce((a,b)=>a+b,0) / repsArr.length) * 10) / 10 : 0;
+  const allAtOrAboveTop = repsArr.length && repsArr.every(r => r >= hi);
+  const allBelowLo      = repsArr.length && repsArr.every(r => r <  lo);
+
+  // Are we already at a higher weight this session than last?
+  const alreadyBumped = !ex.bw && last.weight && ex.weight > last.weight;
+
+  // Cross-session: was the prior session ALSO at the top (consistency cue)?
+  const allHistory = (typeof getLiftHistoryByName === 'function')
+    ? getLiftHistoryByName(ex.name).slice(-4)
+    : [];
+  const stalled = allHistory.length >= 3
+    && allHistory.slice(-3).every(h => h.weight === last.weight);
+
+  let cueHtml = '';
+  // Deload (long gap)
+  if(editInfo && editInfo.status === 'deload'){
     const pct = Math.round(editInfo.deloadPct * 100);
-    recHtml = `<div style="margin-top:6px;font-size:12px;color:var(--text2);">📉 Try <strong style="color:var(--text);">${editInfo.suggestedWeight}${unit}</strong> <span style="opacity:0.7;">(−${pct}% · ${editInfo.weeksAway}w gap)</span></div>`;
+    cueHtml = `<div style="margin-top:6px;font-size:12px;color:#ff8c42;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <span>📉 Coach: try <strong style="color:var(--text);">${editInfo.suggestedWeight}${unit}</strong> <span style="opacity:0.7;">(−${pct}% · ${editInfo.weeksAway}w gap)</span></span>
+      ${(editInfo.suggestedWeight && editInfo.suggestedWeight !== ex.weight) ? `<button onclick="applyPreSessionSuggestion(${editInfo.suggestedWeight})" style="background:rgba(255,140,66,0.15);border:0.5px solid rgba(255,140,66,0.45);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:800;color:#ff8c42;cursor:pointer;">Apply</button>` : ''}
+    </div>`;
   } else if(!ex.bw && last.weight){
-    const hiRep = parseInt((ex.reps||'8').split('–')[1])||12;
-    if(avgReps && avgReps > hiRep + 1){
-      const steps = getWeightSteps(ex, equipOverride[curIdx]);
-      const next = stepWeight(ex.weight, 1, steps);
-      if(next !== ex.weight){
-        const diff = +(next - ex.weight).toFixed(1);
-        recHtml = `<div style="margin-top:6px;font-size:12px;color:var(--accent);">↑ Try <strong>${next}${unit}</strong> <span style="opacity:0.7;">(+${diff}${unit})</span></div>`;
-      }
+    const steps = getWeightSteps(ex, equipOverride[curIdx]);
+    const nextW = stepWeight(last.weight, 1, steps);
+    const prevW = stepWeight(last.weight, -1, steps);
+
+    // Rule A: All sets at top of range last time → bump
+    if(allAtOrAboveTop && nextW > last.weight){
+      const target = nextW;
+      const diff = +(target - ex.weight).toFixed(1);
+      const action = ex.weight < target ? 'try' : ex.weight === target ? 'on target' : 'already above';
+      cueHtml = `<div style="margin-top:6px;font-size:12px;color:var(--accent);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span>📈 Coach: ${repsArr.length}/${repsArr.length} sets at top — ${action} <strong>${target}${unit}</strong>${diff > 0 ? ` <span style="opacity:0.7;">(+${diff}${unit})</span>` : ''}</span>
+        ${(target !== ex.weight) ? `<button onclick="applyPreSessionSuggestion(${target})" style="background:rgba(200,255,0,0.15);border:0.5px solid rgba(200,255,0,0.45);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:800;color:var(--accent);cursor:pointer;">Apply</button>` : ''}
+      </div>`;
+    }
+    // Rule B: Avg comfortably above top → bump
+    else if(avgReps > hi + 1 && nextW > last.weight){
+      const target = nextW;
+      const diff = +(target - ex.weight).toFixed(1);
+      cueHtml = `<div style="margin-top:6px;font-size:12px;color:var(--accent);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span>📈 Coach: avg ${avgReps} > ${hi} — try <strong>${target}${unit}</strong>${diff > 0 ? ` <span style="opacity:0.7;">(+${diff}${unit})</span>` : ''}</span>
+        ${(target !== ex.weight) ? `<button onclick="applyPreSessionSuggestion(${target})" style="background:rgba(200,255,0,0.15);border:0.5px solid rgba(200,255,0,0.45);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:800;color:var(--accent);cursor:pointer;">Apply</button>` : ''}
+      </div>`;
+    }
+    // Rule C: Stuck for 3+ sessions → suggest deload
+    else if(stalled && prevW < last.weight){
+      cueHtml = `<div style="margin-top:6px;font-size:12px;color:#ff8c42;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span>⬇ Coach: stuck at ${last.weight}${unit} for 3 sessions — deload to <strong>${prevW}${unit}</strong></span>
+        ${(prevW !== ex.weight) ? `<button onclick="applyPreSessionSuggestion(${prevW})" style="background:rgba(255,140,66,0.15);border:0.5px solid rgba(255,140,66,0.45);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:800;color:#ff8c42;cursor:pointer;">Apply</button>` : ''}
+      </div>`;
+    }
+    // Rule D: Mixed performance (max ≥ top, min < lo) → push reps not weight
+    else if(maxSet >= hi && minSet < lo){
+      cueHtml = `<div style="margin-top:6px;font-size:12px;color:var(--accent2);">
+        🔁 Coach: chase ${hi}+ on every set before adding weight
+      </div>`;
+    }
+    // Rule E: All below low → hold
+    else if(allBelowLo){
+      cueHtml = `<div style="margin-top:6px;font-size:12px;color:var(--accent2);">
+        ⏸ Coach: hit ${avgReps} avg, below ${lo} target — hold ${last.weight}${unit}, focus on form
+      </div>`;
+    }
+    // Rule F: User has manually bumped above last week — affirm
+    else if(alreadyBumped){
+      cueHtml = `<div style="margin-top:6px;font-size:12px;color:var(--accent);">
+        📈 You've bumped from ${last.weight}${unit} — make every set count
+      </div>`;
     }
   }
 
   panel.innerHTML = `<div>
     <div style="font-size:10px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:3px;">⏱ Last time · ${dateStr}</div>
     <div style="font-size:14px;font-weight:700;color:var(--text);">${wt}${repsDisplay}</div>
-    ${recHtml}
+    ${cueHtml}
   </div>`;
   panel.style.display = 'block';
+}
+
+// One-tap apply for the pre-session coach suggestion. Updates the current
+// exercise's planned weight without persisting to customWeights yet (that
+// happens at session-end via applyProgressions).
+function applyPreSessionSuggestion(newWeight){
+  const ex = sessExs[curIdx];
+  if(!ex || typeof newWeight !== 'number') return;
+  ex.weight = newWeight;
+  // Refresh weight display + lastTime panel + nextBtn enable state
+  if(typeof updateSessUI === 'function') updateSessUI();
+  if(typeof haptic === 'function') haptic(20);
+  if(typeof showToast === 'function') showToast('✅ Weight updated to ' + newWeight + 'kg');
 }
 
 // Auto weight progression — called at session end
