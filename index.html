@@ -856,6 +856,33 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
   </div>
 </div>
 
+<!-- PROGRAMME LIBRARY BROWSE MODAL -->
+<div class="modal-ov" id="libraryBrowseMod" style="background:rgba(0,0,0,0.97);z-index:200;" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal" style="max-height:92vh;overflow-y:auto;padding:20px;">
+    <div class="modal-handle"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <div style="font-size:22px;font-weight:900;">📚 Programme Library</div>
+      <button onclick="closeLibraryBrowse()" style="background:transparent;border:none;color:var(--text2);font-size:22px;cursor:pointer;padding:4px 8px;line-height:1;">✕</button>
+    </div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:14px;">
+      Browse curated, well-known programmes from the strength community.
+    </div>
+    <!-- Filter chips -->
+    <div id="libFilterChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;"></div>
+    <!-- Cards -->
+    <div id="libCards"></div>
+    <button onclick="closeLibraryBrowse()" style="width:100%;margin-top:10px;background:transparent;border:none;color:var(--text2);font-size:13px;padding:8px;cursor:pointer;">Cancel</button>
+  </div>
+</div>
+
+<!-- PROGRAMME LIBRARY PREVIEW MODAL -->
+<div class="modal-ov" id="libraryPreviewMod" style="background:rgba(0,0,0,0.97);z-index:210;" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal" style="max-height:92vh;overflow-y:auto;padding:20px;">
+    <div class="modal-handle"></div>
+    <div id="libPreviewContent"></div>
+  </div>
+</div>
+
 <!-- AD-HOC SESSION MODAL -->
 <div class="modal-ov" id="adhocMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal">
@@ -1417,6 +1444,380 @@ const PPL={
     {name:'Abdominal Work',sets:3,reps:'10–15',weight:0,muscles:['core'],bw:true,type:'Mass',coreCircuit:true},
   ],
 };
+
+// ─────────────────────────────────────────────────────────────────
+// PROGRAMME LIBRARY — curated catalog of well-known programmes
+// Each entry: { id, name, short, author, level, goal, daysPerWeek,
+//   equipment, frequency, tags, blurb, description, schedule:[{day, badge, exercises:[...]}] }
+// Day badges: 'badge-u' (push/upper), 'badge-l' (pull/lower), 'badge-f' (full/legs)
+// ─────────────────────────────────────────────────────────────────
+const LIBRARY_PROGRAMMES = [
+  {
+    id:'sl5x5', name:'StrongLifts 5×5', short:'SL 5×5', author:'Mehdi Hadim',
+    level:'Beginner', goal:'Strength', daysPerWeek:3, equipment:'Barbell',
+    tags:['strength','beginner','barbell','3-day','linear-progression'],
+    blurb:'Three lifts, three days, simple progression. The classic novice strength template.',
+    description:'Two alternating workouts — A and B — performed three times a week with a rest day between. Add 2.5kg to every lift each session until you stall. Volume is low but intensity climbs fast.',
+    schedule:[
+      { day:'Workout A', badge:'badge-u', exercises:[
+        {name:'Squat',sets:5,reps:'5',weight:80,muscles:['legs','glutes'],type:'Primary'},
+        {name:'Bench Press',sets:5,reps:'5',weight:70,muscles:['chest','triceps'],type:'Primary'},
+        {name:'Bent Over Barbell Row',sets:5,reps:'5',weight:60,muscles:['back','biceps'],type:'Primary'},
+      ]},
+      { day:'Workout B', badge:'badge-l', exercises:[
+        {name:'Squat',sets:5,reps:'5',weight:80,muscles:['legs','glutes'],type:'Primary'},
+        {name:'Overhead Press',sets:5,reps:'5',weight:40,muscles:['shoulders','triceps'],type:'Primary'},
+        {name:'Deadlift',sets:1,reps:'5',weight:100,muscles:['back','legs'],type:'Primary'},
+      ]},
+    ],
+  },
+  {
+    id:'starting-strength', name:'Starting Strength', short:'SS', author:'Mark Rippetoe',
+    level:'Beginner', goal:'Strength', daysPerWeek:3, equipment:'Barbell',
+    tags:['strength','beginner','barbell','3-day','linear-progression'],
+    blurb:'Rippetoe\'s gold-standard novice programme. Three sets of five, big lifts only.',
+    description:'A and B alternate three times a week. Squat every session. Heavy compounds, no accessories — focus is purely on adding weight to the bar.',
+    schedule:[
+      { day:'Workout A', badge:'badge-u', exercises:[
+        {name:'Squat',sets:3,reps:'5',weight:80,muscles:['legs','glutes'],type:'Primary'},
+        {name:'Bench Press',sets:3,reps:'5',weight:70,muscles:['chest','triceps'],type:'Primary'},
+        {name:'Deadlift',sets:1,reps:'5',weight:100,muscles:['back','legs'],type:'Primary'},
+      ]},
+      { day:'Workout B', badge:'badge-l', exercises:[
+        {name:'Squat',sets:3,reps:'5',weight:80,muscles:['legs','glutes'],type:'Primary'},
+        {name:'Overhead Press',sets:3,reps:'5',weight:40,muscles:['shoulders','triceps'],type:'Primary'},
+        {name:'Deadlift',sets:1,reps:'5',weight:100,muscles:['back','legs'],type:'Primary',note:'Power Clean alternative'},
+      ]},
+    ],
+  },
+  {
+    id:'greyskull', name:'Greyskull LP', short:'GSLP', author:'John Sheaffer',
+    level:'Beginner', goal:'Strength', daysPerWeek:3, equipment:'Barbell',
+    tags:['strength','beginner','barbell','3-day','amrap','linear-progression'],
+    blurb:'Like StrongLifts but with AMRAP top sets and arm work. More upper-body volume.',
+    description:'Two sets of 5 plus an AMRAP final set lets you push every session. Adds curls and chins for the people who actually want arms.',
+    schedule:[
+      { day:'Workout A', badge:'badge-u', exercises:[
+        {name:'Bench Press',sets:3,reps:'5,5,AMRAP',weight:70,muscles:['chest','triceps'],type:'Primary'},
+        {name:'Squat',sets:3,reps:'5,5,AMRAP',weight:80,muscles:['legs','glutes'],type:'Primary'},
+        {name:'Chin-Ups',sets:3,reps:'AMRAP',weight:0,muscles:['back','biceps'],bw:true,type:'Accessory'},
+        {name:'Barbell Curls',sets:3,reps:'8',weight:25,muscles:['biceps'],type:'Accessory'},
+      ]},
+      { day:'Workout B', badge:'badge-l', exercises:[
+        {name:'Overhead Press',sets:3,reps:'5,5,AMRAP',weight:40,muscles:['shoulders','triceps'],type:'Primary'},
+        {name:'Deadlift',sets:1,reps:'5+',weight:100,muscles:['back','legs'],type:'Primary'},
+        {name:'Pull-Ups',sets:3,reps:'AMRAP',weight:0,muscles:['back','biceps'],bw:true,type:'Accessory'},
+        {name:'Barbell Curls',sets:3,reps:'8',weight:25,muscles:['biceps'],type:'Accessory'},
+      ]},
+    ],
+  },
+  {
+    id:'gzclp', name:'GZCLP', short:'GZCLP', author:'Cody Lefever',
+    level:'Beginner-Intermediate', goal:'Strength', daysPerWeek:4, equipment:'Barbell + DB',
+    tags:['strength','intermediate','barbell','4-day','t1-t2-t3'],
+    blurb:'GZCL\'s LP variant. T1 heavy, T2 moderate, T3 light — 4-day rotation through all big lifts.',
+    description:'Each day: one heavy compound (T1, 5×3+), one moderate compound (T2, 3×10), one accessory (T3, 3×15+). Run lifts twice a week with built-in periodisation.',
+    schedule:[
+      { day:'Day 1 — Squat T1', badge:'badge-l', exercises:[
+        {name:'Squat',sets:5,reps:'3+',weight:90,muscles:['legs','glutes'],type:'Primary'},
+        {name:'Bench Press',sets:3,reps:'10',weight:60,muscles:['chest','triceps'],type:'Main Assistance'},
+        {name:'Lat Pulldown',sets:3,reps:'15+',weight:40,muscles:['back','biceps'],type:'Accessory'},
+      ]},
+      { day:'Day 2 — Bench T1', badge:'badge-u', exercises:[
+        {name:'Bench Press',sets:5,reps:'3+',weight:80,muscles:['chest','triceps'],type:'Primary'},
+        {name:'Deadlift',sets:3,reps:'10',weight:90,muscles:['back','legs'],type:'Main Assistance'},
+        {name:'Cable Row',sets:3,reps:'15+',weight:40,muscles:['back'],type:'Accessory'},
+      ]},
+      { day:'Day 3 — OHP T1', badge:'badge-u', exercises:[
+        {name:'Overhead Press',sets:5,reps:'3+',weight:50,muscles:['shoulders','triceps'],type:'Primary'},
+        {name:'Squat',sets:3,reps:'10',weight:65,muscles:['legs','glutes'],type:'Main Assistance'},
+        {name:'Lat Pulldown',sets:3,reps:'15+',weight:40,muscles:['back','biceps'],type:'Accessory'},
+      ]},
+      { day:'Day 4 — DL T1', badge:'badge-f', exercises:[
+        {name:'Deadlift',sets:5,reps:'3+',weight:120,muscles:['back','legs'],type:'Primary'},
+        {name:'Overhead Press',sets:3,reps:'10',weight:35,muscles:['shoulders','triceps'],type:'Main Assistance'},
+        {name:'Cable Row',sets:3,reps:'15+',weight:40,muscles:['back'],type:'Accessory'},
+      ]},
+    ],
+  },
+  {
+    id:'madcow-5x5', name:'Madcow 5×5', short:'Madcow', author:'Glenn Pendlay (popularised)',
+    level:'Intermediate', goal:'Strength', daysPerWeek:3, equipment:'Barbell',
+    tags:['strength','intermediate','barbell','3-day','ramping-sets'],
+    blurb:'Where you go after StrongLifts stalls. Ramping sets, weekly progression, light/medium/heavy days.',
+    description:'Three days a week. Monday is volume work (ramping 5s), Wednesday is light recovery, Friday is intensity day with a top single set then a back-off. Add small weekly increments.',
+    schedule:[
+      { day:'Monday — Volume', badge:'badge-l', exercises:[
+        {name:'Squat',sets:5,reps:'5',weight:90,muscles:['legs','glutes'],type:'Primary',note:'Ramping sets'},
+        {name:'Bench Press',sets:5,reps:'5',weight:75,muscles:['chest','triceps'],type:'Primary',note:'Ramping sets'},
+        {name:'Bent Over Barbell Row',sets:5,reps:'5',weight:65,muscles:['back','biceps'],type:'Primary',note:'Ramping sets'},
+      ]},
+      { day:'Wednesday — Light', badge:'badge-u', exercises:[
+        {name:'Squat',sets:4,reps:'5',weight:65,muscles:['legs','glutes'],type:'Compound',note:'70% of Monday top'},
+        {name:'Overhead Press',sets:4,reps:'5',weight:40,muscles:['shoulders','triceps'],type:'Compound'},
+        {name:'Deadlift',sets:4,reps:'5',weight:90,muscles:['back','legs'],type:'Compound'},
+      ]},
+      { day:'Friday — Intensity', badge:'badge-f', exercises:[
+        {name:'Squat',sets:5,reps:'5,5,5,5,3,8',weight:95,muscles:['legs','glutes'],type:'Primary',note:'Top set + back-off'},
+        {name:'Bench Press',sets:5,reps:'5,5,5,5,3,8',weight:80,muscles:['chest','triceps'],type:'Primary',note:'Top set + back-off'},
+        {name:'Bent Over Barbell Row',sets:5,reps:'5,5,5,5,3,8',weight:70,muscles:['back','biceps'],type:'Primary',note:'Top set + back-off'},
+      ]},
+    ],
+  },
+  {
+    id:'531-bbb', name:'5/3/1 Boring But Big', short:'5/3/1 BBB', author:'Jim Wendler',
+    level:'Intermediate', goal:'Strength + Size', daysPerWeek:4, equipment:'Barbell + DB',
+    tags:['strength','intermediate','barbell','4-day','wave-progression','hypertrophy'],
+    blurb:'Wendler\'s most popular template. One main lift per day, then 5×10 of the same lift at 50%.',
+    description:'Four-day split, one main lift per session. Top set is 5/3/1 wave (1+ rep AMRAP). Then 5×10 at 50% of TM as the BBB volume work, plus assistance pulling/pushing.',
+    schedule:[
+      { day:'Day 1 — Bench', badge:'badge-u', exercises:[
+        {name:'Bench Press',sets:3,reps:'5/3/1+',weight:75,muscles:['chest','triceps'],type:'Primary'},
+        {name:'Bench Press',sets:5,reps:'10',weight:45,muscles:['chest','triceps'],type:'Main Assistance',note:'BBB @ 50% TM'},
+        {name:'Bent Over Barbell Row',sets:5,reps:'10',weight:55,muscles:['back','biceps'],type:'Main Assistance'},
+      ]},
+      { day:'Day 2 — Squat', badge:'badge-l', exercises:[
+        {name:'Squat',sets:3,reps:'5/3/1+',weight:90,muscles:['legs','glutes'],type:'Primary'},
+        {name:'Squat',sets:5,reps:'10',weight:55,muscles:['legs','glutes'],type:'Main Assistance',note:'BBB @ 50% TM'},
+        {name:'Leg Curl',sets:5,reps:'10',weight:50,muscles:['legs'],type:'Accessory'},
+      ]},
+      { day:'Day 3 — OHP', badge:'badge-u', exercises:[
+        {name:'Overhead Press',sets:3,reps:'5/3/1+',weight:45,muscles:['shoulders','triceps'],type:'Primary'},
+        {name:'Overhead Press',sets:5,reps:'10',weight:25,muscles:['shoulders','triceps'],type:'Main Assistance',note:'BBB @ 50% TM'},
+        {name:'Chin-Ups',sets:5,reps:'10',weight:0,muscles:['back','biceps'],bw:true,type:'Accessory'},
+      ]},
+      { day:'Day 4 — Deadlift', badge:'badge-f', exercises:[
+        {name:'Deadlift',sets:3,reps:'5/3/1+',weight:120,muscles:['back','legs'],type:'Primary'},
+        {name:'Deadlift',sets:5,reps:'10',weight:70,muscles:['back','legs'],type:'Main Assistance',note:'BBB @ 50% TM'},
+        {name:'Hanging Leg Raise',sets:5,reps:'15',weight:0,muscles:['core'],bw:true,type:'Accessory'},
+      ]},
+    ],
+  },
+  {
+    id:'phul', name:'PHUL', short:'PHUL', author:'Brandon Campbell',
+    level:'Intermediate', goal:'Strength + Hypertrophy', daysPerWeek:4, equipment:'Full gym',
+    tags:['hypertrophy','strength','intermediate','4-day','power-hypertrophy'],
+    blurb:'Power Hypertrophy Upper Lower. Two heavy days, two volume days. Best of both worlds.',
+    description:'Mon/Tue are heavy power days (3-5 reps), Thu/Fri are volume hypertrophy days (8-12 reps). Lets you build size and strength simultaneously without burning out either system.',
+    schedule:[
+      { day:'Upper Power', badge:'badge-u', exercises:[
+        {name:'Bench Press',sets:4,reps:'3–5',weight:80,muscles:['chest','triceps'],type:'Primary'},
+        {name:'Incline Dumbbell Press',sets:3,reps:'5–8',weight:27.5,muscles:['chest'],type:'Main Assistance'},
+        {name:'Bent Over Barbell Row',sets:4,reps:'3–5',weight:70,muscles:['back','biceps'],type:'Primary'},
+        {name:'Lat Pulldown',sets:3,reps:'5–8',weight:50,muscles:['back','biceps'],type:'Compound'},
+        {name:'Overhead Press',sets:3,reps:'5–8',weight:40,muscles:['shoulders','triceps'],type:'Compound'},
+        {name:'Barbell Curls',sets:3,reps:'5–8',weight:30,muscles:['biceps'],type:'Accessory'},
+        {name:'Skull Crushers',sets:3,reps:'5–8',weight:30,muscles:['triceps'],type:'Accessory'},
+      ]},
+      { day:'Lower Power', badge:'badge-l', exercises:[
+        {name:'Squat',sets:4,reps:'3–5',weight:90,muscles:['legs','glutes'],type:'Primary'},
+        {name:'Deadlift',sets:3,reps:'3–5',weight:120,muscles:['back','legs'],type:'Primary'},
+        {name:'Leg Press',sets:3,reps:'10–15',weight:140,muscles:['legs','glutes'],type:'Compound'},
+        {name:'Leg Curl',sets:3,reps:'8–12',weight:60,muscles:['legs'],type:'Accessory'},
+        {name:'Calf Raises',sets:4,reps:'10–15',weight:120,muscles:['legs'],type:'Accessory'},
+      ]},
+      { day:'Upper Hypertrophy', badge:'badge-u', exercises:[
+        {name:'Incline Dumbbell Press',sets:4,reps:'8–12',weight:27.5,muscles:['chest','shoulders'],type:'Compound'},
+        {name:"Cable Fly's",sets:4,reps:'10–15',weight:15,muscles:['chest'],type:'Accessory'},
+        {name:'Cable Row',sets:4,reps:'8–12',weight:50,muscles:['back'],type:'Compound'},
+        {name:'Lat Pulldown',sets:4,reps:'10–15',weight:50,muscles:['back','biceps'],type:'Compound'},
+        {name:'Lateral Raises',sets:4,reps:'10–15',weight:10,muscles:['shoulders'],type:'Accessory'},
+        {name:'Hammer Curl',sets:4,reps:'10–15',weight:14,muscles:['biceps'],type:'Accessory'},
+        {name:'Triceps Pushdowns',sets:4,reps:'10–15',weight:25,muscles:['triceps'],type:'Accessory'},
+      ]},
+      { day:'Lower Hypertrophy', badge:'badge-l', exercises:[
+        {name:'Squat',sets:4,reps:'8–12',weight:65,muscles:['legs','glutes'],type:'Compound'},
+        {name:'Leg Press',sets:3,reps:'10–15',weight:140,muscles:['legs','glutes'],type:'Compound'},
+        {name:'Romanian Deadlift',sets:3,reps:'8–12',weight:80,muscles:['back','legs'],type:'Compound'},
+        {name:'Leg Extension',sets:4,reps:'10–15',weight:55,muscles:['legs'],type:'Accessory'},
+        {name:'Leg Curl',sets:4,reps:'10–15',weight:55,muscles:['legs'],type:'Accessory'},
+        {name:'Calf Raises',sets:4,reps:'12–20',weight:120,muscles:['legs'],type:'Accessory'},
+      ]},
+    ],
+  },
+  {
+    id:'phat', name:'PHAT', short:'PHAT', author:'Layne Norton',
+    level:'Advanced', goal:'Hypertrophy + Power', daysPerWeek:5, equipment:'Full gym',
+    tags:['hypertrophy','advanced','5-day','power-hypertrophy'],
+    blurb:'Power Hypertrophy Adaptive Training. Two power days + three high-volume hypertrophy days.',
+    description:'For experienced lifters who want size and strength. Power days hit big lifts heavy, then three split days hammer body parts with high-volume hypertrophy work. Demanding — eat and sleep accordingly.',
+    schedule:[
+      { day:'Upper Power', badge:'badge-u', exercises:[
+        {name:'Bent Over Barbell Row',sets:4,reps:'3–5',weight:80,muscles:['back','biceps'],type:'Primary'},
+        {name:'Pull-Ups',sets:3,reps:'6–10',weight:0,muscles:['back','biceps'],bw:true,type:'Compound'},
+        {name:'Bench Press',sets:4,reps:'3–5',weight:85,muscles:['chest','triceps'],type:'Primary'},
+        {name:'Incline Dumbbell Press',sets:3,reps:'6–10',weight:30,muscles:['chest'],type:'Compound'},
+        {name:'Overhead Press',sets:3,reps:'5–8',weight:45,muscles:['shoulders','triceps'],type:'Compound'},
+        {name:'Skull Crushers',sets:3,reps:'6–10',weight:32.5,muscles:['triceps'],type:'Accessory'},
+        {name:'Barbell Curls',sets:3,reps:'6–10',weight:32.5,muscles:['biceps'],type:'Accessory'},
+      ]},
+      { day:'Lower Power', badge:'badge-l', exercises:[
+        {name:'Squat',sets:4,reps:'3–5',weight:100,muscles:['legs','glutes'],type:'Primary'},
+        {name:'Deadlift',sets:3,reps:'3–5',weight:130,muscles:['back','legs'],type:'Primary'},
+        {name:'Leg Press',sets:3,reps:'8–12',weight:160,muscles:['legs','glutes'],type:'Compound'},
+        {name:'Leg Curl',sets:3,reps:'6–10',weight:65,muscles:['legs'],type:'Accessory'},
+        {name:'Calf Raises',sets:4,reps:'6–10',weight:140,muscles:['legs'],type:'Accessory'},
+      ]},
+      { day:'Back + Shoulders Hyp', badge:'badge-u', exercises:[
+        {name:'Bent Over Barbell Row',sets:4,reps:'8–12',weight:55,muscles:['back','biceps'],type:'Compound'},
+        {name:'Lat Pulldown',sets:3,reps:'10–15',weight:50,muscles:['back','biceps'],type:'Compound'},
+        {name:'Cable Row',sets:3,reps:'10–15',weight:55,muscles:['back'],type:'Compound'},
+        {name:'Straight Arm Pulldown',sets:3,reps:'12–15',weight:30,muscles:['back'],type:'Accessory'},
+        {name:'Dumbbell Shoulder Press',sets:4,reps:'8–12',weight:18,muscles:['shoulders'],type:'Compound'},
+        {name:'Lateral Raises',sets:3,reps:'12–20',weight:10,muscles:['shoulders'],type:'Accessory'},
+        {name:'Face Pulls',sets:3,reps:'12–15',weight:20,muscles:['shoulders','back'],type:'Accessory'},
+      ]},
+      { day:'Lower Hypertrophy', badge:'badge-l', exercises:[
+        {name:'Squat',sets:4,reps:'8–12',weight:70,muscles:['legs','glutes'],type:'Compound'},
+        {name:'Romanian Deadlift',sets:3,reps:'8–12',weight:85,muscles:['back','legs'],type:'Compound'},
+        {name:'Leg Press',sets:3,reps:'10–15',weight:160,muscles:['legs','glutes'],type:'Compound'},
+        {name:'Leg Extension',sets:4,reps:'10–15',weight:55,muscles:['legs'],type:'Accessory'},
+        {name:'Leg Curl',sets:4,reps:'10–15',weight:60,muscles:['legs'],type:'Accessory'},
+        {name:'Calf Raises',sets:4,reps:'15–20',weight:120,muscles:['legs'],type:'Accessory'},
+      ]},
+      { day:'Chest + Arms Hyp', badge:'badge-u', exercises:[
+        {name:'Incline Dumbbell Press',sets:4,reps:'8–12',weight:28,muscles:['chest','shoulders'],type:'Compound'},
+        {name:'Bench Press',sets:3,reps:'10–15',weight:55,muscles:['chest','triceps'],type:'Compound'},
+        {name:"Cable Fly's",sets:3,reps:'12–15',weight:18,muscles:['chest'],type:'Accessory'},
+        {name:'Barbell Curls',sets:3,reps:'8–12',weight:30,muscles:['biceps'],type:'Accessory'},
+        {name:'Hammer Curl',sets:3,reps:'10–15',weight:14,muscles:['biceps'],type:'Accessory'},
+        {name:'Triceps Pushdowns',sets:3,reps:'10–15',weight:25,muscles:['triceps'],type:'Accessory'},
+        {name:'Triceps Extension',sets:3,reps:'10–15',weight:22.5,muscles:['triceps'],type:'Accessory'},
+      ]},
+    ],
+  },
+  {
+    id:'arnold-split', name:'Arnold Split', short:'Arnold', author:'Arnold Schwarzenegger (era)',
+    level:'Advanced', goal:'Hypertrophy', daysPerWeek:6, equipment:'Full gym',
+    tags:['hypertrophy','advanced','6-day','classic-split','high-volume'],
+    blurb:'The legendary 6-day Golden Era split. Antagonist pairings, brutal volume, only for the dedicated.',
+    description:'Six days a week, two-on/one-off rotation pairing antagonist muscle groups. Massive volume — assumes recovery is dialled in. Iconic and effective if you have the time.',
+    schedule:[
+      { day:'Chest + Back', badge:'badge-u', exercises:[
+        {name:'Bench Press',sets:5,reps:'6–10',weight:75,muscles:['chest','triceps'],type:'Primary'},
+        {name:'Incline Dumbbell Press',sets:4,reps:'8–12',weight:27.5,muscles:['chest'],type:'Compound'},
+        {name:"Cable Fly's",sets:3,reps:'10–15',weight:15,muscles:['chest'],type:'Accessory'},
+        {name:'Pull-Ups',sets:5,reps:'AMRAP',weight:0,muscles:['back','biceps'],bw:true,type:'Compound'},
+        {name:'Bent Over Barbell Row',sets:4,reps:'8–10',weight:65,muscles:['back','biceps'],type:'Compound'},
+        {name:'Straight Arm Pulldown',sets:3,reps:'10–15',weight:30,muscles:['back'],type:'Accessory'},
+      ]},
+      { day:'Shoulders + Arms', badge:'badge-u', exercises:[
+        {name:'Overhead Press',sets:5,reps:'6–10',weight:42.5,muscles:['shoulders','triceps'],type:'Primary'},
+        {name:'Arnold Press',sets:4,reps:'8–12',weight:18,muscles:['shoulders'],type:'Compound'},
+        {name:'Lateral Raises',sets:4,reps:'10–15',weight:10,muscles:['shoulders'],type:'Accessory'},
+        {name:'Barbell Curls',sets:4,reps:'8–12',weight:32.5,muscles:['biceps'],type:'Compound'},
+        {name:'Hammer Curl',sets:3,reps:'10–12',weight:14,muscles:['biceps'],type:'Accessory'},
+        {name:'Skull Crushers',sets:4,reps:'8–12',weight:30,muscles:['triceps'],type:'Compound'},
+        {name:'Triceps Pushdowns',sets:3,reps:'10–15',weight:25,muscles:['triceps'],type:'Accessory'},
+      ]},
+      { day:'Legs + Core', badge:'badge-l', exercises:[
+        {name:'Squat',sets:5,reps:'6–10',weight:90,muscles:['legs','glutes'],type:'Primary'},
+        {name:'Leg Press',sets:4,reps:'10–15',weight:160,muscles:['legs','glutes'],type:'Compound'},
+        {name:'Romanian Deadlift',sets:3,reps:'8–12',weight:80,muscles:['back','legs'],type:'Compound'},
+        {name:'Leg Curl',sets:3,reps:'10–15',weight:55,muscles:['legs'],type:'Accessory'},
+        {name:'Calf Raises',sets:5,reps:'10–15',weight:120,muscles:['legs'],type:'Accessory'},
+        {name:'Abdominal Work',sets:3,reps:'10–15',weight:0,muscles:['core'],bw:true,type:'Accessory',coreCircuit:true},
+      ]},
+      { day:'Chest + Back (B)', badge:'badge-u', exercises:[
+        {name:'Incline Dumbbell Press',sets:5,reps:'8–10',weight:30,muscles:['chest','shoulders'],type:'Primary'},
+        {name:'Dips',sets:4,reps:'8–12',weight:0,muscles:['chest','triceps'],bw:true,type:'Compound'},
+        {name:"Fly's",sets:3,reps:'10–15',weight:15,muscles:['chest'],type:'Accessory'},
+        {name:'Bent Over Barbell Row',sets:5,reps:'6–8',weight:70,muscles:['back','biceps'],type:'Primary'},
+        {name:'Lat Pulldown',sets:4,reps:'10–12',weight:50,muscles:['back','biceps'],type:'Compound'},
+        {name:'Cable Row',sets:3,reps:'10–15',weight:50,muscles:['back'],type:'Accessory'},
+      ]},
+      { day:'Shoulders + Arms (B)', badge:'badge-u', exercises:[
+        {name:'Dumbbell Shoulder Press',sets:5,reps:'8–10',weight:18,muscles:['shoulders'],type:'Primary'},
+        {name:'Lateral Raises',sets:4,reps:'12–15',weight:10,muscles:['shoulders'],type:'Accessory'},
+        {name:'Face Pulls',sets:3,reps:'12–15',weight:20,muscles:['shoulders','back'],type:'Accessory'},
+        {name:'Standing One-Arm Cable Curl',sets:4,reps:'10–12',weight:8,muscles:['biceps'],type:'Compound'},
+        {name:'Dumbbell Curl',sets:3,reps:'10–12',weight:14,muscles:['biceps'],type:'Accessory'},
+        {name:'Close Grip Bench',sets:4,reps:'8–10',weight:55,muscles:['triceps','chest'],type:'Compound'},
+        {name:'Triceps Extension',sets:3,reps:'10–15',weight:22.5,muscles:['triceps'],type:'Accessory'},
+      ]},
+      { day:'Legs + Core (B)', badge:'badge-l', exercises:[
+        {name:'Squat',sets:5,reps:'8–12',weight:75,muscles:['legs','glutes'],type:'Primary'},
+        {name:'Bulgarian Split Squat',sets:4,reps:'8–12',weight:18,muscles:['legs','glutes'],type:'Compound'},
+        {name:'Leg Extension',sets:4,reps:'12–15',weight:55,muscles:['legs'],type:'Accessory'},
+        {name:'Leg Curl',sets:4,reps:'12–15',weight:55,muscles:['legs'],type:'Accessory'},
+        {name:'Calf Raises',sets:5,reps:'15–20',weight:120,muscles:['legs'],type:'Accessory'},
+        {name:'Abdominal Work',sets:3,reps:'15',weight:0,muscles:['core'],bw:true,type:'Accessory',coreCircuit:true},
+      ]},
+    ],
+  },
+  {
+    id:'bro-split', name:'Bro Split', short:'Bro', author:'80s/90s bodybuilding tradition',
+    level:'Intermediate', goal:'Hypertrophy', daysPerWeek:5, equipment:'Full gym',
+    tags:['hypertrophy','intermediate','5-day','body-part-split','classic'],
+    blurb:'One body part per day, smashed with volume. Simple, time-tested, popular for a reason.',
+    description:'Five training days, one muscle group per day with full week between sessions for that group. Best for intermediates who already have a base — beginners need more frequency.',
+    schedule:[
+      { day:'Chest', badge:'badge-u', exercises:[
+        {name:'Bench Press',sets:4,reps:'6–10',weight:75,muscles:['chest','triceps'],type:'Primary'},
+        {name:'Incline Dumbbell Press',sets:4,reps:'8–12',weight:27.5,muscles:['chest','shoulders'],type:'Compound'},
+        {name:'Dumbbell Bench Press',sets:3,reps:'10–12',weight:25,muscles:['chest','triceps'],type:'Compound'},
+        {name:"Cable Fly's",sets:3,reps:'12–15',weight:15,muscles:['chest'],type:'Accessory'},
+        {name:'Dips',sets:3,reps:'AMRAP',weight:0,muscles:['chest','triceps'],bw:true,type:'Accessory'},
+      ]},
+      { day:'Back', badge:'badge-l', exercises:[
+        {name:'Deadlift',sets:4,reps:'4–6',weight:120,muscles:['back','legs'],type:'Primary'},
+        {name:'Pull-Ups',sets:4,reps:'AMRAP',weight:0,muscles:['back','biceps'],bw:true,type:'Compound'},
+        {name:'Bent Over Barbell Row',sets:4,reps:'8–10',weight:70,muscles:['back','biceps'],type:'Compound'},
+        {name:'Lat Pulldown',sets:3,reps:'10–12',weight:50,muscles:['back','biceps'],type:'Compound'},
+        {name:'Cable Row',sets:3,reps:'10–15',weight:55,muscles:['back'],type:'Accessory'},
+        {name:'Face Pulls',sets:3,reps:'12–15',weight:20,muscles:['shoulders','back'],type:'Accessory'},
+      ]},
+      { day:'Legs', badge:'badge-l', exercises:[
+        {name:'Squat',sets:5,reps:'6–10',weight:90,muscles:['legs','glutes'],type:'Primary'},
+        {name:'Romanian Deadlift',sets:4,reps:'8–12',weight:80,muscles:['back','legs'],type:'Compound'},
+        {name:'Leg Press',sets:4,reps:'10–15',weight:160,muscles:['legs','glutes'],type:'Compound'},
+        {name:'Leg Curl',sets:4,reps:'10–15',weight:60,muscles:['legs'],type:'Accessory'},
+        {name:'Leg Extension',sets:3,reps:'12–15',weight:55,muscles:['legs'],type:'Accessory'},
+        {name:'Calf Raises',sets:5,reps:'12–20',weight:120,muscles:['legs'],type:'Accessory'},
+      ]},
+      { day:'Shoulders', badge:'badge-u', exercises:[
+        {name:'Overhead Press',sets:4,reps:'6–10',weight:45,muscles:['shoulders','triceps'],type:'Primary'},
+        {name:'Dumbbell Shoulder Press',sets:4,reps:'8–12',weight:18,muscles:['shoulders'],type:'Compound'},
+        {name:'Arnold Press',sets:3,reps:'10–12',weight:16,muscles:['shoulders'],type:'Compound'},
+        {name:'Lateral Raises',sets:4,reps:'12–15',weight:10,muscles:['shoulders'],type:'Accessory'},
+        {name:'Face Pulls',sets:4,reps:'12–15',weight:20,muscles:['shoulders','back'],type:'Accessory'},
+        {name:'Shrugs',sets:3,reps:'10–15',weight:30,muscles:['back'],type:'Accessory'},
+      ]},
+      { day:'Arms', badge:'badge-u', exercises:[
+        {name:'Close Grip Bench',sets:4,reps:'6–10',weight:55,muscles:['triceps','chest'],type:'Primary'},
+        {name:'Skull Crushers',sets:4,reps:'8–12',weight:30,muscles:['triceps'],type:'Compound'},
+        {name:'Triceps Pushdowns',sets:3,reps:'10–15',weight:25,muscles:['triceps'],type:'Accessory'},
+        {name:'Barbell Curls',sets:4,reps:'8–12',weight:30,muscles:['biceps'],type:'Compound'},
+        {name:'Hammer Curl',sets:4,reps:'10–12',weight:14,muscles:['biceps'],type:'Accessory'},
+        {name:'Standing One-Arm Cable Curl',sets:3,reps:'12–15',weight:8,muscles:['biceps'],type:'Accessory'},
+      ]},
+    ],
+  },
+];
+
+// Library helpers
+function isLibraryProgramme(prog){
+  return typeof prog === 'string' && prog.startsWith('library:');
+}
+function getLibraryId(prog){
+  return isLibraryProgramme(prog) ? prog.slice(8) : null;
+}
+function getLibraryProgramme(progOrId){
+  const id = isLibraryProgramme(progOrId) ? getLibraryId(progOrId) : progOrId;
+  return LIBRARY_PROGRAMMES.find(p => p.id === id) || null;
+}
+function getLibraryDayMap(libProg){
+  // Build {dayName: [exercises]} map for use with startSession()
+  if(!libProg) return {};
+  const m = {};
+  libProg.schedule.forEach(d => { m[d.day] = d.exercises.map(e => ({...e})); });
+  return m;
+}
+function getLibraryDayBadge(libProg, dayName){
+  if(!libProg) return 'badge-u';
+  const d = libProg.schedule.find(x => x.day === dayName);
+  return (d && d.badge) || 'badge-u';
+}
 
 // ── EXERCISE DATABASE ──
 const EXDB=[
@@ -2060,6 +2461,16 @@ function applyCustomWeights() {
       dayExs.forEach(ex => { if (customWeights[ex.name] !== undefined) ex.weight = customWeights[ex.name]; });
     });
   });
+  // Also apply to LIBRARY_PROGRAMMES so saved working weights override the catalog defaults
+  if(typeof LIBRARY_PROGRAMMES !== 'undefined'){
+    LIBRARY_PROGRAMMES.forEach(p => {
+      p.schedule.forEach(d => {
+        d.exercises.forEach(ex => {
+          if(customWeights[ex.name] !== undefined) ex.weight = customWeights[ex.name];
+        });
+      });
+    });
+  }
 }
 applyCustomWeights();
 
@@ -2754,7 +3165,13 @@ function updateSessUI(){
   initBubbleSwipe(); // attach once; no-ops on subsequent calls via _swipeInit guard
   const ex=sessExs[curIdx],tot=sessExs.length;
   const bc={'Upper':'badge-u','Lower':'badge-l','Full Body':'badge-f','Push A':'badge-u','Push B':'badge-u','Pull A':'badge-l','Pull B':'badge-l','Legs A':'badge-f','Legs B':'badge-f'};
-  document.getElementById('sessBadge').className='day-badge '+(bc[sessDay]||'badge-u');
+  // Library programmes: look up the badge declared in the catalog by day name
+  let _libBadge = null;
+  if(typeof userPath !== 'undefined' && userPath && isLibraryProgramme(userPath.programme)){
+    const _libCur = getLibraryProgramme(userPath.programme);
+    if(_libCur) _libBadge = getLibraryDayBadge(_libCur, sessDay);
+  }
+  document.getElementById('sessBadge').className='day-badge '+(bc[sessDay] || _libBadge || 'badge-u');
   document.getElementById('sessBadge').textContent=(sessDay||'').toUpperCase()+' DAY';
   
   // Define workout type flags upfront (used throughout function)
@@ -9654,12 +10071,15 @@ function hasCorePathWorkoutBeenCompletedToday(programme) {
   const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
   const ulfDays = ['Upper','Lower','Full Body'];
   const pplDays = Object.keys(PPL);
+  const lib = isLibraryProgramme(programme) ? getLibraryProgramme(programme) : null;
+  const libDayNames = lib ? new Set(lib.schedule.map(d => d.day)) : null;
   const match = completedSessions.find(s => {
     if(s.adhoc) return false; // core path sessions are non-adhoc
     const sd = s.date instanceof Date ? s.date : new Date(s.date);
     if(sd < today || sd >= tomorrow) return false;
     if(programme === 'ULF') return ulfDays.includes(s.day);
     if(programme === 'PPL') return pplDays.includes(s.day);
+    if(libDayNames) return libDayNames.has(s.day);
     return false;
   });
   if(!match) return null;
@@ -9782,14 +10202,18 @@ function renderTodayWithPath() {
         const dayName = getNextPathDay(prog);
         const exs = dayName ? getExercisesForPathDay(prog, dayName) : [];
         const estMin = Math.max(20, exs.length * 9);
+        // Library programmes use their .short label as the badge (e.g. 'PHUL', 'SL 5×5')
+        const lib = isLibraryProgramme(prog) ? getLibraryProgramme(prog) : null;
+        const badgeLabel = lib ? lib.short : prog;
+        const titleLabel = dayName || (lib ? lib.name : prog);
         html += `
           <div style="margin:16px 16px 0;">
             <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">TODAY'S PATH WORKOUT</div>
             <div style="background:var(--surface2);border:1px solid rgba(200,255,0,0.3);border-radius:16px;padding:18px;">
               <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
-                <div style="background:rgba(200,255,0,0.1);border-radius:12px;padding:10px 14px;font-size:22px;font-weight:900;color:var(--accent);">${prog}</div>
+                <div style="background:rgba(200,255,0,0.1);border-radius:12px;padding:10px 14px;font-size:${badgeLabel.length > 6 ? '14px' : '22px'};font-weight:900;color:var(--accent);">${badgeLabel}</div>
                 <div>
-                  <div style="font-size:18px;font-weight:800;">${dayName || prog}</div>
+                  <div style="font-size:18px;font-weight:800;">${titleLabel}</div>
                   <div style="font-size:12px;color:var(--text2);">${exs.length} exercises · ~${estMin} min</div>
                 </div>
               </div>
@@ -9896,6 +10320,14 @@ function getNextPathDay(programme) {
     const done = completedSessions.filter(s => !s.adhoc && Object.keys(PPL).includes(s.day)).length;
     return pplDays[done % pplDays.length];
   }
+  if(isLibraryProgramme(programme)){
+    const lib = getLibraryProgramme(programme);
+    if(!lib) return null;
+    const dayNames = lib.schedule.map(d => d.day);
+    const dayNameSet = new Set(dayNames);
+    const done = completedSessions.filter(s => !s.adhoc && dayNameSet.has(s.day)).length;
+    return dayNames[done % dayNames.length];
+  }
   return null; // HIIT handled via openAddOnSelector
 }
 
@@ -9903,6 +10335,12 @@ function getExercisesForPathDay(programme, dayName) {
   if(!dayName) return [];
   if(programme === 'ULF') return getULFDay(dayName) || [];
   if(programme === 'PPL') return PPL[dayName] || [];
+  if(isLibraryProgramme(programme)){
+    const lib = getLibraryProgramme(programme);
+    if(!lib) return [];
+    const day = lib.schedule.find(d => d.day === dayName);
+    return day ? day.exercises : [];
+  }
   return [];
 }
 
@@ -9911,6 +10349,14 @@ function startPathSession(programme, dayName) {
   if(programme === 'ULF') startSessionULF(dayName);
   else if(programme === 'PPL') startSession(dayName, PPL);
   else if(programme === 'HIIT') openAddOnSelector('HIIT');
+  else if(isLibraryProgramme(programme)){
+    const lib = getLibraryProgramme(programme);
+    if(!lib) return;
+    const dayMap = getLibraryDayMap(lib);
+    const day = dayName || lib.schedule[0].day;
+    if(!dayMap[day]) return;
+    startSession(day, dayMap);
+  }
 }
 
 // ── Ad-hoc session modal ──
@@ -9931,9 +10377,11 @@ function openAdhocModal() {
   // Filter out current path programme from the base list, then prepend it as "extra"
   const options = allOptions.filter(o => o.prog !== userPath?.programme);
   if(userPath){
+    const _lib = isLibraryProgramme(userPath.programme) ? getLibraryProgramme(userPath.programme) : null;
+    const _label = _lib ? _lib.name : userPath.programme;
     options.unshift({
       prog: userPath.programme, icon:'🎯',
-      label: userPath.programme + ' (Extra)',
+      label: _label + ' (Extra)',
       desc: 'Another session from your path', colour:'var(--accent)'
     });
   }
@@ -9964,6 +10412,11 @@ function selectAdhocProg(prog) {
     startSession(day, PPL);
   } else if(prog === 'HIIT'){
     openAddOnSelector('HIIT');
+  } else if(isLibraryProgramme(prog)){
+    const lib = getLibraryProgramme(prog);
+    if(!lib) return;
+    const day = getNextPathDay(prog) || lib.schedule[0].day;
+    startSession(day, getLibraryDayMap(lib));
   }
 }
 
@@ -10341,7 +10794,17 @@ function _renderPathTabActive() {
   } else if(userPath.programme === 'PPL'){
     _coreWorkoutCycle = _pplCycle;
     _baseCoreSessionsDone = completedSessions.filter(s => !s.adhoc && Object.keys(PPL).includes(s.day)).length;
+  } else if(isLibraryProgramme(userPath.programme)){
+    const _lib = getLibraryProgramme(userPath.programme);
+    if(_lib){
+      _coreWorkoutCycle = _lib.schedule.map(d => d.day);
+      const _libDayNames = new Set(_coreWorkoutCycle);
+      _baseCoreSessionsDone = completedSessions.filter(s => !s.adhoc && _libDayNames.has(s.day)).length;
+    }
   }
+  // Friendly programme label (used as fallback in schedule rows)
+  const _libCurrent = isLibraryProgramme(userPath.programme) ? getLibraryProgramme(userPath.programme) : null;
+  const _progDisplay = _libCurrent ? _libCurrent.short : userPath.programme;
   // ── HIIT add-on recommendation via muscle imbalance ──
   const _schedBalance = calcMuscleImbalance(4);
   const _hiitRecs = getAddOnRecommendations('HIIT', _schedBalance);
@@ -10399,12 +10862,12 @@ function _renderPathTabActive() {
     if(d.isRest){
       workoutLabel = `<span style="font-size:11px;color:var(--text2);">Rest day</span>`;
     } else if(d.isCoreDay && d.addOnForDay){
-      const coreLabel = d.specificWorkout || userPath.programme;
+      const coreLabel = d.specificWorkout || _progDisplay;
       const addOnLabel = d.addOnSpecific || d.addOnForDay.type;
       const addOnSub = d.addOnSpecific ? `<div style="font-size:10px;color:rgba(0,212,255,0.7);margin-top:1px;">📊 Based on muscle balance</div>` : '';
       workoutLabel = `<div><span style="font-size:11px;color:var(--accent);font-weight:700;">${coreLabel}</span><span style="font-size:11px;color:#00d4ff;margin-left:6px;">+ ${addOnLabel}</span>${addOnSub}</div>`;
     } else if(d.isCoreDay){
-      const coreLabel = d.specificWorkout || userPath.programme;
+      const coreLabel = d.specificWorkout || _progDisplay;
       workoutLabel = `<span style="font-size:11px;color:var(--accent);font-weight:700;">${coreLabel}</span>`;
     } else if(d.addOnForDay){
       const addOnLabel = d.addOnSpecific || d.addOnForDay.type;
@@ -10439,7 +10902,7 @@ function _renderPathTabActive() {
       <!-- Programme name row (no week info here — moved above) -->
       <div style="margin-bottom:12px;">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
-          <div style="font-size:11px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:1.5px;">🎯 ${userPath.programme}</div>
+          <div style="font-size:11px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:1.5px;">🎯 ${_libCurrent ? _libCurrent.name : userPath.programme}</div>
         </div>
         <div style="font-size:13px;color:var(--text2);">${userPath.duration}-week programme</div>
       </div>
@@ -10615,8 +11078,188 @@ function confirmStartPath() {
   document.getElementById('pathWizardMod').classList.remove('open');
   renderToday();
   setTimeout(() => {
-    showToast('🎯 Path started! ' + userPath.programme + ' · ' + userPath.duration + ' weeks. Let\'s go! 💪');
+    const _lib = isLibraryProgramme(userPath.programme) ? getLibraryProgramme(userPath.programme) : null;
+    const _name = _lib ? _lib.name : userPath.programme;
+    showToast('🎯 Path started! ' + _name + ' · ' + userPath.duration + ' weeks. Let\'s go! 💪');
   }, 400);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// PROGRAMME LIBRARY — browse / preview / adopt
+// ─────────────────────────────────────────────────────────────────
+let _libFilters = { goal:'all', level:'all', days:'all' };
+
+function openLibraryBrowse(){
+  _libFilters = { goal:'all', level:'all', days:'all' };
+  renderLibraryFilters();
+  renderLibraryCards();
+  document.getElementById('libraryBrowseMod').classList.add('open');
+}
+
+function closeLibraryBrowse(){
+  document.getElementById('libraryBrowseMod').classList.remove('open');
+}
+
+function setLibFilter(key, val){
+  _libFilters[key] = val;
+  renderLibraryFilters();
+  renderLibraryCards();
+}
+
+function renderLibraryFilters(){
+  const goals = [
+    { id:'all', label:'All goals' },
+    { id:'Strength', label:'💪 Strength' },
+    { id:'Hypertrophy', label:'📈 Hypertrophy' },
+    { id:'Hybrid', label:'🔀 Hybrid' },
+  ];
+  const levels = [
+    { id:'all', label:'All levels' },
+    { id:'Beginner', label:'🌱 Beginner' },
+    { id:'Intermediate', label:'🚀 Intermediate' },
+    { id:'Advanced', label:'🔥 Advanced' },
+  ];
+  const days = [
+    { id:'all', label:'Any frequency' },
+    { id:3, label:'3×/week' },
+    { id:4, label:'4×/week' },
+    { id:5, label:'5×/week' },
+    { id:6, label:'6×/week' },
+  ];
+  const chip = (group, opt, active) => `
+    <button onclick="setLibFilter('${group}', ${typeof opt.id === 'number' ? opt.id : "'"+opt.id+"'"})"
+      style="background:${active?'rgba(200,255,0,0.15)':'var(--surface2)'};border:1px solid ${active?'var(--accent)':'var(--border)'};border-radius:18px;padding:6px 12px;font-size:11px;font-weight:700;color:${active?'var(--accent)':'var(--text2)'};cursor:pointer;white-space:nowrap;">${opt.label}</button>`;
+  const html = `
+    <div style="display:flex;flex-wrap:wrap;gap:5px;width:100%;margin-bottom:6px;">
+      ${goals.map(o => chip('goal', o, _libFilters.goal === o.id)).join('')}
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:5px;width:100%;margin-bottom:6px;">
+      ${levels.map(o => chip('level', o, _libFilters.level === o.id)).join('')}
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:5px;width:100%;">
+      ${days.map(o => chip('days', o, _libFilters.days === o.id)).join('')}
+    </div>`;
+  document.getElementById('libFilterChips').innerHTML = html;
+}
+
+function _libGoalMatches(progGoal){
+  if(_libFilters.goal === 'all') return true;
+  if(_libFilters.goal === 'Strength')   return /strength/i.test(progGoal);
+  if(_libFilters.goal === 'Hypertrophy')return /hypertrophy/i.test(progGoal) && !/strength/i.test(progGoal);
+  if(_libFilters.goal === 'Hybrid')     return /strength/i.test(progGoal) && /hypertrophy|size|power/i.test(progGoal);
+  return true;
+}
+
+function renderLibraryCards(){
+  const matches = LIBRARY_PROGRAMMES.filter(p => {
+    if(!_libGoalMatches(p.goal)) return false;
+    if(_libFilters.level !== 'all' && !p.level.startsWith(_libFilters.level)) return false;
+    if(_libFilters.days !== 'all' && p.daysPerWeek !== _libFilters.days) return false;
+    return true;
+  });
+  const el = document.getElementById('libCards');
+  if(!matches.length){
+    el.innerHTML = `<div style="text-align:center;padding:30px 16px;color:var(--text2);font-size:13px;">No programmes match those filters. <a onclick="setLibFilter('goal','all');setLibFilter('level','all');setLibFilter('days','all')" style="color:var(--accent);cursor:pointer;font-weight:700;">Clear all</a></div>`;
+    return;
+  }
+  el.innerHTML = matches.map(p => `
+    <div onclick="openLibraryPreview('${p.id}')"
+      style="background:var(--surface2);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:10px;cursor:pointer;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:16px;font-weight:800;color:var(--text);">${p.name}</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px;">${p.author}</div>
+        </div>
+        <div style="font-size:18px;color:var(--text2);flex-shrink:0;">›</div>
+      </div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:8px;line-height:1.4;">${p.blurb}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:5px;">
+        <span style="background:rgba(200,255,0,0.10);color:var(--accent);font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;">${p.level}</span>
+        <span style="background:var(--surface3);color:var(--text2);font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;">${p.goal}</span>
+        <span style="background:var(--surface3);color:var(--text2);font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;">${p.daysPerWeek}× / week</span>
+        <span style="background:var(--surface3);color:var(--text2);font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;">${p.equipment}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+function openLibraryPreview(id){
+  const p = getLibraryProgramme(id);
+  if(!p) return;
+  const totalEx = p.schedule.reduce((s,d) => s + d.exercises.length, 0);
+  const html = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <button onclick="closeLibraryPreview()" style="background:transparent;border:none;color:var(--text2);font-size:14px;cursor:pointer;padding:4px 0;font-weight:700;">‹ Back</button>
+      <button onclick="closeLibraryPreview();closeLibraryBrowse();" style="background:transparent;border:none;color:var(--text2);font-size:22px;cursor:pointer;padding:4px 8px;line-height:1;">✕</button>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:24px;font-weight:900;color:var(--text);">${p.name}</div>
+      <div style="font-size:12px;color:var(--text2);margin-top:3px;">${p.author}</div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px;">
+      <span style="background:rgba(200,255,0,0.10);color:var(--accent);font-size:11px;font-weight:700;padding:4px 10px;border-radius:12px;">${p.level}</span>
+      <span style="background:var(--surface3);color:var(--text2);font-size:11px;font-weight:700;padding:4px 10px;border-radius:12px;">${p.goal}</span>
+      <span style="background:var(--surface3);color:var(--text2);font-size:11px;font-weight:700;padding:4px 10px;border-radius:12px;">${p.daysPerWeek}× / week</span>
+      <span style="background:var(--surface3);color:var(--text2);font-size:11px;font-weight:700;padding:4px 10px;border-radius:12px;">${p.equipment}</span>
+    </div>
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:14px;">
+      <div style="font-size:13px;line-height:1.5;color:var(--text);">${p.description}</div>
+    </div>
+    <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">
+      Schedule · ${p.schedule.length} day${p.schedule.length !== 1 ? 's' : ''} · ${totalEx} exercises total
+    </div>
+    ${p.schedule.map((d, idx) => `
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div style="font-size:14px;font-weight:800;color:var(--text);">${d.day}</div>
+          <div style="font-size:10px;color:var(--text2);">${d.exercises.length} exercises</div>
+        </div>
+        ${d.exercises.map(ex => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:0.5px solid var(--border);font-size:12px;">
+            <div style="flex:1;min-width:0;color:var(--text);">${ex.name}</div>
+            <div style="color:var(--text2);font-size:11px;flex-shrink:0;margin-left:8px;">${ex.sets}×${ex.reps}${ex.bw ? ' BW' : (ex.weight ? ' @ ~' + ex.weight + 'kg' : '')}</div>
+          </div>
+        `).join('')}
+      </div>
+    `).join('')}
+    <button class="btn-p" style="width:100%;font-size:15px;padding:14px;margin-top:6px;"
+      onclick="adoptLibraryProgramme('${p.id}')">
+      ✓ Adopt this programme
+    </button>
+    <button onclick="closeLibraryPreview()" style="width:100%;margin-top:8px;background:transparent;border:none;color:var(--text2);font-size:13px;padding:8px;cursor:pointer;">Cancel</button>
+  `;
+  document.getElementById('libPreviewContent').innerHTML = html;
+  document.getElementById('libraryPreviewMod').classList.add('open');
+}
+
+function closeLibraryPreview(){
+  document.getElementById('libraryPreviewMod').classList.remove('open');
+}
+
+// Adopt: set programme on _pathWizard, close library modals, advance wizard to duration step
+function adoptLibraryProgramme(id){
+  const p = getLibraryProgramme(id);
+  if(!p) return;
+  _pathWizard.programme = 'library:' + id;
+  _pathWizard.daysPerWeek = p.daysPerWeek;
+  _pathWizard.variant = 'standard';
+  _pathWizard.coreDays = [];
+  _pathWizard.addOns = [];
+  closeLibraryPreview();
+  closeLibraryBrowse();
+  // Make sure wizard is open at step 1, then jump to step 2
+  if(!document.getElementById('pathWizardMod').classList.contains('open')){
+    openPathWizard();
+  }
+  // Force step 1 -> step 2 transition
+  if(_pathWizard.step !== 1){
+    // Reset to step 1 first so pathWizardNext lands us at step 2
+    document.getElementById('pathStep' + _pathWizard.step).style.display = 'none';
+    _pathWizard.step = 1;
+    document.getElementById('pathStep1').style.display = 'block';
+  }
+  renderPathStep1();
+  setTimeout(() => pathWizardNext(), 100);
 }
 
 // ── Step 1: Choose Programme ──
@@ -10629,6 +11272,8 @@ function renderPathStep1() {
     { id:'HIIT', icon:'⚡', name:'HIIT', subtitle:'Guided cardio + strength',
       desc:'2–5 days/week · Burn & tone · Best for cardio lovers', colour:'var(--orange)' }
   ];
+  // If currently selected programme is a library one, show its name in the library tile
+  const libSelected = isLibraryProgramme(_pathWizard.programme) ? getLibraryProgramme(_pathWizard.programme) : null;
   document.getElementById('pathStep1').innerHTML = `
     <div style="font-size:22px;font-weight:900;margin-bottom:6px;">Choose Your Path</div>
     <div style="font-size:14px;color:var(--text2);margin-bottom:20px;">
@@ -10649,6 +11294,23 @@ function renderPathStep1() {
         </div>
       </div>
     `).join('')}
+    <!-- Programme Library entry -->
+    <div class="path-prog-card ${libSelected ? 'selected' : ''}" onclick="openLibraryBrowse()"
+      style="background:linear-gradient(135deg,rgba(200,255,0,0.06),rgba(123,77,255,0.06));border-color:${libSelected?'var(--accent)':'rgba(200,255,0,0.3)'};">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div style="font-size:32px;">📚</div>
+        <div style="flex:1;">
+          <div style="font-size:16px;font-weight:800;color:var(--text);">
+            ${libSelected ? libSelected.name : 'Programme Library'}
+            <span style="font-size:12px;color:var(--accent);font-weight:700;margin-left:6px;">${libSelected ? '✓ Selected' : 'Browse classics'}</span>
+          </div>
+          <div style="font-size:12px;color:var(--text2);margin-top:3px;">
+            ${libSelected ? libSelected.blurb : '5/3/1 · StrongLifts · PHUL · PHAT · Arnold · Bro Split & more'}
+          </div>
+        </div>
+        <div style="font-size:18px;color:var(--accent);">${libSelected ? '✓' : '›'}</div>
+      </div>
+    </div>
     <button class="btn-p" style="width:100%;margin-top:8px;"
             onclick="pathWizardNext()" ${!_pathWizard.programme ? 'disabled' : ''}>
       Continue →
@@ -10670,9 +11332,10 @@ function skipPathWizard() {
 
 function selectPathProgramme(prog) {
   _pathWizard.programme = prog;
-  if(prog === 'ULF')  { _pathWizard.daysPerWeek = 3; _pathWizard.variant = 'standard'; }
-  if(prog === 'PPL')  { _pathWizard.daysPerWeek = 3; _pathWizard.variant = '3day'; }
-  if(prog === 'HIIT') { _pathWizard.daysPerWeek = 3; _pathWizard.variant = 'standard'; }
+  // Picking a built-in clears any library-specific state
+  if(prog === 'ULF')  { _pathWizard.daysPerWeek = 3; _pathWizard.variant = 'standard'; _pathWizard.coreDays = []; _pathWizard.addOns = []; }
+  if(prog === 'PPL')  { _pathWizard.daysPerWeek = 3; _pathWizard.variant = '3day';    _pathWizard.coreDays = []; _pathWizard.addOns = []; }
+  if(prog === 'HIIT') { _pathWizard.daysPerWeek = 3; _pathWizard.variant = 'standard'; _pathWizard.coreDays = []; _pathWizard.addOns = []; }
   renderPathStep1();
 }
 
@@ -10898,6 +11561,9 @@ function renderPathStep5() {
   const totalPerWeek = _pathWizard.daysPerWeek +
     _pathWizard.addOns.reduce((s, a) => s + a.frequency, 0);
 
+  // Display name: library programmes show their full name, built-ins show their short code
+  const lib = isLibraryProgramme(_pathWizard.programme) ? getLibraryProgramme(_pathWizard.programme) : null;
+  const displayName = lib ? lib.name : _pathWizard.programme;
   document.getElementById('pathStep5').innerHTML = `
     <div style="text-align:center;margin-bottom:24px;">
       <div style="font-size:48px;margin-bottom:10px;">🎯</div>
@@ -10908,7 +11574,7 @@ function renderPathStep5() {
       <div style="display:flex;flex-direction:column;gap:12px;">
         <div style="display:flex;justify-content:space-between;">
           <span style="color:var(--text2);font-size:13px;">Programme</span>
-          <span style="font-weight:800;color:var(--accent);">${_pathWizard.programme}</span>
+          <span style="font-weight:800;color:var(--accent);">${displayName}</span>
         </div>
         <div style="display:flex;justify-content:space-between;">
           <span style="color:var(--text2);font-size:13px;">Duration</span>
