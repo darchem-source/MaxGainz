@@ -545,6 +545,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-se
     <!-- PROGRESS -->
     <div class="screen" id="s-progress">
       <div class="page-header"><div class="page-title">Progress <span class="ac">Tracker</span></div></div>
+
+      <!-- THIS WEEK summary KPIs — at-a-glance overview -->
+      <div class="section-label">THIS WEEK</div>
+      <div id="weekKpiCard" style="margin:0 16px 4px;display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;"></div>
+
       <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px 8px;">
         <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text2);">PERSONAL BESTS</div>
         <button onclick="addPBTile()" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer;">+ Add lift</button>
@@ -10751,6 +10756,7 @@ function renderBWChart() {
 }
 
 function renderProgress(){
+  renderWeekKpi();
   renderPBCards();
   renderCalendar();
   selLift('bench',document.querySelector('#liftTabs .chip.active')||document.querySelector('#liftTabs .chip'));
@@ -11043,6 +11049,81 @@ const UNDER_TRAINED_HINTS = {
   lats:       'Try Pull-Ups or Lat Pulldown',
   quads:      'Try Squat or Leg Press',
 };
+
+// ─────────────────────────────────────────────────────────────────────
+// THIS WEEK — at-a-glance KPI tiles at top of Progress tab
+// Sessions · Volume · TUT · PRs (this calendar week, Mon-start)
+// ─────────────────────────────────────────────────────────────────────
+function renderWeekKpi(){
+  const el = document.getElementById('weekKpiCard');
+  if(!el) return;
+
+  // Mon-start week boundary
+  const now = new Date();
+  const wStart = new Date(now);
+  wStart.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  wStart.setHours(0, 0, 0, 0);
+
+  const weekSess = completedSessions.filter(s => {
+    const d = s.date instanceof Date ? s.date : new Date(s.date);
+    return d >= wStart && !s.manualActivity;
+  });
+
+  // Volume + TUT
+  let volume = 0, tutSec = 0;
+  weekSess.forEach(s => {
+    volume += s.volume || 0;
+    Object.entries(s.setLog || {}).forEach(([exName, data]) => {
+      const sets = data.sets || 0;
+      const repsArr = Array.isArray(data.reps) ? data.reps : (data.reps ? [data.reps] : []);
+      const avgReps = repsArr.length ? repsArr.reduce((a,r)=>a+(parseInt(r)||0),0) / repsArr.length : 8;
+      for(let i = 0; i < sets; i++){
+        const reps = parseInt(repsArr[i]) || avgReps;
+        if(reps <= 0) continue;
+        tutSec += (typeof TUT_HOLD_EXERCISES !== 'undefined' && TUT_HOLD_EXERCISES.has(exName))
+          ? reps
+          : reps * (typeof TUT_DEFAULT_TEMPO !== 'undefined' ? TUT_DEFAULT_TEMPO : 3);
+      }
+    });
+  });
+
+  // PRs this week — count distinct exercises that hit a new max weight
+  const allBefore = completedSessions.filter(s => {
+    const d = s.date instanceof Date ? s.date : new Date(s.date);
+    return d < wStart && !s.manualActivity;
+  });
+  const priorMax = {};
+  allBefore.forEach(s => {
+    Object.entries(s.setLog || {}).forEach(([n, v]) => {
+      const w = v.weight || 0;
+      if(w > (priorMax[n] || 0)) priorMax[n] = w;
+    });
+  });
+  const prSet = new Set();
+  weekSess.forEach(s => {
+    Object.entries(s.setLog || {}).forEach(([n, v]) => {
+      const w = v.weight || 0;
+      if(w > 0 && w > (priorMax[n] || 0)){
+        prSet.add(n);
+        if(w > (priorMax[n] || 0)) priorMax[n] = w; // ensure same exercise PR'd within the week only counts once
+      }
+    });
+  });
+
+  const volStr = volume >= 1000 ? (Math.round(volume / 100) / 10) + 'k' : Math.round(volume);
+  const tutStr = tutSec >= 3600 ? Math.round(tutSec / 360) / 10 + 'h' : Math.round(tutSec / 60) + 'm';
+
+  const tile = (val, sub, color) => `<div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:12px 8px;text-align:center;">
+    <div style="font-size:22px;font-weight:900;color:${color};line-height:1;">${val}</div>
+    <div style="font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-top:5px;">${sub}</div>
+  </div>`;
+
+  el.innerHTML = ''
+    + tile(weekSess.length, 'Sessions', 'var(--accent)')
+    + tile(volStr,          'Volume kg', 'var(--accent2)')
+    + tile(tutStr,          'TUT',       '#9d7bff')
+    + tile(prSet.size,      'PRs',       prSet.size > 0 ? '#4cff91' : 'var(--text2)');
+}
 
 function renderMuscleHeatmap(){
   const el = document.getElementById('muscleHeatmap');
