@@ -5961,7 +5961,10 @@ function renderAmrapCircuit(){
   const exList = (w.exercises || []).map((ex, idx) => {
     const curName = (sessExs[idx] && sessExs[idx].name) || ex.name;
     const isTreadmill = runKwA.some(k => curName.toLowerCase().includes(k));
-    const swapBtn = (!started && !isTreadmill)
+    // Show swap button BOTH pre-session and during a running AMRAP. The live
+    // circuit list re-reads from sessExs[idx].name on every render, so swapping
+    // mid-session updates all future loops of the circuit immediately.
+    const swapBtn = !isTreadmill
       ? `<button onclick="openFlatPreSessionSwap(${idx})" style="flex-shrink:0;background:var(--surface3);border:1px solid var(--border);border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700;color:var(--text2);cursor:pointer;margin-left:8px;">🔄 Swap</button>`
       : '';
     return `<div style="display:flex;align-items:center;padding:12px 16px;background:var(--surface3);border-radius:10px;margin-bottom:6px;">
@@ -6567,7 +6570,9 @@ function openFlatPreSessionSwap(exIdx){
   document.getElementById('swapMod').classList.add('open');
 }
 
-// Applies swap for AMRAP / EMOM / Core/Timed (single instance — no block repeats)
+// Applies swap for AMRAP / EMOM / Core/Timed (single instance — no block repeats).
+// Works both pre-session and mid-session: the live render functions read from
+// sessExs[idx].name every tick, so the swap takes effect on the next loop.
 function flatPreSessionSwapIn(exIdx, name){
   if(sessExs[exIdx]) sessExs[exIdx].name = name;
   document.getElementById('swapMod').classList.remove('open');
@@ -6577,6 +6582,9 @@ function flatPreSessionSwapIn(exIdx, name){
   if(w.format === 'AMRAP')       renderAmrapCircuit();
   else if(w.format === 'EMOM')   renderEmomPreview();
   else if(w.format === 'Core/Timed') renderCoreTimedPreview();
+  // Mid-session: surface a toast so the user sees confirmation even when
+  // their attention is on the timer, not the circuit list.
+  if(window._nonTabataSessionStarted) showToast('🔄 Swapped to ' + name);
 }
 
 // Opens the swap modal for a specific floor exercise (pre-session context)
@@ -11381,11 +11389,15 @@ const HIIT_TEMPLATES = [
   },
   {
     name:'Iso-Hold Core Crusher', format:'Core/Timed', duration:10, restSecs:15, diff:2,
-    tagline:'Five isometric holds — total trunk and posterior-chain endurance',
+    tagline:'Six isometric holds — total trunk and posterior-chain endurance',
     tags:['bw','apt','quick'],
     exercises:[
       {name:'Plank', reps:'45s', weight:0},
-      {name:'Side Plank', reps:'30s each side', weight:0},
+      // Side Plank split into explicit L and R entries — Core/Timed treats
+      // reps as a single duration, so combining sides into one 30s block
+      // would let users hold only one side without realising.
+      {name:'Side Plank (Left)', reps:'30s', weight:0},
+      {name:'Side Plank (Right)', reps:'30s', weight:0},
       {name:'Hollow Hold', reps:'30s', weight:0},
       {name:'Wall Sit', reps:'45s', weight:0},
       {name:'Superman Hold', reps:'30s', weight:0}
@@ -11400,7 +11412,7 @@ const HIIT_TEMPLATES = [
       {name:'Broad Jumps', reps:'6', weight:0},
       {name:'Tuck Jumps', reps:'8', weight:0},
       {name:'Lateral Bounds', reps:'10', weight:0},
-      {name:'Single-Leg Hops', reps:'8 each', weight:0}
+      {name:'Single-Leg Hops', reps:'8 each side', weight:0}
     ]
   },
   {
