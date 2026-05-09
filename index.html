@@ -1479,13 +1479,21 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
       <div class="chip" onclick="setExPickerFilter('cat','strength',this)">💪 Strength</div>
       <div class="chip" onclick="setExPickerFilter('cat','hiit',this)">⚡ HIIT</div>
     </div>
-    <div id="exPickerMuscleFilter" style="display:flex;gap:6px;margin-bottom:8px;overflow-x:auto;padding-bottom:2px;flex-shrink:0;">
+    <div id="exPickerMuscleFilter" style="display:flex;gap:6px;margin-bottom:6px;overflow-x:auto;padding-bottom:2px;flex-shrink:0;">
       <div class="chip active" onclick="setExPickerFilter('muscle','all',this)">All muscles</div>
       <div class="chip" onclick="setExPickerFilter('muscle','push',this)">Push</div>
       <div class="chip" onclick="setExPickerFilter('muscle','pull',this)">Pull</div>
       <div class="chip" onclick="setExPickerFilter('muscle','legs',this)">Legs</div>
       <div class="chip" onclick="setExPickerFilter('muscle','core',this)">Core</div>
       <div class="chip" onclick="setExPickerFilter('muscle','fullbody',this)">Full Body</div>
+    </div>
+    <!-- HIIT-specific filter row: shown only when ⚡ HIIT cat chip is active -->
+    <div id="exPickerHiitFilter" style="display:none;gap:6px;margin-bottom:8px;overflow-x:auto;padding-bottom:2px;flex-shrink:0;">
+      <div class="chip active" onclick="setExPickerFilter('hiit','all',this)">All</div>
+      <div class="chip" onclick="setExPickerFilter('hiit','no-jump',this)">🦵 No Jumping</div>
+      <div class="chip" onclick="setExPickerFilter('hiit','bw',this)">🏃 Bodyweight</div>
+      <div class="chip" onclick="setExPickerFilter('hiit','apt',this)">🏠 Apartment</div>
+      <div class="chip" onclick="setExPickerFilter('hiit','beg',this)">🌱 Beginner</div>
     </div>
     <div id="exPickerCount" style="font-size:11px;color:var(--text2);margin-bottom:6px;flex-shrink:0;"></div>
     <div id="customExPickerList" style="overflow-y:auto;flex:1;"></div>
@@ -9539,7 +9547,7 @@ function saveSubcategoryExercises(){
 }
 
 // ── EXERCISE LIBRARY PICKER ──
-let exPickerFilters={q:'',cat:'all',muscle:'all'};
+let exPickerFilters={q:'',cat:'all',muscle:'all',hiit:'all'};
 let exPickerContext='strength';
 
 function getExMuscleGroup(ex){
@@ -9554,29 +9562,48 @@ function getExMuscleGroup(ex){
 
 function openCustomExPicker(){
   exPickerContext='strength';
-  exPickerFilters={q:'',cat:'all',muscle:'all'};
+  exPickerFilters={q:'',cat:'all',muscle:'all',hiit:'all'};
   document.getElementById('customExSearch').value='';
   document.querySelectorAll('#exPickerCatFilter .chip').forEach((c,i)=>c.classList.toggle('active',i===0));
   document.querySelectorAll('#exPickerMuscleFilter .chip').forEach((c,i)=>c.classList.toggle('active',i===0));
+  document.querySelectorAll('#exPickerHiitFilter .chip').forEach((c,i)=>c.classList.toggle('active',i===0));
+  document.getElementById('exPickerHiitFilter').style.display='none';
   renderExPickerList();
   document.getElementById('customExPickerMod').classList.add('open');
 }
 
 function openHIITExPicker(){
   exPickerContext='hiit';
-  exPickerFilters={q:'',cat:'all',muscle:'all'};
+  // Default to ⚡ HIIT cat — user is creating a HIIT workout, so the
+  // HIIT-specific filter row should be visible and only HIIT exercises shown.
+  exPickerFilters={q:'',cat:'hiit',muscle:'all',hiit:'all'};
   document.getElementById('customExSearch').value='';
-  document.querySelectorAll('#exPickerCatFilter .chip').forEach((c,i)=>c.classList.toggle('active',i===0));
+  document.querySelectorAll('#exPickerCatFilter .chip').forEach((c,i)=>c.classList.toggle('active',i===2));
   document.querySelectorAll('#exPickerMuscleFilter .chip').forEach((c,i)=>c.classList.toggle('active',i===0));
+  document.querySelectorAll('#exPickerHiitFilter .chip').forEach((c,i)=>c.classList.toggle('active',i===0));
+  document.getElementById('exPickerHiitFilter').style.display='flex';
   renderExPickerList();
   document.getElementById('customExPickerMod').classList.add('open');
 }
 
 function setExPickerFilter(dim,val,el){
   exPickerFilters[dim]=val;
-  const id=dim==='cat'?'exPickerCatFilter':'exPickerMuscleFilter';
+  const idMap={cat:'exPickerCatFilter',muscle:'exPickerMuscleFilter',hiit:'exPickerHiitFilter'};
+  const id=idMap[dim];
   document.querySelectorAll('#'+id+' .chip').forEach(c=>c.classList.remove('active'));
   el.classList.add('active');
+  // Show/hide HIIT-specific filter row based on cat selection.
+  // When leaving HIIT, reset its filter so re-entering starts at "All".
+  if(dim==='cat'){
+    const hiitRow=document.getElementById('exPickerHiitFilter');
+    if(val==='hiit'){
+      hiitRow.style.display='flex';
+    } else {
+      hiitRow.style.display='none';
+      exPickerFilters.hiit='all';
+      document.querySelectorAll('#exPickerHiitFilter .chip').forEach((c,i)=>c.classList.toggle('active',i===0));
+    }
+  }
   renderExPickerList();
 }
 
@@ -9586,7 +9613,7 @@ function filterExPicker(q){
 }
 
 function renderExPickerList(){
-  const{q,cat,muscle}=exPickerFilters;
+  const{q,cat,muscle,hiit}=exPickerFilters;
   const ql=q.toLowerCase();
   const seen=new Set();
   let list=EXDB.filter(ex=>{
@@ -9598,6 +9625,13 @@ function renderExPickerList(){
   if(cat==='strength') list=list.filter(ex=>ex.type!=='hiit');
   else if(cat==='hiit') list=list.filter(ex=>ex.type==='hiit');
   if(muscle!=='all') list=list.filter(ex=>getExMuscleGroup(ex)===muscle);
+  // HIIT-specific filters (only meaningful when cat==='hiit')
+  if(cat==='hiit' && hiit && hiit!=='all'){
+    if(hiit==='no-jump') list=list.filter(ex=>ex.impact==='low');
+    else if(hiit==='bw') list=list.filter(ex=>ex.bw===true);
+    else if(hiit==='apt') list=list.filter(ex=>ex.impact==='low' && ex.space==='small');
+    else if(hiit==='beg') list=list.filter(ex=>ex.diff===1);
+  }
   list.sort((a,b)=>a.name.localeCompare(b.name));
   const dL=['','Beginner','Intermediate','Advanced','Elite'];
   const dC=['','var(--green)','var(--accent)','var(--orange)','var(--red)'];
@@ -9634,7 +9668,7 @@ function addExFromPicker(name){
 
 function sessAddExercise(){
   exPickerContext='session-add';
-  exPickerFilters={q:'',cat:'strength',muscle:'all'};
+  exPickerFilters={q:'',cat:'strength',muscle:'all',hiit:'all'};
   const mod=document.getElementById('customExPickerMod');
   document.getElementById('customExSearch').value='';
   // reset cat chips
@@ -9644,6 +9678,9 @@ function sessAddExercise(){
   document.querySelectorAll('#exPickerMuscleFilter .chip').forEach(c=>c.classList.remove('active'));
   const allMuscleChip=document.querySelector('#exPickerMuscleFilter .chip:first-child');
   if(allMuscleChip) allMuscleChip.classList.add('active');
+  // HIIT-specific row hidden by default in session-add (cat='strength')
+  document.querySelectorAll('#exPickerHiitFilter .chip').forEach((c,i)=>c.classList.toggle('active',i===0));
+  document.getElementById('exPickerHiitFilter').style.display='none';
   renderExPickerList();
   mod.classList.add('open');
 }
