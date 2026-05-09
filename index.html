@@ -8983,6 +8983,29 @@ const HIIT_FORMAT_COLORS={
   'For Time':'var(--red)'
 };
 
+// Emoji icons per HIIT format — used for the card thumbnails on the
+// Programme tab and template modal so each format is visually scannable.
+const HIIT_FORMAT_ICONS = {
+  'AMRAP':       '🔁',
+  'EMOM':        '⏱',
+  'Tabata':      '⚡',
+  'Core/Timed':  '🎯',
+  "Garry's Style":'🔥',
+  'Sprint Intervals':'💨',
+  'Circuit':     '🔄',
+  'Complex':     '🧩',
+  'Pyramid':     '🔺',
+  'For Time':    '🏁'
+};
+
+// Resolve a format/structure to an emoji. Barry's-style blocks (any
+// HIIT with .blocks) override format because that's the dominant
+// visual cue for those workouts.
+function _hiitIconFor(w){
+  if(w && w.blocks && w.blocks.length) return '🔥';
+  return (w && HIIT_FORMAT_ICONS[w.format]) || '💪';
+}
+
 function startHIIT(idx){
   const w=HIIT[idx];
   if(!w) return;
@@ -9385,10 +9408,11 @@ function _renderHIITStudioCards(){
      <div class="swipe-actions"><span class="ico">🗑</span> Delete</div>
      <div class="swipe-card day-card" data-swipe-delete="hiit:${ci}" style="margin:0;border-radius:10px;">
       <div class="day-head" onclick="togDay('${k}')">
-        <div class="day-icon" style="background:${fc}22;font-size:14px;font-weight:900;color:${fc};">${w.duration}m</div>
+        <div class="day-icon" style="background:${fc}22;font-size:22px;color:${fc};">${_hiitIconFor(w)}</div>
         <div style="flex:1;"><div style="font-size:14px;font-weight:700;">${w.name}</div>
           <div style="display:flex;gap:5px;margin-top:2px;flex-wrap:wrap;">
             <span style="font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;background:${fc}22;color:${fc};">${w.format}</span>
+            <span style="font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;background:var(--surface);color:var(--text2);">${w.duration}m</span>
             <span style="font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;background:rgba(200,255,0,0.15);color:var(--accent);">CUSTOM</span>
           </div>
         </div>
@@ -9415,10 +9439,11 @@ function _renderHIITStudioCards(){
       : (w.exercises || []).map(ex => `<div style="display:flex;align-items:center;padding:6px 0;border-bottom:0.5px solid var(--border);gap:8px;"><div style="flex:1;font-size:13px;font-weight:600;">${ex.name}</div><div style="font-size:12px;color:var(--accent);">${ex.sets}×${ex.reps}</div></div>`);
     return `<div class="day-card" style="margin:0 0 6px;border-radius:10px;">
       <div class="day-head" onclick="togDay('${k}')">
-        <div class="day-icon" style="background:${fc}22;font-size:14px;font-weight:900;color:${fc};">${w.duration}m</div>
+        <div class="day-icon" style="background:${fc}22;font-size:22px;color:${fc};">${_hiitIconFor(w)}</div>
         <div style="flex:1;"><div style="font-size:14px;font-weight:700;">${w.name}</div>
           <div style="display:flex;gap:5px;margin-top:2px;flex-wrap:wrap;">
             <span style="font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;background:${fc}22;color:${fc};">${w.format}</span>
+            <span style="font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;background:var(--surface);color:var(--text2);">${w.duration}m</span>
             <span style="font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;background:${diffColors[w.diff]}22;color:${diffColors[w.diff]};">${diffLabels[w.diff]}</span>
           </div>
         </div>
@@ -11447,8 +11472,10 @@ function renderHIITTemplates(){
   const dL = ['','Beginner','Intermediate','Advanced','Elite'];
   wrap.innerHTML = list.map(t => {
     const safe = t.name.replace(/'/g,"\\'");
+    const fc = HIIT_FORMAT_COLORS[t.format] || 'var(--text2)';
     return `<div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:14px;margin-bottom:8px;">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+        <div style="width:36px;height:36px;border-radius:9px;background:${fc}22;color:${fc};font-size:20px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${_hiitIconFor(t)}</div>
         <div style="font-size:15px;font-weight:800;color:var(--text);flex:1;min-width:0;">${t.name}</div>
         <span style="font-size:10px;font-weight:700;color:${dC[t.diff]};background:${dC[t.diff]}22;padding:2px 7px;border-radius:5px;flex-shrink:0;">${dL[t.diff]}</span>
       </div>
