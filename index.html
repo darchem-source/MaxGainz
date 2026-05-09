@@ -9466,8 +9466,22 @@ function _renderHIITStudioCards(){
 }
 
 function _renderHIITStudioSection(){
+  // Sample template names for the card tagline — first 4 give a good flavour
+  const tplSample = (typeof HIIT_TEMPLATES !== 'undefined' && HIIT_TEMPLATES.length)
+    ? HIIT_TEMPLATES.slice(0, 4).map(t => t.name).join(' · ')
+    : 'Tabata · AMRAP · EMOM · Apartment-friendly';
+  const tplCount = (typeof HIIT_TEMPLATES !== 'undefined') ? HIIT_TEMPLATES.length : 12;
   return `
     <div class="section-label">⚡ HIIT STUDIO</div>
+    <div onclick="openHIITTemplates()"
+      style="margin:0 16px 8px;padding:16px;background:linear-gradient(135deg,rgba(255,140,66,0.10),rgba(255,184,0,0.06));border:1px solid rgba(255,140,66,0.3);border-radius:14px;cursor:pointer;display:flex;align-items:center;gap:12px;">
+      <div style="font-size:32px;">📚</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:15px;font-weight:800;color:var(--text);">Browse ${tplCount} HIIT templates</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${tplSample} & more</div>
+      </div>
+      <div style="font-size:18px;color:var(--accent);">›</div>
+    </div>
     <div style="margin:0 16px 8px;display:flex;gap:8px;">
       <div style="flex:1;position:relative;">
         <input id="hiitSearchInput" type="text" placeholder="Search HIIT workouts…"
