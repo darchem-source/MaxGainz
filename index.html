@@ -12325,7 +12325,9 @@ function renderProgress(){
 
 // Switch which sub-tab section of the Progress screen is visible.
 // Called by the chip nav. Persists across sessions.
-function setProgressSubTab(tab, chipEl, skipPersist){
+// Optional `liftKey` (3rd arg) is honoured when tab==='strength' — taps the
+// matching chip in #liftTabs so insight cards can drill to a specific lift.
+function setProgressSubTab(tab, chipEl, skipPersist, liftKey){
   // Toggle chip active state
   document.querySelectorAll('#progSubTabs .chip').forEach(c => c.classList.remove('active'));
   if(chipEl) chipEl.classList.add('active');
@@ -12338,10 +12340,36 @@ function setProgressSubTab(tab, chipEl, skipPersist){
     el.classList.toggle('active', el.dataset.progTab === tab);
   });
   if(!skipPersist) lsSetRaw('progSubTab', tab);
+  // If we're routing to Strength with a specific lift, activate that chip
+  // and re-render its chart. selLift expects (key, chipElement).
+  if(tab === 'strength' && liftKey){
+    const liftChips = document.querySelectorAll('#liftTabs .chip');
+    let target = null;
+    liftChips.forEach(c => {
+      const onclick = c.getAttribute('onclick') || '';
+      if(onclick.includes("'" + liftKey + "'")) target = c;
+    });
+    if(target && typeof selLift === 'function') selLift(liftKey, target);
+  }
   // Scroll to top of the screen so the user sees the start of the new tab
   const tc = document.querySelector('.tab-content');
   if(tc) tc.scrollTop = 0;
 }
+
+// Map exercise names found in session history to the chip key used by the
+// Strength tab's lift chart (see #liftTabs in s-progress). Returns null if
+// the lift isn't tracked on the chart, in which case insight tap routes to
+// Strength tab without selecting a specific lift.
+const _LIFT_CHART_KEY = {
+  'Bench Press':'bench', 'Incline Bench Press':'bench', 'Dumbbell Bench Press':'bench',
+  'Decline Bench Press':'bench', 'Floor Press':'bench',
+  'Deadlift':'deadlift', 'Sumo Deadlift':'deadlift', 'Romanian Deadlift':'deadlift',
+  'Squat':'squat', 'Front Squat':'squat', 'Back Squat':'squat',
+  'Overhead Press':'ohp', 'OHP':'ohp', 'Strict Press':'ohp',
+  'Push Press':'pushpress',
+  'Barbell Row':'row', 'Bent Over Barbell Row':'row', 'Dumbbell Row':'row',
+  'T-Bar Row':'row', 'Cable Row':'row', 'Chest-Supported Row':'row'
+};
 
 // ── INSIGHTS ──
 // Generates 2-4 actionable observations from the user's training history.
@@ -12393,9 +12421,11 @@ function renderWeekInsights(){
   }
 
   // ── 2. PR readiness — last 3 sessions of a tracked lift trending up ──
-  // For each main lift name in the data, check the last 3 working sets.
-  // If each session's top weight ≥ previous session's top weight AND the
-  // most recent weight > the lift's all-time PB, you're due to test.
+  // For each lift in history, check the last 3 working sets. Monotonically
+  // non-decreasing AND a net gain over the window AND the most recent
+  // session within 14 days = PR window.
+  // We collect ALL candidates and emit a single aggregated insight rather
+  // than 4 separate cards (which would crowd out other heuristics).
   const liftHistory = {};
   completedSessions.forEach(s => {
     if(s.manualActivity) return;
@@ -12406,22 +12436,41 @@ function renderWeekInsights(){
       (liftHistory[n] = liftHistory[n] || []).push({ts:sd, weight:w});
     });
   });
+  const prCandidates = [];
   Object.entries(liftHistory).forEach(([name, hist]) => {
     if(hist.length < 3) return;
     hist.sort((a,b) => a.ts - b.ts);
     const last3 = hist.slice(-3);
     const monotonic = last3[0].weight <= last3[1].weight && last3[1].weight <= last3[2].weight;
-    const strict   = last3[0].weight  < last3[2].weight;  // at least some net gain
-    if(monotonic && strict){
-      // Recent enough? (within 14 days)
-      if(now - last3[2].ts <= 14 * dayMs){
-        insights.push({
-          text: `🎯 ${name} PR window — 3 sessions of progress (${last3[0].weight}kg → ${last3[2].weight}kg). Try a top single this week.`,
-          target: 'strength'
-        });
-      }
+    const strict   = last3[0].weight  < last3[2].weight;
+    if(monotonic && strict && (now - last3[2].ts <= 14 * dayMs)){
+      prCandidates.push({
+        name,
+        from: last3[0].weight,
+        to:   last3[2].weight,
+        gain: last3[2].weight - last3[0].weight,
+        ts:   last3[2].ts
+      });
     }
   });
+  if(prCandidates.length === 1){
+    const p = prCandidates[0];
+    insights.push({
+      text: `🎯 ${p.name} PR window — 3 sessions of progress (${p.from}kg → ${p.to}kg). Try a top single this week.`,
+      target: 'strength',
+      liftKey: _LIFT_CHART_KEY[p.name] || null
+    });
+  } else if(prCandidates.length >= 2){
+    // Sort by recency × gain so the most relevant lifts lead the list
+    prCandidates.sort((a,b) => (b.gain - a.gain) || (b.ts - a.ts));
+    const names = prCandidates.slice(0, 4).map(p => p.name);
+    const more  = prCandidates.length > 4 ? ` + ${prCandidates.length - 4} more` : '';
+    insights.push({
+      text: `🎯 ${prCandidates.length} lifts in PR window — ${names.join(', ')}${more}. Pick one and test a top single.`,
+      target: 'strength',
+      liftKey: _LIFT_CHART_KEY[prCandidates[0].name] || null
+    });
+  }
 
   // ── 3. Push:Pull balance over last 4 weeks ──────────────────────────
   let pushVol = 0, pullVol = 0;
@@ -12495,8 +12544,11 @@ function renderWeekInsights(){
   }
   wrap.innerHTML = top.map(ins => {
     const targetChip = document.querySelector('#progSubTabs .chip[data-tab="' + (ins.target||'') + '"]');
+    // Build the onclick — pass liftKey through as 4th arg when present so
+    // PR-window cards drill into the specific lift's chart on Strength.
+    const liftArg = ins.liftKey ? `,'${ins.liftKey}'` : '';
     const tapAttr = targetChip
-      ? ` onclick="setProgressSubTab('${ins.target}',document.querySelector('#progSubTabs .chip[data-tab=\\'${ins.target}\\']'))"`
+      ? ` onclick="setProgressSubTab('${ins.target}',document.querySelector('#progSubTabs .chip[data-tab=\\'${ins.target}\\']'),false${liftArg})"`
       : '';
     const cursor = targetChip ? 'cursor:pointer;' : '';
     return `<div${tapAttr} style="background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:8px;font-size:13px;line-height:1.45;color:var(--text);${cursor}display:flex;align-items:center;gap:10px;">
