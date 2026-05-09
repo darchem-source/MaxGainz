@@ -1133,6 +1133,13 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
         <div style="font-size:12px;color:var(--text2);margin-top:2px;">AMRAP, EMOM, Tabata or Core/Timed</div>
       </div>
     </button>
+    <button onclick="document.getElementById('createChooserMod').classList.remove('open');openHIITTemplates()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:14px;padding:16px;text-align:left;cursor:pointer;margin-bottom:10px;display:flex;align-items:center;gap:14px;">
+      <div style="font-size:28px;flex-shrink:0;">📚</div>
+      <div>
+        <div style="font-size:15px;font-weight:700;color:var(--text);">HIIT Templates</div>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px;">Ready-made sessions — tap, tweak, save</div>
+      </div>
+    </button>
     <button onclick="document.getElementById('createChooserMod').classList.remove('open')" style="width:100%;background:transparent;border:none;color:var(--text2);font-size:13px;padding:10px;cursor:pointer;">Cancel</button>
   </div>
 </div>
@@ -1179,6 +1186,25 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
     
     <button class="btn-p" style="width:100%;margin-top:6px;" onclick="saveCustomHIIT()">Save HIIT Workout</button>
     <button onclick="document.getElementById('createHIITMod').classList.remove('open')" style="width:100%;margin-top:8px;background:transparent;border:none;color:var(--text2);font-size:13px;padding:8px;cursor:pointer;">Cancel</button>
+  </div>
+</div>
+
+<!-- HIIT TEMPLATES MODAL -->
+<div class="modal-ov" id="hiitTemplatesMod" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal" style="display:flex;flex-direction:column;max-height:92vh;padding-bottom:8px;">
+    <div class="modal-handle"></div>
+    <div style="font-size:19px;font-weight:800;margin-bottom:4px;">HIIT Templates</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:12px;">Tap a template to load it. Edit anything before saving.</div>
+    <div id="hiitTplFilter" style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:2px;flex-shrink:0;">
+      <div class="chip active" onclick="setHIITTplFilter('all',this)">All</div>
+      <div class="chip" onclick="setHIITTplFilter('bw',this)">🏃 Bodyweight</div>
+      <div class="chip" onclick="setHIITTplFilter('apt',this)">🏠 Apartment</div>
+      <div class="chip" onclick="setHIITTplFilter('beg',this)">🌱 Beginner</div>
+      <div class="chip" onclick="setHIITTplFilter('quick',this)">⏱ Quick (≤15)</div>
+      <div class="chip" onclick="setHIITTplFilter('long',this)">⏳ Long (≥20)</div>
+    </div>
+    <div id="hiitTplList" style="overflow-y:auto;flex:1;"></div>
+    <button onclick="document.getElementById('hiitTemplatesMod').classList.remove('open')" style="width:100%;margin-top:8px;background:transparent;border:none;color:var(--text2);font-size:13px;padding:8px;cursor:pointer;flex-shrink:0;">Cancel</button>
   </div>
 </div>
 
@@ -11208,6 +11234,221 @@ function startCustomHIIT(idx){
   // Then start it via the standard HIIT routing
   const hiitIdx = HIIT.findIndex(h => h.name === w.name);
   startHIIT(hiitIdx);
+}
+
+// ── BUILT-IN HIIT TEMPLATES ──
+// Each template is a starting point that auto-fills the Create HIIT form.
+// `tags` enables filter chips: bw (bodyweight), apt (apartment-friendly),
+// beg (beginner), quick (≤15min), long (≥20min). Multiple tags allowed.
+const HIIT_TEMPLATES = [
+  {
+    name:'20-Min Burner', format:'AMRAP', duration:20, diff:2,
+    tagline:'Classic full-body AMRAP — repeat the circuit until time runs out',
+    tags:['bw','quick'],
+    exercises:[
+      {name:'Burpees', reps:'10', weight:0},
+      {name:'Mountain Climbers', reps:'30s', weight:0},
+      {name:'Jump Squats', reps:'15', weight:0},
+      {name:'Push-Ups', reps:'10', weight:0}
+    ]
+  },
+  {
+    name:'Tabata Cardio', format:'Tabata', duration:16, diff:2,
+    tagline:'Eight rounds of 20-on / 10-off per exercise — pure conditioning',
+    tags:['bw','apt','quick'],
+    exercises:[
+      {name:'Jumping Jacks', reps:'20s', weight:0},
+      {name:'High Knees', reps:'20s', weight:0},
+      {name:'Mountain Climbers', reps:'20s', weight:0},
+      {name:'Burpees', reps:'20s', weight:0}
+    ]
+  },
+  {
+    name:'Apartment Friendly', format:'Core/Timed', duration:15, restSecs:15, diff:1,
+    tagline:'Zero jumping, zero noise — perfect for downstairs neighbours',
+    tags:['bw','apt','beg','quick'],
+    exercises:[
+      {name:'Wall Push-Ups', reps:'45s', weight:0},
+      {name:'Glute Bridges', reps:'45s', weight:0},
+      {name:'Plank', reps:'45s', weight:0},
+      {name:'Standing Mountain Climbers', reps:'45s', weight:0},
+      {name:'Marching in Place', reps:'45s', weight:0}
+    ]
+  },
+  {
+    name:'No Equipment Fast', format:'AMRAP', duration:12, diff:2,
+    tagline:'12-minute bodyweight onslaught — just floor space and grit',
+    tags:['bw','quick'],
+    exercises:[
+      {name:'Push-Ups', reps:'10', weight:0},
+      {name:'Jump Squats', reps:'15', weight:0},
+      {name:'Burpees', reps:'8', weight:0},
+      {name:'Sit-Ups', reps:'15', weight:0}
+    ]
+  },
+  {
+    name:'EMOM Strength', format:'EMOM', duration:15, diff:3,
+    tagline:'Loaded EMOM — alternates pull, press, hinge for total-body strength under fatigue',
+    tags:['quick'],
+    exercises:[
+      {name:'Dumbbell Thrusters', reps:'8', weight:15},
+      {name:'Pull-Ups', reps:'6', weight:0},
+      {name:'Kettlebell Swings', reps:'15', weight:24}
+    ]
+  },
+  {
+    name:'Beginner Starter', format:'Core/Timed', duration:12, restSecs:20, diff:1,
+    tagline:'Gentle introduction — easy movements, longer rests, no impact',
+    tags:['bw','apt','beg','quick'],
+    exercises:[
+      {name:'Marching in Place', reps:'40s', weight:0},
+      {name:'Wall Push-Ups', reps:'40s', weight:0},
+      {name:'Glute Bridges', reps:'40s', weight:0},
+      {name:'Sit-Ups', reps:'40s', weight:0},
+      {name:'Plank', reps:'30s', weight:0}
+    ]
+  },
+  {
+    name:'Pull-Day Conditioning', format:'Tabata', duration:16, diff:3,
+    tagline:'Tabata-style pull volume — bar work plus rowing variations to trash the back',
+    tags:[],
+    exercises:[
+      {name:'Pull-Ups', reps:'20s', weight:0},
+      {name:'Inverted Rows', reps:'20s', weight:0},
+      {name:'Renegade Rows', reps:'20s', weight:15},
+      {name:'Bent-Over Row Burst', reps:'20s', weight:15}
+    ]
+  },
+  {
+    name:'Iso-Hold Core Crusher', format:'Core/Timed', duration:10, restSecs:15, diff:2,
+    tagline:'Five isometric holds — total trunk and posterior-chain endurance',
+    tags:['bw','apt','quick'],
+    exercises:[
+      {name:'Plank', reps:'45s', weight:0},
+      {name:'Side Plank', reps:'30s each side', weight:0},
+      {name:'Hollow Hold', reps:'30s', weight:0},
+      {name:'Wall Sit', reps:'45s', weight:0},
+      {name:'Superman Hold', reps:'30s', weight:0}
+    ]
+  },
+  {
+    name:'Plyo Power 15', format:'EMOM', duration:15, diff:3,
+    tagline:'Every minute, one explosive movement — develops max lower-body output',
+    tags:[],
+    exercises:[
+      {name:'Box Jumps', reps:'8', weight:0},
+      {name:'Broad Jumps', reps:'6', weight:0},
+      {name:'Tuck Jumps', reps:'8', weight:0},
+      {name:'Lateral Bounds', reps:'10', weight:0},
+      {name:'Single-Leg Hops', reps:'8 each', weight:0}
+    ]
+  },
+  {
+    name:'Couch-to-Cardio', format:'Core/Timed', duration:10, restSecs:20, diff:1,
+    tagline:'Beginner cardio progression — short bursts with generous rest',
+    tags:['bw','beg','quick'],
+    exercises:[
+      {name:'Marching in Place', reps:'45s', weight:0},
+      {name:'Jumping Jacks', reps:'30s', weight:0},
+      {name:'Step-Ups', reps:'45s', weight:0},
+      {name:'High Knees', reps:'20s', weight:0}
+    ]
+  },
+  {
+    name:'30-Min Total', format:'AMRAP', duration:30, diff:3,
+    tagline:'The long one — full-body AMRAP that mixes pull, press, hinge and core',
+    tags:['long'],
+    exercises:[
+      {name:'Burpees', reps:'8', weight:0},
+      {name:'Pull-Ups', reps:'5', weight:0},
+      {name:'Kettlebell Swings', reps:'15', weight:24},
+      {name:'Wall Balls', reps:'12', weight:9},
+      {name:'Push-Ups', reps:'12', weight:0},
+      {name:'Sit-Ups', reps:'15', weight:0}
+    ]
+  },
+  {
+    name:'Travel WOD', format:'AMRAP', duration:15, diff:2,
+    tagline:'Hotel-room workout — every movement bodyweight, no kit needed',
+    tags:['bw','quick'],
+    exercises:[
+      {name:'Push-Ups', reps:'12', weight:0},
+      {name:'Jump Squats', reps:'15', weight:0},
+      {name:'Sit-Ups', reps:'15', weight:0},
+      {name:'Mountain Climbers', reps:'30s', weight:0},
+      {name:'Plank', reps:'45s', weight:0}
+    ]
+  }
+];
+
+let _hiitTplFilter = 'all';
+
+function openHIITTemplates(){
+  _hiitTplFilter = 'all';
+  document.querySelectorAll('#hiitTplFilter .chip').forEach((c,i)=>c.classList.toggle('active',i===0));
+  renderHIITTemplates();
+  document.getElementById('hiitTemplatesMod').classList.add('open');
+}
+
+function setHIITTplFilter(val, el){
+  _hiitTplFilter = val;
+  document.querySelectorAll('#hiitTplFilter .chip').forEach(c=>c.classList.remove('active'));
+  el.classList.add('active');
+  renderHIITTemplates();
+}
+
+function renderHIITTemplates(){
+  const wrap = document.getElementById('hiitTplList');
+  if(!wrap) return;
+  let list = HIIT_TEMPLATES.slice();
+  if(_hiitTplFilter !== 'all'){
+    list = list.filter(t => (t.tags||[]).includes(_hiitTplFilter));
+  }
+  if(!list.length){
+    wrap.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text2);font-size:13px;">No templates match that filter.</div>';
+    return;
+  }
+  const dC = ['','var(--green)','var(--accent)','var(--orange)','var(--red)'];
+  const dL = ['','Beginner','Intermediate','Advanced','Elite'];
+  wrap.innerHTML = list.map(t => {
+    const safe = t.name.replace(/'/g,"\\'");
+    return `<div onclick="loadHIITTemplate('${safe}')" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:14px;margin-bottom:8px;cursor:pointer;transition:transform 0.15s var(--ease-out);">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+        <div style="font-size:15px;font-weight:800;color:var(--text);flex:1;min-width:0;">${t.name}</div>
+        <span style="font-size:10px;font-weight:700;color:${dC[t.diff]};background:${dC[t.diff]}22;padding:2px 7px;border-radius:5px;flex-shrink:0;">${dL[t.diff]}</span>
+      </div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:8px;line-height:1.4;">${t.tagline}</div>
+      <div style="display:flex;align-items:center;gap:10px;font-size:11px;color:var(--text2);">
+        <span style="font-weight:700;color:var(--accent);">${t.format}</span>
+        <span>·</span>
+        <span>${t.duration} min</span>
+        <span>·</span>
+        <span>${t.exercises.length} exercise${t.exercises.length!==1?'s':''}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function loadHIITTemplate(name){
+  const tpl = HIIT_TEMPLATES.find(t => t.name === name);
+  if(!tpl){ showToast('⚠️ Template not found'); return; }
+  // Close templates modal, open Create HIIT modal pre-filled.
+  document.getElementById('hiitTemplatesMod').classList.remove('open');
+  // Build a fresh state from a deep copy so editing doesn't mutate the template.
+  buildingHIIT = {
+    name: tpl.name,
+    format: tpl.format,
+    duration: tpl.duration,
+    restSecs: tpl.restSecs || 15,
+    exercises: tpl.exercises.map(e => ({...e}))
+  };
+  document.getElementById('createHIITTitle').textContent = 'Customise Template';
+  document.getElementById('createHIITName').value = tpl.name;
+  document.getElementById('createHIITDur').textContent = tpl.duration;
+  document.getElementById('createHIITRest').textContent = buildingHIIT.restSecs;
+  setCreateHIITFormat(tpl.format); // also re-renders exercises and toggles rest row
+  renderCreateHIITExercises();
+  document.getElementById('createHIITMod').classList.add('open');
 }
 
 // ── PLATE CALCULATOR ──
