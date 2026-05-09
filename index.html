@@ -84,6 +84,11 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 .collapsible-section.expanded .cs-chevron { transform: rotate(180deg); }
 .cs-body { padding: 0 14px 14px; display: none; border-top: 0.5px solid var(--border); padding-top: 14px; }
 .collapsible-section.expanded .cs-body { display: block; animation: csExpand 0.25s ease; }
+
+/* Progress sub-tab visibility — only the active tab's content is shown.
+   The chip nav in #progSubTabs toggles which container has .active. */
+[data-prog-tab] { display: none; }
+[data-prog-tab].active { display: block; }
 @keyframes csExpand { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 .card { background: var(--surface); border: 0.5px solid var(--border); border-radius: 16px; margin: 0 16px 10px; overflow: hidden; }
 .btn-p { background: var(--accent); color: #000; border: none; border-radius: var(--radius-md); font-size: 15px; font-weight: 800; padding: var(--space-4); min-height: 48px; cursor: pointer; transition: all var(--dur-fast); }
@@ -619,121 +624,140 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
     <div class="screen" id="s-progress">
       <div class="page-header"><div class="page-title">Progress <span class="ac">Tracker</span></div></div>
 
-      <!-- THIS WEEK summary KPIs — at-a-glance overview -->
-      <div class="section-label">THIS WEEK</div>
-      <div id="weekKpiCard" style="margin:0 16px 4px;display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;"></div>
-
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px 8px;">
-        <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text2);">PERSONAL BESTS</div>
-        <button onclick="addPBTile()" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer;">+ Add lift</button>
+      <!-- Sub-tab nav: groups 11 sections into 4 logical buckets so the
+           tab is no longer one long scroll of equally-weighted analytics. -->
+      <div id="progSubTabs" style="display:flex;gap:6px;margin:0 16px 12px;overflow-x:auto;padding-bottom:2px;">
+        <div class="chip active" data-tab="week"     onclick="setProgressSubTab('week',this)">⚡ This week</div>
+        <div class="chip"        data-tab="strength" onclick="setProgressSubTab('strength',this)">📈 Strength</div>
+        <div class="chip"        data-tab="volume"   onclick="setProgressSubTab('volume',this)">💪 Volume</div>
+        <div class="chip"        data-tab="habits"   onclick="setProgressSubTab('habits',this)">🔁 Habits</div>
       </div>
-      <div id="pbCards"></div>
-      
-      <!-- Workout Calendar -->
-      <div class="section-label">WORKOUT CALENDAR</div>
-      <div class="card" style="padding:14px 12px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding:0 4px;">
-          <button onclick="changeCalMonth(-1)" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;width:36px;height:36px;font-size:16px;font-weight:700;color:var(--text);cursor:pointer;">‹</button>
-          <div style="text-align:center;">
-            <div style="font-size:16px;font-weight:800;color:var(--text);" id="calMonthLabel">April 2026</div>
-            <div style="font-size:11px;color:var(--text2);margin-top:2px;" id="calMonthStats">0 workouts · 0% of days</div>
+
+      <!-- ─── THIS WEEK ─── default landing: KPIs + actionable insights ─── -->
+      <div data-prog-tab="week" class="active">
+        <div class="section-label">THIS WEEK</div>
+        <div id="weekKpiCard" style="margin:0 16px 4px;display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;"></div>
+        <div class="section-label" style="padding-top:18px;">INSIGHTS</div>
+        <div id="weekInsights" style="margin:0 16px 24px;"></div>
+      </div>
+
+      <!-- ─── STRENGTH ─── PBs, lift trends, 1RM, strength ratios ─── -->
+      <div data-prog-tab="strength">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px 8px;">
+          <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text2);">PERSONAL BESTS</div>
+          <button onclick="addPBTile()" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer;">+ Add lift</button>
+        </div>
+        <div id="pbCards"></div>
+
+        <div class="section-label">LIFT PROGRESS</div>
+        <div style="display:flex;gap:8px;padding:0 16px 12px;overflow-x:auto;" id="liftTabs">
+          <div class="chip active" onclick="selLift('bench',this)">Bench</div>
+          <div class="chip" onclick="selLift('deadlift',this)">Deadlift</div>
+          <div class="chip" onclick="selLift('squat',this)">Squat</div>
+          <div class="chip" onclick="selLift('ohp',this)">OHP</div>
+          <div class="chip" onclick="selLift('pushpress',this)">Push Press</div>
+          <div class="chip" onclick="selLift('row',this)">Row</div>
+        </div>
+        <!-- Variation pills: shown when multiple exact-name variations are found in history -->
+        <div id="variationPicker" style="display:none;flex-wrap:wrap;gap:6px;padding:0 16px 10px;"></div>
+        <div class="card" style="padding:16px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <div><div style="font-size:15px;font-weight:700;" id="liftName">Bench Press</div><div style="font-size:12px;color:var(--text2);" id="liftDetail">31 sessions</div></div>
+            <div style="text-align:right;"><div style="font-size:20px;font-weight:900;color:var(--accent);" id="liftPB">82.5 kg</div><div style="background:rgba(200,255,0,0.15);color:var(--accent);font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;">PB</div></div>
           </div>
-          <button onclick="changeCalMonth(1)" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;width:36px;height:36px;font-size:16px;font-weight:700;color:var(--text);cursor:pointer;">›</button>
+          <!-- Chart row: Y-axis labels on left + SVG on right -->
+          <div style="display:flex;height:116px;gap:0;">
+            <div id="liftYAxis" style="width:34px;flex-shrink:0;position:relative;"></div>
+            <div id="liftChart" style="flex:1;min-width:0;overflow:visible;"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--text2);margin-left:34px;" id="chartX"></div>
         </div>
-        <div id="calGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px;"></div>
-        <div style="display:flex;justify-content:center;gap:14px;margin-top:14px;font-size:10px;color:var(--text2);">
-          <span>🏋️ Lift</span>
-          <span>⚡ HIIT</span>
-          <span>🏃 Activity</span>
-          <span style="opacity:0.5;">○ Rest</span>
+
+        <div class="section-label">ESTIMATED 1RM</div>
+        <div class="card" style="padding:16px;"><div id="oneRMChart"></div></div>
+
+        <div class="collapsible-section" id="cs-strengthRatios" style="margin-bottom:24px;">
+          <div class="cs-header" onclick="toggleProgressSection('strengthRatios')">
+            <div class="cs-title">📐 Strength ratios</div>
+            <div class="cs-summary"></div>
+            <div class="cs-chevron">▼</div>
+          </div>
+          <div class="cs-body"><div id="strengthRatios"></div></div>
         </div>
-        <div style="text-align:center;margin-top:8px;font-size:11px;color:var(--text2);font-style:italic;">Tap any workout day for full details</div>
-      </div>
-      
-      <div class="section-label">LIFT PROGRESS</div>
-      <div style="display:flex;gap:8px;padding:0 16px 12px;overflow-x:auto;" id="liftTabs">
-        <div class="chip active" onclick="selLift('bench',this)">Bench</div>
-        <div class="chip" onclick="selLift('deadlift',this)">Deadlift</div>
-        <div class="chip" onclick="selLift('squat',this)">Squat</div>
-        <div class="chip" onclick="selLift('ohp',this)">OHP</div>
-        <div class="chip" onclick="selLift('pushpress',this)">Push Press</div>
-        <div class="chip" onclick="selLift('row',this)">Row</div>
-      </div>
-      <!-- Variation pills: shown when multiple exact-name variations are found in history -->
-      <div id="variationPicker" style="display:none;flex-wrap:wrap;gap:6px;padding:0 16px 10px;"></div>
-      <div class="card" style="padding:16px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-          <div><div style="font-size:15px;font-weight:700;" id="liftName">Bench Press</div><div style="font-size:12px;color:var(--text2);" id="liftDetail">31 sessions</div></div>
-          <div style="text-align:right;"><div style="font-size:20px;font-weight:900;color:var(--accent);" id="liftPB">82.5 kg</div><div style="background:rgba(200,255,0,0.15);color:var(--accent);font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;">PB</div></div>
-        </div>
-        <!-- Chart row: Y-axis labels on left + SVG on right -->
-        <div style="display:flex;height:116px;gap:0;">
-          <div id="liftYAxis" style="width:34px;flex-shrink:0;position:relative;"></div>
-          <div id="liftChart" style="flex:1;min-width:0;overflow:visible;"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--text2);margin-left:34px;" id="chartX"></div>
       </div>
 
-      <div class="section-label">ESTIMATED 1RM</div>
-      <div class="card" style="padding:16px;"><div id="oneRMChart"></div></div>
+      <!-- ─── VOLUME ─── muscle heatmap + balance + compound/isolation ─── -->
+      <div data-prog-tab="volume">
+        <div class="section-label">MUSCLE HEATMAP</div>
+        <div class="card" style="padding:16px;"><div id="muscleHeatmap"></div></div>
 
-      <div class="section-label">MUSCLE HEATMAP</div>
-      <div class="card" style="padding:16px;"><div id="muscleHeatmap"></div></div>
-
-      <div class="section-label" style="padding-top:18px;">ANALYTICS · TAP TO EXPAND</div>
-
-      <div class="collapsible-section" id="cs-muscleBal">
-        <div class="cs-header" onclick="toggleProgressSection('muscleBal')">
-          <div class="cs-title">⚖️ Muscle balance</div>
-          <div class="cs-summary"></div>
-          <div class="cs-chevron">▼</div>
+        <div class="collapsible-section" id="cs-muscleBal">
+          <div class="cs-header" onclick="toggleProgressSection('muscleBal')">
+            <div class="cs-title">⚖️ Muscle balance</div>
+            <div class="cs-summary"></div>
+            <div class="cs-chevron">▼</div>
+          </div>
+          <div class="cs-body"><div id="muscleBal"></div></div>
         </div>
-        <div class="cs-body"><div id="muscleBal"></div></div>
+
+        <div class="collapsible-section" id="cs-compoundIsolation" style="margin-bottom:24px;">
+          <div class="cs-header" onclick="toggleProgressSection('compoundIsolation')">
+            <div class="cs-title">🏋️ Compound vs isolation</div>
+            <div class="cs-summary"></div>
+            <div class="cs-chevron">▼</div>
+          </div>
+          <div class="cs-body"><div id="compoundIsolation"></div></div>
+        </div>
       </div>
 
-      <div class="collapsible-section" id="cs-strengthRatios">
-        <div class="cs-header" onclick="toggleProgressSection('strengthRatios')">
-          <div class="cs-title">📐 Strength ratios</div>
-          <div class="cs-summary"></div>
-          <div class="cs-chevron">▼</div>
+      <!-- ─── HABITS ─── calendar + TUT + rest + training frequency ─── -->
+      <div data-prog-tab="habits">
+        <div class="section-label">WORKOUT CALENDAR</div>
+        <div class="card" style="padding:14px 12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding:0 4px;">
+            <button onclick="changeCalMonth(-1)" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;width:36px;height:36px;font-size:16px;font-weight:700;color:var(--text);cursor:pointer;">‹</button>
+            <div style="text-align:center;">
+              <div style="font-size:16px;font-weight:800;color:var(--text);" id="calMonthLabel">April 2026</div>
+              <div style="font-size:11px;color:var(--text2);margin-top:2px;" id="calMonthStats">0 workouts · 0% of days</div>
+            </div>
+            <button onclick="changeCalMonth(1)" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;width:36px;height:36px;font-size:16px;font-weight:700;color:var(--text);cursor:pointer;">›</button>
+          </div>
+          <div id="calGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px;"></div>
+          <div style="display:flex;justify-content:center;gap:14px;margin-top:14px;font-size:10px;color:var(--text2);">
+            <span>🏋️ Lift</span>
+            <span>⚡ HIIT</span>
+            <span>🏃 Activity</span>
+            <span style="opacity:0.5;">○ Rest</span>
+          </div>
+          <div style="text-align:center;margin-top:8px;font-size:11px;color:var(--text2);font-style:italic;">Tap any workout day for full details</div>
         </div>
-        <div class="cs-body"><div id="strengthRatios"></div></div>
-      </div>
 
-      <div class="collapsible-section" id="cs-compoundIsolation">
-        <div class="cs-header" onclick="toggleProgressSection('compoundIsolation')">
-          <div class="cs-title">🏋️ Compound vs isolation</div>
-          <div class="cs-summary"></div>
-          <div class="cs-chevron">▼</div>
+        <div class="collapsible-section" id="cs-trainingFrequency">
+          <div class="cs-header" onclick="toggleProgressSection('trainingFrequency')">
+            <div class="cs-title">📅 Training frequency</div>
+            <div class="cs-summary"></div>
+            <div class="cs-chevron">▼</div>
+          </div>
+          <div class="cs-body"><div id="trainingFrequency"></div></div>
         </div>
-        <div class="cs-body"><div id="compoundIsolation"></div></div>
-      </div>
 
-      <div class="collapsible-section" id="cs-timeUnderTension">
-        <div class="cs-header" onclick="toggleProgressSection('timeUnderTension')">
-          <div class="cs-title">⏱ Time under tension</div>
-          <div class="cs-summary"></div>
-          <div class="cs-chevron">▼</div>
+        <div class="collapsible-section" id="cs-timeUnderTension">
+          <div class="cs-header" onclick="toggleProgressSection('timeUnderTension')">
+            <div class="cs-title">⏱ Time under tension</div>
+            <div class="cs-summary"></div>
+            <div class="cs-chevron">▼</div>
+          </div>
+          <div class="cs-body"><div id="timeUnderTension"></div></div>
         </div>
-        <div class="cs-body"><div id="timeUnderTension"></div></div>
-      </div>
 
-      <div class="collapsible-section" id="cs-restAnalysis">
-        <div class="cs-header" onclick="toggleProgressSection('restAnalysis')">
-          <div class="cs-title">😮‍💨 Rest time analysis</div>
-          <div class="cs-summary"></div>
-          <div class="cs-chevron">▼</div>
+        <div class="collapsible-section" id="cs-restAnalysis" style="margin-bottom:24px;">
+          <div class="cs-header" onclick="toggleProgressSection('restAnalysis')">
+            <div class="cs-title">😮‍💨 Rest time analysis</div>
+            <div class="cs-summary"></div>
+            <div class="cs-chevron">▼</div>
+          </div>
+          <div class="cs-body"><div id="restAnalysis"></div></div>
         </div>
-        <div class="cs-body"><div id="restAnalysis"></div></div>
-      </div>
-
-      <div class="collapsible-section" id="cs-trainingFrequency" style="margin-bottom:24px;">
-        <div class="cs-header" onclick="toggleProgressSection('trainingFrequency')">
-          <div class="cs-title">📅 Training frequency</div>
-          <div class="cs-summary"></div>
-          <div class="cs-chevron">▼</div>
-        </div>
-        <div class="cs-body"><div id="trainingFrequency"></div></div>
       </div>
     </div>
 
@@ -12279,6 +12303,7 @@ function renderBWChart() {
 
 function renderProgress(){
   renderWeekKpi();
+  renderWeekInsights();
   renderPBCards();
   renderCalendar();
   selLift('bench',document.querySelector('#liftTabs .chip.active')||document.querySelector('#liftTabs .chip'));
@@ -12290,7 +12315,195 @@ function renderProgress(){
   renderRestAnalysis();
   renderTrainingFrequency();
   _applyProgSectionState();
+  // Apply the user's last-selected sub-tab (defaults to 'week' on first run)
+  const saved = lsGetRaw('progSubTab', 'week');
+  const chip = document.querySelector('#progSubTabs .chip[data-tab="' + saved + '"]')
+            || document.querySelector('#progSubTabs .chip');
+  if(chip) setProgressSubTab(saved, chip, /*skipPersist*/ true);
   updateStorageBadge();
+}
+
+// Switch which sub-tab section of the Progress screen is visible.
+// Called by the chip nav. Persists across sessions.
+function setProgressSubTab(tab, chipEl, skipPersist){
+  // Toggle chip active state
+  document.querySelectorAll('#progSubTabs .chip').forEach(c => c.classList.remove('active'));
+  if(chipEl) chipEl.classList.add('active');
+  else {
+    const c = document.querySelector('#progSubTabs .chip[data-tab="' + tab + '"]');
+    if(c) c.classList.add('active');
+  }
+  // Show only the matching tab container
+  document.querySelectorAll('#s-progress [data-prog-tab]').forEach(el => {
+    el.classList.toggle('active', el.dataset.progTab === tab);
+  });
+  if(!skipPersist) lsSetRaw('progSubTab', tab);
+  // Scroll to top of the screen so the user sees the start of the new tab
+  const tc = document.querySelector('.tab-content');
+  if(tc) tc.scrollTop = 0;
+}
+
+// ── INSIGHTS ──
+// Generates 2-4 actionable observations from the user's training history.
+// Heuristics ranked by likely impact; only the top N are shown so the card
+// surfaces the things most worth doing this week.
+function renderWeekInsights(){
+  const wrap = document.getElementById('weekInsights');
+  if(!wrap) return;
+  if(!completedSessions || !completedSessions.length){
+    wrap.innerHTML = '<div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:16px;text-align:center;color:var(--text2);font-size:13px;">Insights unlock once you log your first session.</div>';
+    return;
+  }
+  const insights = [];
+  const now = Date.now();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const weekMs = 7 * dayMs;
+  const monthMs = 30 * dayMs;
+
+  // ── 1. Days since last X by muscle group ───────────────────────────
+  // Look back 30 days. If a major group hasn't been touched in 7+ days,
+  // surface it. Pick the most-neglected single one.
+  const lastByGroup = {push:0, pull:0, legs:0, core:0};
+  completedSessions.forEach(s => {
+    const sd = (s.date instanceof Date ? s.date : new Date(s.date)).getTime();
+    if(now - sd > monthMs) return;
+    if(s.manualActivity) return;
+    Object.keys(s.setLog || {}).forEach(exName => {
+      const splits = (typeof getSplits === 'function') ? getSplits(exName) : null;
+      if(!splits) return;
+      splits.forEach(sp => {
+        if(lastByGroup[sp.cat] !== undefined && sd > lastByGroup[sp.cat]){
+          lastByGroup[sp.cat] = sd;
+        }
+      });
+    });
+  });
+  const groupLabel = {push:'Push', pull:'Pull', legs:'Legs', core:'Core'};
+  const groupIcon  = {push:'🫸',  pull:'🫷',  legs:'🦵',  core:'🎯'};
+  const neglected = Object.entries(lastByGroup)
+    .map(([g, ts]) => ({g, ts, days: ts ? Math.floor((now - ts) / dayMs) : Infinity}))
+    .filter(x => x.days >= 7)
+    .sort((a, b) => b.days - a.days);
+  if(neglected.length){
+    const top = neglected[0];
+    const text = top.days === Infinity
+      ? `${groupIcon[top.g]} No ${groupLabel[top.g]} sessions in your last 30 days — schedule one this week`
+      : `${groupIcon[top.g]} ${groupLabel[top.g]} neglected — ${top.days} days since your last session`;
+    insights.push({text, target:'volume'});
+  }
+
+  // ── 2. PR readiness — last 3 sessions of a tracked lift trending up ──
+  // For each main lift name in the data, check the last 3 working sets.
+  // If each session's top weight ≥ previous session's top weight AND the
+  // most recent weight > the lift's all-time PB, you're due to test.
+  const liftHistory = {};
+  completedSessions.forEach(s => {
+    if(s.manualActivity) return;
+    const sd = (s.date instanceof Date ? s.date : new Date(s.date)).getTime();
+    Object.entries(s.setLog || {}).forEach(([n, v]) => {
+      const w = v.weight || 0;
+      if(w <= 0) return;
+      (liftHistory[n] = liftHistory[n] || []).push({ts:sd, weight:w});
+    });
+  });
+  Object.entries(liftHistory).forEach(([name, hist]) => {
+    if(hist.length < 3) return;
+    hist.sort((a,b) => a.ts - b.ts);
+    const last3 = hist.slice(-3);
+    const monotonic = last3[0].weight <= last3[1].weight && last3[1].weight <= last3[2].weight;
+    const strict   = last3[0].weight  < last3[2].weight;  // at least some net gain
+    if(monotonic && strict){
+      // Recent enough? (within 14 days)
+      if(now - last3[2].ts <= 14 * dayMs){
+        insights.push({
+          text: `🎯 ${name} PR window — 3 sessions of progress (${last3[0].weight}kg → ${last3[2].weight}kg). Try a top single this week.`,
+          target: 'strength'
+        });
+      }
+    }
+  });
+
+  // ── 3. Push:Pull balance over last 4 weeks ──────────────────────────
+  let pushVol = 0, pullVol = 0;
+  completedSessions.forEach(s => {
+    const sd = (s.date instanceof Date ? s.date : new Date(s.date)).getTime();
+    if(now - sd > 4 * weekMs) return;
+    if(s.manualActivity) return;
+    Object.entries(s.setLog || {}).forEach(([n, v]) => {
+      const splits = (typeof getSplits === 'function') ? getSplits(n) : null;
+      if(!splits) return;
+      const w = v.weight || 0;
+      const sets = v.sets || 0;
+      const repsArr = Array.isArray(v.reps) ? v.reps : (v.reps ? [v.reps] : []);
+      const avgReps = repsArr.length
+        ? repsArr.reduce((a,r) => a + (parseInt(r)||0), 0) / repsArr.length
+        : 8;
+      const exVol = w * sets * avgReps;
+      splits.forEach(sp => {
+        if(sp.cat === 'push') pushVol += exVol * sp.f;
+        else if(sp.cat === 'pull') pullVol += exVol * sp.f;
+      });
+    });
+  });
+  const total = pushVol + pullVol;
+  if(total > 1000){ // only meaningful with enough volume
+    const pushPct = Math.round((pushVol / total) * 100);
+    const pullPct = 100 - pushPct;
+    if(Math.abs(pushPct - pullPct) >= 15){
+      const heavier = pushPct > pullPct ? 'Push' : 'Pull';
+      const lighter = pushPct > pullPct ? 'Pull' : 'Push';
+      const lighterIcon = lighter === 'Pull' ? '🫷' : '🫸';
+      insights.push({
+        text: `⚖️ ${heavier} ${Math.max(pushPct,pullPct)}% : ${lighter} ${Math.min(pushPct,pullPct)}% over last 4 weeks. Add ${lighterIcon} ${lighter.toLowerCase()} volume to balance.`,
+        target: 'volume'
+      });
+    }
+  }
+
+  // ── 4. Streak / week pace ───────────────────────────────────────────
+  const wStart = new Date();
+  wStart.setDate(wStart.getDate() - ((wStart.getDay() + 6) % 7));
+  wStart.setHours(0, 0, 0, 0);
+  const thisWeekCount = completedSessions.filter(s => {
+    const d = s.date instanceof Date ? s.date : new Date(s.date);
+    return d >= wStart && !s.manualActivity;
+  }).length;
+  // Determine target: pull from path target if available, else infer from history
+  let weeklyTarget = 3;
+  try {
+    if(typeof userPath !== 'undefined' && userPath && userPath.daysPerWeek){
+      weeklyTarget = userPath.daysPerWeek;
+    }
+  } catch(e){}
+  if(thisWeekCount >= weeklyTarget){
+    insights.push({text: `🔥 Hit your weekly target — ${thisWeekCount}/${weeklyTarget} sessions logged. Anything extra is a bonus.`, target:'habits'});
+  } else if(thisWeekCount === 0){
+    const todayIdx = (new Date().getDay() + 6) % 7; // Mon=0
+    const daysLeft = 7 - todayIdx;
+    insights.push({text: `📅 No sessions yet this week — ${daysLeft} day${daysLeft!==1?'s':''} left to hit your ${weeklyTarget}-session target.`, target:'habits'});
+  } else {
+    const remaining = weeklyTarget - thisWeekCount;
+    insights.push({text: `📈 ${thisWeekCount}/${weeklyTarget} sessions this week. ${remaining} more to hit target.`, target:'habits'});
+  }
+
+  // Show the top 4 insights — that's enough actionable signal without
+  // overwhelming. Insights are already ordered roughly by specificity.
+  const top = insights.slice(0, 4);
+  if(!top.length){
+    wrap.innerHTML = '<div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:14px;text-align:center;color:var(--text2);font-size:13px;">No flags this week — keep up the consistency.</div>';
+    return;
+  }
+  wrap.innerHTML = top.map(ins => {
+    const targetChip = document.querySelector('#progSubTabs .chip[data-tab="' + (ins.target||'') + '"]');
+    const tapAttr = targetChip
+      ? ` onclick="setProgressSubTab('${ins.target}',document.querySelector('#progSubTabs .chip[data-tab=\\'${ins.target}\\']'))"`
+      : '';
+    const cursor = targetChip ? 'cursor:pointer;' : '';
+    return `<div${tapAttr} style="background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:8px;font-size:13px;line-height:1.45;color:var(--text);${cursor}display:flex;align-items:center;gap:10px;">
+      <div style="flex:1;">${ins.text}</div>
+      ${targetChip ? '<div style="font-size:16px;color:var(--text2);flex-shrink:0;">›</div>' : ''}
+    </div>`;
+  }).join('');
 }
 
 // ── MUSCLE BALANCE ──
