@@ -1189,6 +1189,26 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
   </div>
 </div>
 
+<!-- SWAP EXERCISE MODAL — used inside the Create HIIT form -->
+<div class="modal-ov" id="swapExMod" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal" style="display:flex;flex-direction:column;max-height:88vh;padding-bottom:8px;">
+    <div class="modal-handle"></div>
+    <div style="font-size:19px;font-weight:800;margin-bottom:4px;">Swap exercise</div>
+    <div id="swapExCurrent" style="font-size:13px;color:var(--text2);margin-bottom:10px;"></div>
+    <div id="swapExFilter" style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:2px;flex-shrink:0;">
+      <div class="chip active" onclick="setSwapFilter('all',this)">All</div>
+      <div class="chip" onclick="setSwapFilter('no-jump',this)">🦵 No Jumping</div>
+      <div class="chip" onclick="setSwapFilter('bw',this)">🏃 Bodyweight</div>
+      <div class="chip" onclick="setSwapFilter('apt',this)">🏠 Apartment</div>
+      <div class="chip" onclick="setSwapFilter('easier',this)">🌱 Easier</div>
+      <div class="chip" onclick="setSwapFilter('harder',this)">💪 Harder</div>
+    </div>
+    <div id="swapExCount" style="font-size:11px;color:var(--text2);margin-bottom:6px;flex-shrink:0;"></div>
+    <div id="swapExList" style="overflow-y:auto;flex:1;"></div>
+    <button onclick="document.getElementById('swapExMod').classList.remove('open')" style="width:100%;margin-top:8px;background:transparent;border:none;color:var(--text2);font-size:13px;padding:8px;cursor:pointer;flex-shrink:0;">Cancel</button>
+  </div>
+</div>
+
 <!-- HIIT TEMPLATES MODAL -->
 <div class="modal-ov" id="hiitTemplatesMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal" style="display:flex;flex-direction:column;max-height:92vh;padding-bottom:8px;">
@@ -11165,10 +11185,11 @@ function renderCreateHIITExercises(){
   const showWeight = buildingHIIT.format === 'EMOM' || buildingHIIT.format === 'AMRAP';
   wrap.innerHTML = buildingHIIT.exercises.map((ex, i) => `
     <div style="background:var(--surface2);border-radius:10px;padding:10px;margin-bottom:6px;">
-      <div style="display:flex;gap:8px;align-items:center;">
+      <div style="display:flex;gap:6px;align-items:center;">
         <div style="font-size:14px;font-weight:700;color:var(--text2);width:22px;flex-shrink:0;">${i+1}</div>
         <input type="text" placeholder="Exercise name" value="${ex.name}" oninput="updateCreateHIITExercise(${i},'name',this.value)" style="flex:1;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;color:var(--text);min-width:0;">
-        <button onclick="removeCreateHIITExercise(${i})" style="background:rgba(255,77,106,0.1);border:none;border-radius:8px;width:30px;height:30px;font-size:14px;color:var(--red);cursor:pointer;flex-shrink:0;">×</button>
+        <button onclick="openSwapEx(${i})" title="Swap exercise" style="background:rgba(255,140,66,0.12);border:none;border-radius:8px;width:30px;height:30px;font-size:13px;color:var(--accent);cursor:pointer;flex-shrink:0;">🔄</button>
+        <button onclick="removeCreateHIITExercise(${i})" title="Remove" style="background:rgba(255,77,106,0.1);border:none;border-radius:8px;width:30px;height:30px;font-size:14px;color:var(--red);cursor:pointer;flex-shrink:0;">×</button>
       </div>
       <div style="display:flex;gap:6px;margin-top:6px;align-items:center;">
         <input type="text" placeholder="reps / time" value="${ex.reps}" oninput="updateCreateHIITExercise(${i},'reps',this.value)" style="flex:1;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;padding:7px 10px;font-size:12px;color:var(--text);">
@@ -11462,6 +11483,125 @@ function runHIITTemplate(name){
   document.getElementById('hiitTemplatesMod').classList.remove('open');
   const idx = HIIT.findIndex(h => h.name === hiitObj.name);
   startHIIT(idx);
+}
+
+// ── SWAP EXERCISE (in Create HIIT form) ──
+// Lets the user replace any exercise in `buildingHIIT.exercises` with
+// another HIIT exercise from the EXDB. Filter chips narrow the list by
+// the same metadata used in the picker (impact / bw / apartment) plus
+// difficulty-relative ones (easier / harder than the current entry).
+let _swapTargetIdx = -1;
+let _swapBaseEx = null;       // the EXDB entry being swapped (or null if name not in EXDB)
+let _swapBaseName = '';       // the raw name from the create form (may be a free-text typo)
+let _swapFilter = 'all';
+
+function openSwapEx(idx){
+  if(!buildingHIIT || !buildingHIIT.exercises[idx]) return;
+  _swapTargetIdx = idx;
+  _swapBaseName = buildingHIIT.exercises[idx].name || '';
+  _swapBaseEx = EXDB.find(e => e.name === _swapBaseName) || null;
+  _swapFilter = 'all';
+  document.querySelectorAll('#swapExFilter .chip').forEach((c,i)=>c.classList.toggle('active',i===0));
+  const muscleHint = _swapBaseEx ? ' · ' + (_swapBaseEx.muscleGroup || '') : '';
+  document.getElementById('swapExCurrent').innerHTML =
+    'Replacing <span style="color:var(--accent);font-weight:700;">' +
+    (_swapBaseName || '(blank)') + '</span>' + muscleHint;
+  renderSwapExList();
+  document.getElementById('swapExMod').classList.add('open');
+}
+
+function setSwapFilter(val, el){
+  _swapFilter = val;
+  document.querySelectorAll('#swapExFilter .chip').forEach(c=>c.classList.remove('active'));
+  el.classList.add('active');
+  renderSwapExList();
+}
+
+function renderSwapExList(){
+  const wrap = document.getElementById('swapExList');
+  if(!wrap) return;
+  // Pool: all HIIT-tagged exercises in EXDB. Dedupe by name.
+  const seen = new Set();
+  let list = EXDB.filter(ex => {
+    if(ex.type !== 'hiit') return false;
+    if(seen.has(ex.name)) return false;
+    seen.add(ex.name);
+    return true;
+  });
+  // Always exclude the current name (no point "swapping" for itself).
+  list = list.filter(ex => ex.name !== _swapBaseName);
+  // If we know the base muscleGroup, prefer same-group results. Same-group
+  // first, then everything else — both still pass the filter chip below.
+  let primary = list, fallback = [];
+  if(_swapBaseEx && _swapBaseEx.muscleGroup){
+    const mg = _swapBaseEx.muscleGroup;
+    primary  = list.filter(ex => ex.muscleGroup === mg);
+    fallback = list.filter(ex => ex.muscleGroup !== mg);
+  }
+  // Apply chip filter to both groups.
+  const applyChip = (arr) => {
+    if(_swapFilter === 'all') return arr;
+    if(_swapFilter === 'no-jump') return arr.filter(ex => ex.impact === 'low');
+    if(_swapFilter === 'bw')      return arr.filter(ex => ex.bw === true);
+    if(_swapFilter === 'apt')     return arr.filter(ex => ex.impact === 'low' && ex.space === 'small');
+    if(_swapFilter === 'easier' && _swapBaseEx) return arr.filter(ex => ex.diff < _swapBaseEx.diff);
+    if(_swapFilter === 'harder' && _swapBaseEx) return arr.filter(ex => ex.diff > _swapBaseEx.diff);
+    // Easier/harder without a known base — just show all.
+    return arr;
+  };
+  primary  = applyChip(primary);
+  fallback = applyChip(fallback);
+  primary.sort((a,b) => a.name.localeCompare(b.name));
+  fallback.sort((a,b) => a.name.localeCompare(b.name));
+  // Render — same-group section first if we have one, then "Other HIIT".
+  const dC = ['','var(--green)','var(--accent)','var(--orange)','var(--red)'];
+  const dL = ['','Beginner','Intermediate','Advanced','Elite'];
+  const renderRow = (ex) => {
+    const safeN = ex.name.replace(/'/g,"\\'");
+    return `<div onclick="applySwap('${safeN}')" class="alt-row" style="cursor:pointer;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:14px;font-weight:700;">${ex.name}</div>
+        <div style="display:flex;align-items:center;gap:5px;margin-top:3px;flex-wrap:wrap;">
+          <span style="font-size:10px;color:var(--text2);">${ex.equip}</span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+        <span style="font-size:10px;font-weight:700;color:${dC[ex.diff]};background:${dC[ex.diff]}22;padding:2px 6px;border-radius:5px;">${dL[ex.diff]}</span>
+        <span style="font-size:18px;color:var(--accent);">→</span>
+      </div>
+    </div>`;
+  };
+  let html = '';
+  if(primary.length){
+    if(_swapBaseEx){
+      html += `<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;padding:6px 4px 4px;">Same pattern (${_swapBaseEx.muscleGroup})</div>`;
+    }
+    html += primary.map(renderRow).join('');
+  }
+  if(fallback.length){
+    html += `<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;padding:14px 4px 4px;">Other HIIT</div>`;
+    html += fallback.map(renderRow).join('');
+  }
+  if(!html){
+    html = '<div style="text-align:center;padding:24px;color:var(--text2);font-size:13px;">No matches for that filter. Try "All" or remove constraints.</div>';
+  }
+  document.getElementById('swapExCount').textContent =
+    (primary.length + fallback.length) + ' alternative' + ((primary.length + fallback.length) !== 1 ? 's' : '');
+  wrap.innerHTML = html;
+}
+
+function applySwap(name){
+  if(_swapTargetIdx < 0 || !buildingHIIT || !buildingHIIT.exercises[_swapTargetIdx]) return;
+  const newEx = EXDB.find(e => e.name === name);
+  buildingHIIT.exercises[_swapTargetIdx].name = name;
+  // If the new exercise has a clean reps default and the user hasn't typed
+  // a custom one, suggest the EXDB default. Otherwise leave reps alone.
+  if(newEx && newEx.reps && (!buildingHIIT.exercises[_swapTargetIdx].reps || buildingHIIT.exercises[_swapTargetIdx].reps === '')){
+    buildingHIIT.exercises[_swapTargetIdx].reps = newEx.reps;
+  }
+  document.getElementById('swapExMod').classList.remove('open');
+  renderCreateHIITExercises();
+  showToast('🔄 Swapped to ' + name);
 }
 
 function loadHIITTemplate(name){
