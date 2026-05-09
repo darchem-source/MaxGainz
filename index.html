@@ -190,6 +190,13 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 #syncBanner .sync-dot { display:inline-block; width:6px; height:6px; background:var(--accent2); border-radius:50%; animation:syncPulse 1.2s ease-in-out infinite; }
 @keyframes syncPulse { 0%,100% { opacity:0.3; transform:scale(0.85); } 50% { opacity:1; transform:scale(1.1); } }
 
+/* "Update available" banner — shown when a new service worker is waiting.
+   Tappable: clicking accepts the update and reloads the page. Sits above
+   the bottom nav like the offline/sync banners. */
+#updateBanner { position:fixed; bottom:calc(68px + env(safe-area-inset-bottom, 0px)); left:50%; transform:translateX(-50%) translateY(20px); width:100%; max-width:420px; z-index:var(--z-banner); background:#1a1a1a; border:1px solid rgba(200,255,0,0.4); border-radius:var(--radius-sm) var(--radius-sm) 0 0; color:var(--accent); font-size:12px; font-weight:700; padding:var(--space-3) var(--space-4); opacity:0; transition:opacity var(--dur-base) ease, transform var(--dur-base) ease; pointer-events:none; display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); cursor:pointer; }
+#updateBanner.show { opacity:1; transform:translateX(-50%) translateY(0); pointer-events:auto; }
+#updateBanner .update-cta { background:var(--accent); color:#000; border:none; border-radius:var(--radius-sm); padding:6px 12px; font-size:12px; font-weight:800; cursor:pointer; flex-shrink:0; }
+
 /* ── Skeleton shimmer placeholders ── */
 .skeleton { background:linear-gradient(90deg, var(--surface2) 0%, var(--surface3) 50%, var(--surface2) 100%); background-size:200% 100%; animation:skeletonShimmer 1.4s linear infinite; border-radius:var(--radius-sm); pointer-events:none; }
 @keyframes skeletonShimmer { 0% { background-position:200% 0; } 100% { background-position:-200% 0; } }
@@ -364,6 +371,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 </head>
 <body>
 <div id="offlineBanner">📵 Offline — your workouts are saved locally</div>
+<div id="updateBanner" onclick="acceptSWUpdate()"><span>🆕 New version available</span><button class="update-cta" onclick="event.stopPropagation();acceptSWUpdate()">Update</button></div>
 <div id="syncBanner"><span class="sync-dot"></span>Syncing your data…</div>
 <div class="ptr-indicator" id="ptrIndicator"><span class="ptr-icon" id="ptrIcon">↓</span></div>
 <div class="toast" id="appToast"></div>
@@ -17068,14 +17076,58 @@ async function submitFeedback(){
 }
 
 // ── SERVICE WORKER REGISTRATION ──
+// Strategy: register on load, check for updates, and surface a banner when a
+// new SW is installed and waiting. The user accepts via the banner; only then
+// do we send SKIP_WAITING. This avoids reloading the page mid-workout.
+let _swWaitingWorker = null;   // Holds reference to a SW that's installed but waiting
+let _swReloadingForUpdate = false;
+
+function _showUpdateBanner(newSW){
+  _swWaitingWorker = newSW;
+  const banner = document.getElementById('updateBanner');
+  if(banner) banner.classList.add('show');
+}
+
+function acceptSWUpdate(){
+  if(!_swWaitingWorker) return;
+  _swReloadingForUpdate = true;
+  // Tell the waiting SW to take over. controllerchange (below) handles reload.
+  _swWaitingWorker.postMessage({ type: 'SKIP_WAITING' });
+  // Hide the banner immediately so user gets feedback
+  const banner = document.getElementById('updateBanner');
+  if(banner) banner.classList.remove('show');
+}
+
 if('serviceWorker' in navigator){
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js')
       .then(reg => {
-        // Check for updates every time the app loads
-        reg.update();
+        // Check for updates each app load
+        reg.update().catch(()=>{});
+        // If there's already a waiting SW (page kept open across two SW
+        // versions before this code ran), surface it now.
+        if(reg.waiting && navigator.serviceWorker.controller){
+          _showUpdateBanner(reg.waiting);
+        }
+        // Watch for new SW versions arriving in the future.
+        reg.addEventListener('updatefound', () => {
+          const newSW = reg.installing;
+          if(!newSW) return;
+          newSW.addEventListener('statechange', () => {
+            // 'installed' + an existing controller = there was a previous
+            // version controlling the page, and a new one is now waiting.
+            if(newSW.state === 'installed' && navigator.serviceWorker.controller){
+              _showUpdateBanner(newSW);
+            }
+          });
+        });
       })
       .catch(err => console.warn('SW registration failed:', err));
+    // When a new SW takes control (because we sent SKIP_WAITING above),
+    // reload so the page runs against the new code.
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if(_swReloadingForUpdate) window.location.reload();
+    });
   });
 }
 
