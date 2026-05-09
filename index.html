@@ -11389,11 +11389,15 @@ const HIIT_TEMPLATES = [
   },
   {
     name:'Iso-Hold Core Crusher', format:'Core/Timed', duration:10, restSecs:15, diff:2,
-    tagline:'Five isometric holds — total trunk and posterior-chain endurance',
+    tagline:'Six isometric holds — total trunk and posterior-chain endurance',
     tags:['bw','apt','quick'],
     exercises:[
       {name:'Plank', reps:'45s', weight:0},
-      {name:'Side Plank', reps:'30s each side', weight:0},
+      // Side Plank split into explicit L and R entries — Core/Timed treats
+      // reps as a single duration, so combining sides into one 30s block
+      // would let users hold only one side without realising.
+      {name:'Side Plank (Left)', reps:'30s', weight:0},
+      {name:'Side Plank (Right)', reps:'30s', weight:0},
       {name:'Hollow Hold', reps:'30s', weight:0},
       {name:'Wall Sit', reps:'45s', weight:0},
       {name:'Superman Hold', reps:'30s', weight:0}
@@ -11408,7 +11412,7 @@ const HIIT_TEMPLATES = [
       {name:'Broad Jumps', reps:'6', weight:0},
       {name:'Tuck Jumps', reps:'8', weight:0},
       {name:'Lateral Bounds', reps:'10', weight:0},
-      {name:'Single-Leg Hops', reps:'8 each', weight:0}
+      {name:'Single-Leg Hops', reps:'8 each side', weight:0}
     ]
   },
   {
