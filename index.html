@@ -4895,12 +4895,29 @@ function showWeightSuggestion(ex){
   if(!el) return;
   el.style.display='none';
 
-  // Bodyweight / timed / AMRAP / EMOM — no weight messaging
-  if(ex.bw || ex.duration || ex.format==='AMRAP' || ex.format==='EMOM') return;
+  // Timed / AMRAP / EMOM — no messaging at all
+  if(ex.duration || ex.format==='AMRAP' || ex.format==='EMOM') return;
+
+  // Belt-and-suspenders BW check: use ex.bw if set, otherwise look up EXDB
+  const _dbExWS = EXDB.find(e => e.name === ex.name);
+  const isBW = !!(ex.bw || (_dbExWS && _dbExWS.bw));
 
   const doneCount = (setsDone[curIdx] || []).length;
   const sw = setWeights[curIdx] || {};
   const rl = repsLogged[curIdx] || {};
+
+  // ── Bodyweight exercises: motivational first-time note only ──
+  if(isBW){
+    if(doneCount === 0){
+      const editInfo = getWeightEditability(ex.name);
+      if(editInfo.status === 'first'){
+        el.style.display='block';
+        el.className='wt-suggest hold';
+        el.textContent='✨ First time — go for it! Push yourself each set.';
+      }
+    }
+    return;
+  }
 
   // ── Before any sets: first-time hint only (deload/normal handled by lastTimeRef) ──
   if(doneCount === 0){
@@ -9053,8 +9070,7 @@ function startHIIT(idx){
   // console.log('[HIIT] Starting HIIT session:', w.name);
   sessDay=w.name;
   
-  // List of bodyweight-only exercises
-  const bodyweightOnlyExercises = ['Push-Ups','Pull-Ups','Dips','Burpees','Jump Squats','High Knees','Mountain Climbers','Sit-Ups','V-Ups','Plank','Side Plank','Diamond Push-Ups','Clap Push-Ups','Pistol Squats','Handstand Push-Ups','Leg Raises'];
+  // Derive bodyweight flag from EXDB (covers all exercises, no hardcoded list needed)
   
   // Handle both old exercise format and new blocks format
   let exercises = [];
@@ -9089,12 +9105,13 @@ function startHIIT(idx){
   
   stopRest(); window._restStoppedManually=false; // clean slate before new session
   sessExs=exercises.map(ex=>{
-    const isBodyweightOnly = bodyweightOnlyExercises.includes(ex.name);
+    const dbEx = EXDB.find(e => e.name === ex.name);
+    const isBW = !!(ex.bw || (dbEx && dbEx.bw) || w.bw);
     return {
       ...ex,
-      weight: isBodyweightOnly ? 0 : (w.weight||0),
-      muscles:['cardio'],
-      bw: isBodyweightOnly || w.bw
+      weight: isBW ? 0 : (ex.weight || w.weight || 0),
+      muscles: ex.muscles || (dbEx && dbEx.muscles) || ['cardio'],
+      bw: isBW
     };
   });
   curIdx=0;setsDone={};repsLogged={};totalSets=0;sessTimeSec=0;
