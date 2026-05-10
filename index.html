@@ -9348,10 +9348,7 @@ function _renderMyProgrammesSection(){
       <div onclick="togDay('${k}')" style="padding:12px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;">
         <div style="font-size:22px;">🏋️</div>
         <div style="flex:1;min-width:0;">
-          <div style="display:flex;align-items:center;gap:6px;">
-            <div style="font-size:15px;font-weight:800;">${name}</div>
-            <span style="background:var(--surface3);color:var(--text2);font-size:9px;font-weight:800;padding:2px 7px;border-radius:5px;letter-spacing:0.5px;">BUILT-IN</span>
-          </div>
+          <div style="font-size:15px;font-weight:800;">${name}</div>
           <div style="font-size:11px;color:var(--text2);margin-top:2px;">${descLine}</div>
         </div>
         <div style="color:var(--text2);font-size:13px;" id="arr-${k}">▼</div>
@@ -9428,12 +9425,9 @@ function _renderMyProgrammesSection(){
     });
     return `<div style="margin:0 16px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:14px;overflow:hidden;">
       <div onclick="togDay('${k}')" style="padding:12px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;">
-        <div style="font-size:22px;">📚</div>
+        <div style="font-size:22px;">🏋️</div>
         <div style="flex:1;min-width:0;">
-          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-            <div style="font-size:15px;font-weight:800;">${p.name}</div>
-            <span style="background:rgba(123,77,255,0.15);color:var(--purple);font-size:9px;font-weight:800;padding:2px 7px;border-radius:5px;letter-spacing:0.5px;">CURATED</span>
-          </div>
+          <div style="font-size:15px;font-weight:800;">${p.name}</div>
           <div style="font-size:11px;color:var(--text2);margin-top:2px;">${p.level || ''} · ${p.goal || ''} · ${dayCount} day${dayCount !== 1 ? 's' : ''}/wk</div>
         </div>
         <div style="color:var(--text2);font-size:13px;" id="arr-${k}">▼</div>
@@ -9448,16 +9442,47 @@ function _renderMyProgrammesSection(){
 
   let html = `<div class="section-label">🏋️ ALL PROGRAMMES</div>`;
 
-  // ── Built-in: ULF + PPL ──
-  html += subLabel('Built-in');
-  html += renderBuiltIn('ULF', ULF, 'Upper · Lower · Full Body — 3 days');
-  html += renderBuiltIn('PPL', PPL, 'Push · Pull · Legs — 3 or 6 days');
+  // ── Pre-made (built-in + curated, ordered by level) ──
+  // Level rank: lower = beginner-friendly, higher = more advanced. Compound
+  // levels like "Beginner-Intermediate" land between the two pure ones.
+  const _levelRank = (lv) => {
+    const s = (lv || '').toLowerCase();
+    if(s === 'beginner') return 1;
+    if(s.includes('beginner') && s.includes('intermediate')) return 2;
+    if(s === 'intermediate') return 3;
+    if(s.includes('intermediate') && s.includes('advanced')) return 4;
+    if(s === 'advanced') return 5;
+    return 6;  // unknown levels sink to the bottom
+  };
 
-  // ── Curated classics: the LIBRARY_PROGRAMMES list ──
-  if(typeof LIBRARY_PROGRAMMES !== 'undefined' && LIBRARY_PROGRAMMES.length){
-    html += subLabel('Curated Classics');
-    LIBRARY_PROGRAMMES.forEach(p => { html += renderLibrary(p); });
+  // Wrap ULF/PPL with the same shape we use for sorting library programmes,
+  // and assign a level so they slot in alongside the curated entries.
+  const preMade = [
+    {
+      sortKey: _levelRank('Beginner'),
+      // Render lazily so we keep the existing renderBuiltIn signature
+      render: () => renderBuiltIn('ULF', ULF, 'Beginner · Upper · Lower · Full Body — 3 days')
+    },
+    {
+      sortKey: _levelRank('Intermediate'),
+      render: () => renderBuiltIn('PPL', PPL, 'Intermediate · Push · Pull · Legs — 3 or 6 days')
+    }
+  ];
+  if(typeof LIBRARY_PROGRAMMES !== 'undefined'){
+    LIBRARY_PROGRAMMES.forEach(p => {
+      preMade.push({
+        sortKey: _levelRank(p.level),
+        render: () => renderLibrary(p)
+      });
+    });
   }
+  // Stable sort by level rank — ties keep the array's original order
+  // (ULF first among beginners, PPL first among intermediates, library
+  // entries follow in their declared order).
+  preMade.sort((a, b) => a.sortKey - b.sortKey);
+
+  html += subLabel('Pre-made');
+  preMade.forEach(item => { html += item.render(); });
 
   // ── Your Custom ──
   if(customWorkouts.length){
