@@ -9341,10 +9341,16 @@ function _renderMyProgrammesSection(){
   const icc   = { Upper:'ic-u', Lower:'ic-l', 'Full Body':'ic-f', 'Push A':'ic-push', 'Push B':'ic-push', 'Pull A':'ic-pull', 'Pull B':'ic-pull', 'Legs A':'ic-legs', 'Legs B':'ic-legs' };
 
   // Render a built-in programme card (ULF or PPL)
-  const renderBuiltIn = (name, prog, descLine) => {
+  // `descLine` is the level/days summary shown in the collapsed header
+  // `blurb` is the one-line "what is this" pitch (shown under descLine)
+  // `description` is the longer "how does it work" paragraph (shown at top of expanded view)
+  const renderBuiltIn = (name, prog, descLine, blurb, description) => {
     const dayCount = Object.keys(prog).length;
     const k = 'bi_' + name;
     let inner = '';
+    if(description){
+      inner += `<div style="font-size:12px;color:var(--text2);line-height:1.5;padding:8px 4px 12px;border-bottom:0.5px solid var(--border);margin-bottom:8px;">${description}</div>`;
+    }
     for(const [day, exs] of Object.entries(prog)){
       const dk = name + '_' + day.replace(/ /g, '_');
       inner += `<div class="day-card" style="margin:0 0 6px;border-radius:10px;">
@@ -9367,6 +9373,7 @@ function _renderMyProgrammesSection(){
         <div style="flex:1;min-width:0;">
           <div style="font-size:15px;font-weight:800;">${name}</div>
           <div style="font-size:11px;color:var(--text2);margin-top:2px;">${descLine}</div>
+          ${blurb ? `<div style="font-size:12px;color:var(--text);line-height:1.4;margin-top:6px;opacity:0.85;">${blurb}</div>` : ''}
         </div>
         <div style="color:var(--text2);font-size:13px;" id="arr-${k}">▼</div>
       </div>
@@ -9424,6 +9431,9 @@ function _renderMyProgrammesSection(){
     const k = 'lib_' + p.id;
     const dayCount = (p.schedule || []).length;
     let inner = '';
+    if(p.description){
+      inner += `<div style="font-size:12px;color:var(--text2);line-height:1.5;padding:8px 4px 12px;border-bottom:0.5px solid var(--border);margin-bottom:8px;">${p.description}${p.author ? `<div style="font-size:11px;color:var(--text2);margin-top:6px;opacity:0.7;">By ${p.author}</div>` : ''}</div>`;
+    }
     (p.schedule || []).forEach(d => {
       const dk = 'libd_' + p.id + '_' + (d.day || '').replace(/[^a-zA-Z0-9]/g, '_');
       const safeDay = (d.day || '').replace(/'/g, "\\'");
@@ -9446,6 +9456,7 @@ function _renderMyProgrammesSection(){
         <div style="flex:1;min-width:0;">
           <div style="font-size:15px;font-weight:800;">${p.name}</div>
           <div style="font-size:11px;color:var(--text2);margin-top:2px;">${p.level || ''} · ${p.goal || ''} · ${dayCount} day${dayCount !== 1 ? 's' : ''}/wk</div>
+          ${p.blurb ? `<div style="font-size:12px;color:var(--text);line-height:1.4;margin-top:6px;opacity:0.85;">${p.blurb}</div>` : ''}
         </div>
         <div style="color:var(--text2);font-size:13px;" id="arr-${k}">▼</div>
       </div>
@@ -9477,12 +9488,17 @@ function _renderMyProgrammesSection(){
   const preMade = [
     {
       sortKey: _levelRank('Beginner'),
-      // Render lazily so we keep the existing renderBuiltIn signature
-      render: () => renderBuiltIn('ULF', ULF, 'Beginner · Upper · Lower · Full Body — 3 days')
+      render: () => renderBuiltIn('ULF', ULF,
+        'Beginner · Upper · Lower · Full Body — 3 days',
+        'Three-day rotation hitting upper body, lower body, then full body. Balanced volume across all major muscle groups.',
+        'Each session targets a different focus area on a Mon/Wed/Fri-style rotation: upper-body push and pull on day 1, lower-body squats and posterior chain on day 2, full-body compounds on day 3. Adequate rest between sessions makes this a sustainable starting template — beginner-friendly volume, intermediate-capable progression.')
     },
     {
       sortKey: _levelRank('Intermediate'),
-      render: () => renderBuiltIn('PPL', PPL, 'Intermediate · Push · Pull · Legs — 3 or 6 days')
+      render: () => renderBuiltIn('PPL', PPL,
+        'Intermediate · Push · Pull · Legs — 3 or 6 days',
+        'Classic split: push, pull, legs. Run 3 days for time-pressed weeks or 6 days for max volume.',
+        'Push day hits chest, shoulders and triceps. Pull day targets back and biceps. Legs day covers quads, hamstrings, glutes and calves. The 3-day variant gives a full rest day between rotations; the 6-day variant doubles each focus per week, demanding higher recovery capacity but enabling much higher weekly volume — ideal once you\'re past beginner gains.')
     }
   ];
   if(typeof LIBRARY_PROGRAMMES !== 'undefined'){
