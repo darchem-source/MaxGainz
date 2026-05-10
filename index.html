@@ -14636,30 +14636,50 @@ function renderTodayWithPath() {
 
   // ── REST DAY ──
   if(todayInfo.isRestDay){
-    html += `
-      <div style="margin:16px;background:var(--surface2);border-radius:16px;padding:20px;text-align:center;">
-        <div style="font-size:36px;margin-bottom:8px;">😴</div>
-        <div style="font-size:18px;font-weight:800;color:var(--text);margin-bottom:4px;">Rest Day</div>
-        <div style="font-size:13px;color:var(--text2);margin-bottom:16px;">Recovery is part of the programme. Eat well, sleep well.</div>
-        <div style="display:flex;flex-direction:column;gap:10px;">
+    // If the user already logged something today, the day isn't really a
+    // rest day anymore — drop the "😴 Rest Day · Recovery" framing and just
+    // show secondary "log more" buttons. The "✓ LOGGED TODAY" card above
+    // already communicates what was done.
+    if(_loggedToday.length){
+      html += `
+        <div style="margin:16px;display:flex;flex-direction:column;gap:10px;">
           <button onclick="openActivityLog()"
-            style="background:rgba(200,255,0,0.08);border:1px solid rgba(200,255,0,0.3);border-radius:12px;padding:13px 16px;font-size:14px;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;display:flex;align-items:center;gap:10px;">
-            <span style="font-size:20px;">🏃</span>
-            <div>
-              <div>Log a different workout</div>
-              <div style="font-size:11px;font-weight:500;color:rgba(200,255,0,0.7);margin-top:1px;">Run, yoga, tennis, cycling…</div>
-            </div>
+            style="background:transparent;border:1px dashed var(--border);border-radius:12px;padding:11px 16px;font-size:13px;font-weight:700;color:var(--text2);cursor:pointer;text-align:left;display:flex;align-items:center;gap:10px;">
+            <span style="font-size:16px;">🏃</span>
+            <div>Log another activity</div>
           </button>
           <button onclick="openAdhocModal()"
-            style="background:transparent;border:1px dashed var(--border);border-radius:12px;padding:13px 16px;font-size:13px;font-weight:700;color:var(--text2);cursor:pointer;text-align:left;display:flex;align-items:center;gap:10px;">
-            <span style="font-size:18px;">＋</span>
-            <div>
-              <div>Add structured session</div>
-              <div style="font-size:11px;font-weight:500;color:var(--text2);margin-top:1px;opacity:0.7;">Full ULF / PPL / HIIT workout</div>
-            </div>
+            style="background:transparent;border:1px dashed var(--border);border-radius:12px;padding:11px 16px;font-size:13px;font-weight:700;color:var(--text2);cursor:pointer;text-align:left;display:flex;align-items:center;gap:10px;">
+            <span style="font-size:16px;">＋</span>
+            <div>Add structured session</div>
           </button>
-        </div>
-      </div>`;
+        </div>`;
+    } else {
+      html += `
+        <div style="margin:16px;background:var(--surface2);border-radius:16px;padding:20px;text-align:center;">
+          <div style="font-size:36px;margin-bottom:8px;">😴</div>
+          <div style="font-size:18px;font-weight:800;color:var(--text);margin-bottom:4px;">Rest Day</div>
+          <div style="font-size:13px;color:var(--text2);margin-bottom:16px;">Recovery is part of the programme. Eat well, sleep well.</div>
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <button onclick="openActivityLog()"
+              style="background:rgba(200,255,0,0.08);border:1px solid rgba(200,255,0,0.3);border-radius:12px;padding:13px 16px;font-size:14px;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;display:flex;align-items:center;gap:10px;">
+              <span style="font-size:20px;">🏃</span>
+              <div>
+                <div>Log a different workout</div>
+                <div style="font-size:11px;font-weight:500;color:rgba(200,255,0,0.7);margin-top:1px;">Run, yoga, tennis, cycling…</div>
+              </div>
+            </button>
+            <button onclick="openAdhocModal()"
+              style="background:transparent;border:1px dashed var(--border);border-radius:12px;padding:13px 16px;font-size:13px;font-weight:700;color:var(--text2);cursor:pointer;text-align:left;display:flex;align-items:center;gap:10px;">
+              <span style="font-size:18px;">＋</span>
+              <div>
+                <div>Add structured session</div>
+                <div style="font-size:11px;font-weight:500;color:var(--text2);margin-top:1px;opacity:0.7;">Full ULF / PPL / HIIT workout</div>
+              </div>
+            </button>
+          </div>
+        </div>`;
+    }
   } else {
     // ── CORE PATH WORKOUT ──
     if(todayInfo.coreWorkout){
@@ -15559,12 +15579,14 @@ function _renderPathTabActive() {
 
     if(d.isRest){
       // If a manual activity was logged on a rest day (run, yoga, etc.),
-      // surface it inline so the user can see their effort isn't invisible.
+      // it's no longer really a rest day — relabel it "Active day" with
+      // the activity inline. Adherence accounting is unchanged (manual
+      // activities still don't count as a Path workout).
       if(d.loggedActivities && d.loggedActivities.length){
         const labels = d.loggedActivities
           .map(s => `${s.activityEmoji || '🏃'} ${s.day || 'Activity'}${s.durationMin ? ' (' + s.durationMin + 'm)' : ''}`)
           .join(' · ');
-        workoutLabel = `<div><span style="font-size:11px;color:var(--text2);">Rest day</span><div style="font-size:11px;color:var(--green);font-weight:700;margin-top:2px;">✓ ${labels}</div></div>`;
+        workoutLabel = `<div><span style="font-size:11px;color:var(--green);font-weight:700;">✓ Active day</span><div style="font-size:11px;color:var(--text2);margin-top:2px;">${labels}</div></div>`;
       } else {
         workoutLabel = `<span style="font-size:11px;color:var(--text2);">Rest day</span>`;
       }
