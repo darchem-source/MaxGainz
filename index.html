@@ -9503,6 +9503,37 @@ function _renderHIITStudioCards(){
       </div></div>`;
   };
 
+  // HIIT template card row — same visual treatment as built-in but with a
+  // TEMPLATE badge and Run/Customise actions instead of a single Start.
+  const templateHTML = (t, ti) => {
+    const fc = HIIT_FORMAT_COLORS[t.format] || 'var(--text2)';
+    const k = 'tpl_' + ti;
+    const safeN = t.name.replace(/'/g, "\\'");
+    const exList = (t.exercises || []).map(ex =>
+      `<div style="display:flex;align-items:center;padding:6px 0;border-bottom:0.5px solid var(--border);gap:8px;"><div style="flex:1;font-size:13px;font-weight:600;">${ex.name}</div><div style="font-size:12px;color:var(--accent);">${ex.reps || ''}</div></div>`
+    ).join('');
+    return `<div class="day-card" style="margin:0 0 6px;border-radius:10px;">
+      <div class="day-head" onclick="togDay('${k}')">
+        <div class="day-icon" style="background:${fc}22;font-size:22px;color:${fc};">${_hiitIconFor(t)}</div>
+        <div style="flex:1;"><div style="font-size:14px;font-weight:700;">${t.name}</div>
+          <div style="display:flex;gap:5px;margin-top:2px;flex-wrap:wrap;">
+            <span style="font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;background:${fc}22;color:${fc};">${t.format}</span>
+            <span style="font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;background:var(--surface);color:var(--text2);">${t.duration}m</span>
+            <span style="font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;background:rgba(123,77,255,0.15);color:var(--purple);">📚 TEMPLATE</span>
+          </div>
+        </div>
+        <div style="color:var(--text2);font-size:13px;" id="arr-${k}">▼</div>
+      </div>
+      <div id="dd-${k}" style="display:none;">
+        ${t.tagline ? `<div style="padding:10px 16px;font-size:13px;color:var(--text2);line-height:1.5;">${t.tagline}</div>` : ''}
+        <div style="padding:0 16px 10px;">${exList}</div>
+        <div style="padding:10px 16px 14px;display:flex;gap:8px;">
+          <button class="btn-p" style="flex:1;padding:11px;font-size:13px;" onclick="runHIITTemplate('${safeN}')">▶ Run</button>
+          <button onclick="loadHIITTemplate('${safeN}')" style="background:var(--surface3);border:0.5px solid var(--border);border-radius:10px;padding:10px 14px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;">✏ Customise</button>
+        </div>
+      </div></div>`;
+  };
+
   // Wrap a group in a collapsible "bracket" container
   const groupHTML = (label, groupKey, items, renderRow) => {
     if(!items.length) return '';
@@ -9521,15 +9552,36 @@ function _renderHIITStudioCards(){
     </div>`;
   };
 
+  // Templates filter — same matching logic as built-ins, but also matches
+  // the tagline (templates use "tagline" instead of "desc").
+  const matchesTpl = (t) =>
+    !q || (t.name && t.name.toLowerCase().includes(q))
+       || (t.format && t.format.toLowerCase().includes(q))
+       || (t.tagline && t.tagline.toLowerCase().includes(q));
+
   let html = '';
   // Custom HIIT first (always expanded if any match search)
   const customMatches = customHIITs.map((w, ci) => ({ w, ci })).filter(({ w }) => matches(w));
   if(customMatches.length){
     html += groupHTML('Your Custom HIIT', 'custom', customMatches, ({ w, ci }) => customHTML(w, ci));
   }
+  // For each bracket, combine built-ins + templates and sort by duration
+  // so they interleave naturally. Boundary fix: < max (was <=) so a 16min
+  // workout lands in the 16-25 bucket only, not in both.
+  const allTemplates = (typeof HIIT_TEMPLATES !== 'undefined') ? HIIT_TEMPLATES : [];
   brackets.forEach(b => {
-    const group = HIIT.filter(w => w.duration >= b.min && w.duration <= b.max && matches(w));
-    html += groupHTML(b.label, 'b' + b.min, group, builtInHTML);
+    const builtIns = HIIT
+      .filter(w => w.duration >= b.min && w.duration < b.max && matches(w))
+      .map(w => ({ kind:'builtin', w }));
+    const tpls = allTemplates
+      .map((t, ti) => ({ t, ti }))
+      .filter(({ t }) => t.duration >= b.min && t.duration < b.max && matchesTpl(t))
+      .map(({ t, ti }) => ({ kind:'template', w:t, ti }));
+    const items = [...builtIns, ...tpls].sort((a, x) => (a.w.duration || 0) - (x.w.duration || 0));
+    if(!items.length) return;
+    html += groupHTML(b.label, 'b' + b.min, items, item =>
+      item.kind === 'template' ? templateHTML(item.w, item.ti) : builtInHTML(item.w)
+    );
   });
   if(!html){
     html = `<div style="margin:0 16px;padding:20px;text-align:center;color:var(--text2);font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:14px;">No HIIT workouts match "${q}". <a onclick="setHIITSearch('');document.getElementById('hiitSearchInput').value='';" style="color:var(--accent);cursor:pointer;font-weight:700;">Clear search</a></div>`;
@@ -9538,22 +9590,12 @@ function _renderHIITStudioCards(){
 }
 
 function _renderHIITStudioSection(){
-  // Sample template names for the card tagline — first 4 give a good flavour
-  const tplSample = (typeof HIIT_TEMPLATES !== 'undefined' && HIIT_TEMPLATES.length)
-    ? HIIT_TEMPLATES.slice(0, 4).map(t => t.name).join(' · ')
-    : 'Tabata · AMRAP · EMOM · Apartment-friendly';
-  const tplCount = (typeof HIIT_TEMPLATES !== 'undefined') ? HIIT_TEMPLATES.length : 12;
+  // Templates now appear inline in the duration brackets (see
+  // _renderHIITStudioCards), so the dedicated "Browse N HIIT templates"
+  // hero card was removed. Templates are still reachable from + Create.
   return `
     <div class="section-label">⚡ HIIT STUDIO</div>
-    <div onclick="openHIITTemplates()"
-      style="margin:0 16px 8px;padding:16px;background:linear-gradient(135deg,rgba(255,140,66,0.10),rgba(255,184,0,0.06));border:1px solid rgba(255,140,66,0.3);border-radius:14px;cursor:pointer;display:flex;align-items:center;gap:12px;">
-      <div style="font-size:32px;">📚</div>
-      <div style="flex:1;min-width:0;">
-        <div style="font-size:15px;font-weight:800;color:var(--text);">Browse ${tplCount} HIIT templates</div>
-        <div style="font-size:11px;color:var(--text2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${tplSample} & more</div>
-      </div>
-      <div style="font-size:18px;color:var(--accent);">›</div>
-    </div>
+    <!-- (templates surface inline in the duration brackets below) -->
     <div style="margin:0 16px 8px;display:flex;gap:8px;">
       <div style="flex:1;position:relative;">
         <input id="hiitSearchInput" type="text" placeholder="Search HIIT workouts…"
