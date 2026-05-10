@@ -14619,6 +14619,38 @@ function renderTodayWithPath() {
       </div>
     </div>`;
 
+  // ── TODAY'S LOGGED ACTIVITIES ──
+  // Surface anything logged via openActivityLog (manualActivity:true) so the
+  // user can see their run / yoga / etc. is recorded — previously this was
+  // invisible on the Today tab even though the session existed in the log.
+  const _todayStart = new Date(); _todayStart.setHours(0,0,0,0);
+  const _loggedToday = completedSessions
+    .map((s, idx) => ({ s, idx }))
+    .filter(({ s }) => s.manualActivity && new Date(s.date) >= _todayStart);
+  if(_loggedToday.length){
+    html += `<div style="margin:12px 16px 0;">
+      <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px;">✓ LOGGED TODAY</div>
+      ${_loggedToday.map(({ s, idx }) => {
+        const t = new Date(s.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+        const intensityChip = s.intensity ? `<span style="font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;background:var(--surface);color:var(--text2);">${s.intensity}</span>` : '';
+        const xpChip = s.xpAwarded ? `<span style="font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;background:rgba(123,77,255,0.15);color:var(--purple);">+${s.xpAwarded} XP</span>` : '';
+        return `<div style="background:var(--surface2);border:1px solid rgba(76,255,145,0.3);border-radius:12px;padding:12px 14px;margin-bottom:6px;display:flex;align-items:center;gap:12px;">
+          <div style="font-size:24px;flex-shrink:0;">${s.activityEmoji || '🏃'}</div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:14px;font-weight:700;color:var(--text);">${s.day || 'Activity'}</div>
+            <div style="display:flex;gap:5px;margin-top:3px;flex-wrap:wrap;align-items:center;">
+              <span style="font-size:11px;color:var(--text2);">${s.durationMin}m · ${t}</span>
+              ${intensityChip}
+              ${xpChip}
+            </div>
+            ${s.notes ? `<div style="font-size:11px;color:var(--text2);margin-top:4px;font-style:italic;line-height:1.3;">${s.notes}</div>` : ''}
+          </div>
+          <button onclick="deleteManualActivity(${idx})" title="Delete" style="background:rgba(255,77,106,0.1);border:none;border-radius:8px;width:30px;height:30px;font-size:14px;color:var(--red);cursor:pointer;flex-shrink:0;">×</button>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
+
   // ── REST DAY ──
   if(todayInfo.isRestDay){
     html += `
@@ -15496,10 +15528,17 @@ function _renderPathTabActive() {
     const addOnForDay = userPath.addOns.find(a => a.preferredDays.includes(dayName));
     const isRest = !isCoreDay && !addOnForDay;
     let completed = false;
+    let loggedActivities = [];
     if(isToday){
       completed = completedSessions.some(s => {
         const sd = new Date(s.date);
         return sd.toDateString() === date.toDateString() && !s.adhoc && !s.manualActivity;
+      });
+      // Manual activities (runs, yoga, etc.) — surface them on today's row
+      // even though they don't count as a Path workout.
+      loggedActivities = completedSessions.filter(s => {
+        const sd = new Date(s.date);
+        return sd.toDateString() === date.toDateString() && s.manualActivity;
       });
     }
     // Specific workout name from rotation
@@ -15514,7 +15553,7 @@ function _renderPathTabActive() {
       if(addOnForDay.type === 'HIIT') addOnSpecific = _topHIITName;
     }
     const dayLabel = date.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' });
-    scheduleDays.push({ date, dayName, dayLabel, isToday, isPast:false, isCoreDay, addOnForDay, isRest, completed, specificWorkout, addOnSpecific });
+    scheduleDays.push({ date, dayName, dayLabel, isToday, isPast:false, isCoreDay, addOnForDay, isRest, completed, specificWorkout, addOnSpecific, loggedActivities });
   }
 
   const scheduleHtml = scheduleDays.map(d => {
@@ -15536,7 +15575,16 @@ function _renderPathTabActive() {
     }
 
     if(d.isRest){
-      workoutLabel = `<span style="font-size:11px;color:var(--text2);">Rest day</span>`;
+      // If a manual activity was logged on a rest day (run, yoga, etc.),
+      // surface it inline so the user can see their effort isn't invisible.
+      if(d.loggedActivities && d.loggedActivities.length){
+        const labels = d.loggedActivities
+          .map(s => `${s.activityEmoji || '🏃'} ${s.day || 'Activity'}${s.durationMin ? ' (' + s.durationMin + 'm)' : ''}`)
+          .join(' · ');
+        workoutLabel = `<div><span style="font-size:11px;color:var(--text2);">Rest day</span><div style="font-size:11px;color:var(--green);font-weight:700;margin-top:2px;">✓ ${labels}</div></div>`;
+      } else {
+        workoutLabel = `<span style="font-size:11px;color:var(--text2);">Rest day</span>`;
+      }
     } else if(d.isCoreDay && d.addOnForDay){
       const coreLabel = d.specificWorkout || _progDisplay;
       const addOnLabel = d.addOnSpecific || d.addOnForDay.type;
@@ -16515,7 +16563,26 @@ function saveActivity(){
   document.getElementById('activityMod').classList.remove('open');
   renderToday();
   renderProgress();
+  if(typeof renderPathTab === 'function' && document.getElementById('s-path')?.classList.contains('active')) renderPathTab();
   showToast(`${selectedActivity.emoji} ${label} logged · +${xp} XP`, 3000);
+}
+
+// Delete a previously-logged manual activity (run, yoga, tennis, etc.).
+// Splices it out of completedSessions, persists, and re-renders the relevant
+// surfaces. XP recomputes automatically since getTotalXP() iterates the log.
+function deleteManualActivity(idx){
+  const s = completedSessions[idx];
+  if(!s || !s.manualActivity) return;
+  const label = s.day || 'this activity';
+  if(!confirm(`Delete "${label}"? This will remove it from your log and refund the XP awarded.`)) return;
+  completedSessions.splice(idx, 1);
+  // Persist via saveStore — pass null so it just updates the local cache
+  // and triggers the cloud sync of completedSessions.
+  if(typeof saveStore === 'function') saveStore(null, null);
+  showToast(`${s.activityEmoji || '🗑'} ${label} removed`, 2000);
+  renderToday();
+  if(typeof renderProgress === 'function') renderProgress();
+  if(typeof renderPathTab === 'function' && document.getElementById('s-path')?.classList.contains('active')) renderPathTab();
 }
 
 // ── USER PROFILE ──
