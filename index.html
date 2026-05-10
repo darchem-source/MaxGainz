@@ -1100,13 +1100,20 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 
 <!-- AD-HOC SESSION MODAL -->
 <div class="modal-ov" id="adhocMod" onclick="if(event.target===this)this.classList.remove('open')">
-  <div class="modal">
+  <div class="modal" style="display:flex;flex-direction:column;max-height:92vh;padding-bottom:8px;">
     <div class="modal-handle"></div>
     <div id="adhocModTitle" style="font-size:19px;font-weight:800;margin-bottom:4px;">Add Extra Session</div>
-    <div id="adhocModSub" style="font-size:13px;color:var(--text2);margin-bottom:16px;">Pick any workout. Won't affect your Path progress.</div>
-    <div id="adhocContent"></div>
+    <div id="adhocModSub" style="font-size:13px;color:var(--text2);margin-bottom:10px;">Pick any workout from the full library. Won't affect your Path progress.</div>
+    <input id="adhocSearch" type="text" placeholder="Search workouts…" oninput="setAdhocSearch(this.value)"
+      style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:10px 14px;font-size:14px;color:var(--text);margin-bottom:8px;box-sizing:border-box;flex-shrink:0;">
+    <div id="adhocFilter" style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:2px;flex-shrink:0;">
+      <div class="chip active" onclick="setAdhocFilter('all',this)">All</div>
+      <div class="chip" onclick="setAdhocFilter('strength',this)">🏋️ Strength</div>
+      <div class="chip" onclick="setAdhocFilter('hiit',this)">⚡ HIIT</div>
+    </div>
+    <div id="adhocContent" style="overflow-y:auto;flex:1;"></div>
     <button onclick="document.getElementById('adhocMod').classList.remove('open')"
-      style="width:100%;margin-top:8px;background:transparent;border:none;color:var(--text2);font-size:13px;padding:8px;cursor:pointer;">Cancel</button>
+      style="width:100%;margin-top:8px;background:transparent;border:none;color:var(--text2);font-size:13px;padding:8px;cursor:pointer;flex-shrink:0;">Cancel</button>
   </div>
 </div>
 
@@ -14680,47 +14687,237 @@ function startPathSession(programme, dayName) {
 }
 
 // ── Ad-hoc session modal ──
+// Search/filter state for the Add Extra Session picker — reset on each open.
+let _adhocSearch = '';
+let _adhocFilter = 'all';   // 'all' | 'strength' | 'hiit'
+let _adhocExpanded = {};    // { sectionKey: true } — tracks expanded library/custom programmes
+
 function openAdhocModal() {
   const content = document.getElementById('adhocContent');
   if(!content) return;
   const titleEl = document.getElementById('adhocModTitle');
   const subEl   = document.getElementById('adhocModSub');
   if(titleEl) titleEl.textContent = 'Add Extra Session';
-  if(subEl)   subEl.textContent   = "Pick any workout. Won't affect your Path progress.";
+  if(subEl)   subEl.textContent   = "Pick any workout from the full library. Won't affect your Path progress.";
 
-  const allOptions = [
-    { prog:'ULF',  icon:'🏋️', label:'ULF Strength',   desc:'Upper / Lower / Full Body',       colour:'var(--accent)' },
-    { prog:'PPL',  icon:'💪', label:'PPL Strength',   desc:'Push / Pull / Legs',              colour:'var(--purple)' },
-    { prog:'HIIT', icon:'⚡', label:'HIIT',            desc:'Guided cardio or circuit',         colour:'var(--orange)' }
-  ];
+  // Reset filters every open so users always start at the broadest view.
+  _adhocSearch = '';
+  _adhocFilter = 'all';
+  _adhocExpanded = {};
+  const searchInput = document.getElementById('adhocSearch');
+  if(searchInput) searchInput.value = '';
+  document.querySelectorAll('#adhocFilter .chip').forEach((c, i) => c.classList.toggle('active', i === 0));
 
-  // Filter out current path programme from the base list, then prepend it as "extra"
-  const options = allOptions.filter(o => o.prog !== userPath?.programme);
-  if(userPath){
-    const _lib = isLibraryProgramme(userPath.programme) ? getLibraryProgramme(userPath.programme) : null;
-    const _label = _lib ? _lib.name : userPath.programme;
-    options.unshift({
-      prog: userPath.programme, icon:'🎯',
-      label: _label + ' (Extra)',
-      desc: 'Another session from your path', colour:'var(--accent)'
-    });
-  }
-
-  content.innerHTML = options.map(o => `
-    <div onclick="selectAdhocProg('${o.prog}')"
-      style="display:flex;align-items:center;gap:12px;padding:14px;background:var(--surface2);border-radius:12px;margin-bottom:8px;cursor:pointer;border:1px solid var(--border);">
-      <div style="font-size:24px;">${o.icon}</div>
-      <div>
-        <div style="font-size:14px;font-weight:700;">${o.label}</div>
-        <div style="font-size:11px;color:var(--text2);">${o.desc}</div>
-      </div>
-      <div style="margin-left:auto;color:var(--text2);">›</div>
-    </div>
-  `).join('');
-
+  _renderAdhocList();
   document.getElementById('adhocMod').classList.add('open');
 }
 
+function setAdhocSearch(q){
+  _adhocSearch = (q || '').trim().toLowerCase();
+  _renderAdhocList();
+}
+
+function setAdhocFilter(val, el){
+  _adhocFilter = val;
+  document.querySelectorAll('#adhocFilter .chip').forEach(c => c.classList.remove('active'));
+  if(el) el.classList.add('active');
+  _renderAdhocList();
+}
+
+function _toggleAdhocSection(key){
+  _adhocExpanded[key] = !_adhocExpanded[key];
+  _renderAdhocList();
+}
+
+// Build the full sectioned list of every startable workout. Filters by the
+// search box + active category chip. Each row tappable → starts that
+// workout as an adhoc / extra session.
+function _renderAdhocList(){
+  const wrap = document.getElementById('adhocContent');
+  if(!wrap) return;
+  const q = _adhocSearch;
+  const matches = (text) => !q || (text || '').toLowerCase().includes(q);
+  const showStrength = _adhocFilter === 'all' || _adhocFilter === 'strength';
+  const showHiit     = _adhocFilter === 'all' || _adhocFilter === 'hiit';
+
+  // Reusable row renderer — used for individual workouts inside any section.
+  const row = (icon, color, name, sub, onclickAttr) => `
+    <div onclick="${onclickAttr}"
+      style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--surface2);border-radius:10px;margin-bottom:6px;cursor:pointer;border:0.5px solid var(--border);">
+      <div style="width:36px;height:36px;border-radius:9px;background:${color}22;color:${color};font-size:18px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${icon}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:14px;font-weight:700;">${name}</div>
+        ${sub ? `<div style="font-size:11px;color:var(--text2);margin-top:2px;">${sub}</div>` : ''}
+      </div>
+      <div style="color:var(--text2);font-size:14px;flex-shrink:0;">›</div>
+    </div>`;
+
+  const sectionLabel = (text) => `<div style="font-size:10px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;padding:14px 4px 8px;">${text}</div>`;
+
+  let html = '';
+
+  // ── 🏋️ Strength: built-in (ULF days + PPL days) ──────────────────
+  if(showStrength){
+    const ulfDays = ['Upper','Lower','Full Body'].filter(matches);
+    const pplVariant = (typeof userPath !== 'undefined' && userPath?.coreSchedule?.variant) || 'standard';
+    const pplDays = (pplVariant === '6day'
+      ? ['Push A','Pull A','Legs A','Push B','Pull B','Legs B']
+      : ['Push A','Pull A','Legs A']
+    ).filter(matches);
+
+    if(ulfDays.length || pplDays.length){
+      html += sectionLabel('🏋️ Strength — Built-in');
+      ulfDays.forEach(d => {
+        html += row('🏋️','var(--accent)', d, 'ULF · Upper / Lower / Full Body',
+          `startAdhocWorkout({type:'ulf',day:'${d}'})`);
+      });
+      pplDays.forEach(d => {
+        html += row('💪','var(--purple)', d, 'PPL · Push / Pull / Legs',
+          `startAdhocWorkout({type:'ppl',day:'${d}'})`);
+      });
+    }
+  }
+
+  // ── 📚 Library programmes (each programme is one expandable row) ─
+  if(showStrength && typeof LIBRARY_PROGRAMMES !== 'undefined'){
+    const libMatches = LIBRARY_PROGRAMMES.filter(p =>
+      matches(p.name) || matches(p.short) || (p.schedule||[]).some(d => matches(d.day))
+    );
+    if(libMatches.length){
+      html += sectionLabel('📚 Library Programmes');
+      libMatches.forEach((p, i) => {
+        const key = 'lib_' + i;
+        const expanded = _adhocExpanded[key] || !!q;  // auto-expand on search
+        const dayCount = (p.schedule || []).length;
+        html += `
+          <div style="background:var(--surface2);border-radius:10px;margin-bottom:6px;border:0.5px solid var(--border);overflow:hidden;">
+            <div onclick="_toggleAdhocSection('${key}')" style="display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;">
+              <div style="width:36px;height:36px;border-radius:9px;background:rgba(123,77,255,0.15);color:var(--purple);font-size:18px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">📚</div>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:14px;font-weight:700;">${p.name}</div>
+                <div style="font-size:11px;color:var(--text2);margin-top:2px;">${p.short || ''} · ${dayCount} day${dayCount!==1?'s':''}</div>
+              </div>
+              <div style="color:var(--text2);font-size:13px;flex-shrink:0;">${expanded ? '▲' : '▼'}</div>
+            </div>
+            ${expanded ? `<div style="padding:0 14px 10px;">
+              ${(p.schedule || []).filter(d => matches(d.day)).map(d =>
+                `<div onclick="startAdhocWorkout({type:'library',programme:'library:${p.id || ''}',day:'${(d.day||'').replace(/'/g,"\\'")}'})"
+                  style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface);border-radius:8px;margin-top:4px;cursor:pointer;border:0.5px solid var(--border);">
+                  <div style="font-size:14px;flex:1;font-weight:600;">${d.day}</div>
+                  <div style="font-size:11px;color:var(--text2);">${(d.exercises || []).length} exercises</div>
+                  <div style="color:var(--text2);font-size:13px;">›</div>
+                </div>`
+              ).join('')}
+            </div>` : ''}
+          </div>`;
+      });
+    }
+  }
+
+  // ── 🏋️ Your Custom Programmes ─────────────────────────────────────
+  if(showStrength && typeof customWorkouts !== 'undefined' && customWorkouts.length){
+    const cMatches = customWorkouts
+      .map((w, i) => ({w, i}))
+      .filter(({w}) => matches(w.name) || (w.subcategories||[]).some(s => matches(s.name)));
+    if(cMatches.length){
+      html += sectionLabel('🏋️ Your Custom Strength');
+      cMatches.forEach(({w, i}) => {
+        const key = 'custom_' + i;
+        const expanded = _adhocExpanded[key] || !!q;
+        const subCount = (w.subcategories || []).length;
+        html += `
+          <div style="background:var(--surface2);border-radius:10px;margin-bottom:6px;border:0.5px solid var(--border);overflow:hidden;">
+            <div onclick="_toggleAdhocSection('${key}')" style="display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;">
+              <div style="width:36px;height:36px;border-radius:9px;background:rgba(200,255,0,0.15);color:var(--accent);font-size:18px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">🛠</div>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:14px;font-weight:700;">${w.name}</div>
+                <div style="font-size:11px;color:var(--text2);margin-top:2px;">${subCount} day${subCount!==1?'s':''}</div>
+              </div>
+              <div style="color:var(--text2);font-size:13px;flex-shrink:0;">${expanded ? '▲' : '▼'}</div>
+            </div>
+            ${expanded ? `<div style="padding:0 14px 10px;">
+              ${(w.subcategories || []).filter(s => matches(s.name)).map((s, si) =>
+                `<div onclick="startAdhocWorkout({type:'custom',progIdx:${i},subIdx:${si}})"
+                  style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface);border-radius:8px;margin-top:4px;cursor:pointer;border:0.5px solid var(--border);">
+                  <div style="font-size:14px;flex:1;font-weight:600;">${s.name}</div>
+                  <div style="font-size:11px;color:var(--text2);">${(s.exercises||[]).length} exercises</div>
+                  <div style="color:var(--text2);font-size:13px;">›</div>
+                </div>`
+              ).join('')}
+            </div>` : ''}
+          </div>`;
+      });
+    }
+  }
+
+  // ── 📚 HIIT Templates ─────────────────────────────────────────────
+  if(showHiit && typeof HIIT_TEMPLATES !== 'undefined'){
+    const tMatches = HIIT_TEMPLATES.filter(t =>
+      matches(t.name) || matches(t.format) || matches(t.tagline)
+    );
+    if(tMatches.length){
+      html += sectionLabel('📚 HIIT Templates');
+      tMatches.forEach(t => {
+        const fc = (typeof HIIT_FORMAT_COLORS !== 'undefined' && HIIT_FORMAT_COLORS[t.format]) || 'var(--accent)';
+        const icon = (typeof _hiitIconFor === 'function') ? _hiitIconFor(t) : '⚡';
+        html += row(icon, fc, t.name, `${t.format} · ${t.duration} min`,
+          `startAdhocWorkout({type:'template',name:'${t.name.replace(/'/g,"\\'")}'})`);
+      });
+    }
+  }
+
+  // ── ⚡ All HIIT Workouts (built-in + custom merged via HIIT array) ─
+  if(showHiit && typeof HIIT !== 'undefined'){
+    // Dedupe by name (custom HIITs are pushed into HIIT on load too)
+    const seen = new Set();
+    const hMatches = HIIT.filter(w => {
+      if(seen.has(w.name)) return false;
+      seen.add(w.name);
+      return matches(w.name) || matches(w.format) || matches(w.desc);
+    }).slice().sort((a, b) => (a.duration || 99) - (b.duration || 99));
+    if(hMatches.length){
+      html += sectionLabel('⚡ HIIT Workouts');
+      hMatches.forEach(w => {
+        const fc = (typeof HIIT_FORMAT_COLORS !== 'undefined' && HIIT_FORMAT_COLORS[w.format]) || 'var(--orange)';
+        const icon = (typeof _hiitIconFor === 'function') ? _hiitIconFor(w) : '⚡';
+        const isCustom = typeof customHIITs !== 'undefined' && customHIITs.some(c => c.name === w.name);
+        const sub = `${w.format || 'HIIT'} · ${w.duration || '?'} min${isCustom ? ' · Custom' : ''}`;
+        html += row(icon, fc, w.name, sub,
+          `startAdhocWorkout({type:'hiit',name:'${w.name.replace(/'/g,"\\'")}'})`);
+      });
+    }
+  }
+
+  if(!html){
+    html = '<div style="text-align:center;padding:24px;color:var(--text2);font-size:13px;">No workouts match' + (q ? ` "${_adhocSearch}"` : '') + '.</div>';
+  }
+  wrap.innerHTML = html;
+}
+
+// Universal "start as extra session" router. Keeps all the routing logic
+// in one place so the picker only needs to emit a {type, ...} spec.
+function startAdhocWorkout(spec){
+  document.getElementById('adhocMod').classList.remove('open');
+  window._currentSessionIsAdhoc = true;
+  if(spec.type === 'ulf'){
+    startSessionULF(spec.day);
+  } else if(spec.type === 'ppl'){
+    startSession(spec.day, PPL);
+  } else if(spec.type === 'library'){
+    const lib = getLibraryProgramme(spec.programme);
+    if(!lib) return;
+    startSession(spec.day, getLibraryDayMap(lib));
+  } else if(spec.type === 'custom'){
+    startCustomSubSession(spec.progIdx, spec.subIdx);
+  } else if(spec.type === 'hiit'){
+    const idx = HIIT.findIndex(h => h.name === spec.name);
+    if(idx >= 0) startHIIT(idx);
+  } else if(spec.type === 'template'){
+    runHIITTemplate(spec.name);
+  }
+}
+
+// Backwards-compat: old call sites that still invoke the legacy 3-option flow.
 function selectAdhocProg(prog) {
   document.getElementById('adhocMod').classList.remove('open');
   window._currentSessionIsAdhoc = true;
