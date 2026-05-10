@@ -9311,19 +9311,11 @@ function _renderActivePathSection(){
 }
 
 function _renderLibrarySection(){
-  // Pick 3 random-ish featured names to give a flavour (rotate by day-of-month for variety)
-  const sample = LIBRARY_PROGRAMMES.slice(0, 5).map(p => p.short).join(' · ');
-  return `
-    <div class="section-label">📚 PROGRAMME LIBRARY</div>
-    <div onclick="openLibraryBrowse()"
-      style="margin:0 16px 6px;padding:16px;background:linear-gradient(135deg,rgba(123,77,255,0.10),rgba(0,212,255,0.06));border:1px solid rgba(123,77,255,0.3);border-radius:14px;cursor:pointer;display:flex;align-items:center;gap:12px;">
-      <div style="font-size:32px;">📚</div>
-      <div style="flex:1;min-width:0;">
-        <div style="font-size:15px;font-weight:800;color:var(--text);">Browse ${LIBRARY_PROGRAMMES.length} curated classics</div>
-        <div style="font-size:11px;color:var(--text2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${sample} & more</div>
-      </div>
-      <div style="font-size:18px;color:var(--accent);">›</div>
-    </div>`;
+  // Library programmes are now rendered inline inside _renderMyProgrammesSection
+  // (under a "CURATED CLASSICS" sub-header). The dedicated hero card was
+  // removed to keep all programmes — built-in, curated, and custom — in
+  // one merged "ALL PROGRAMMES" view.
+  return '';
 }
 
 function _renderMyProgrammesSection(){
@@ -9412,10 +9404,69 @@ function _renderMyProgrammesSection(){
     </div>`;
   };
 
-  let html = `<div class="section-label">🛠️ MY PROGRAMMES</div>`;
+  // Render a curated library programme card (mirrors renderCustom's
+  // expandable pattern but for items in LIBRARY_PROGRAMMES).
+  const renderLibrary = (p) => {
+    const k = 'lib_' + p.id;
+    const dayCount = (p.schedule || []).length;
+    let inner = '';
+    (p.schedule || []).forEach(d => {
+      const dk = 'libd_' + p.id + '_' + (d.day || '').replace(/[^a-zA-Z0-9]/g, '_');
+      const safeDay = (d.day || '').replace(/'/g, "\\'");
+      inner += `<div class="day-card" style="margin:0 0 6px;border-radius:10px;">
+        <div class="day-head" onclick="togDay('${dk}')">
+          <div class="day-icon ic-u">📚</div>
+          <div style="flex:1;"><div style="font-size:14px;font-weight:700;">${d.day}</div><div style="font-size:11px;color:var(--text2);">${(d.exercises || []).length} exercises</div></div>
+          <div style="color:var(--text2);font-size:13px;" id="arr-${dk}">▼</div>
+        </div>
+        <div id="dd-${dk}" style="display:none;">`;
+      (d.exercises || []).forEach(ex => {
+        const wt = ex.weight ? ex.weight + 'kg' : ex.bw ? 'BW' : '–';
+        inner += `<div class="ex-row"><div style="flex:1;"><div style="font-size:13px;font-weight:600;">${ex.name}</div><div style="font-size:11px;color:var(--text2);">${ex.sets || 3} sets · ${ex.reps || ''}${ex.type ? ' · ' + ex.type : ''}</div></div><div style="font-size:15px;font-weight:800;color:var(--accent);">${wt}</div></div>`;
+      });
+      inner += `<div style="padding:10px 16px 14px;"><button class="btn-p" style="width:100%;padding:11px;font-size:13px;" onclick="startLibraryDay('${p.id}','${safeDay}')">▶ Start ${d.day}</button></div></div></div>`;
+    });
+    return `<div style="margin:0 16px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:14px;overflow:hidden;">
+      <div onclick="togDay('${k}')" style="padding:12px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;">
+        <div style="font-size:22px;">📚</div>
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <div style="font-size:15px;font-weight:800;">${p.name}</div>
+            <span style="background:rgba(123,77,255,0.15);color:var(--purple);font-size:9px;font-weight:800;padding:2px 7px;border-radius:5px;letter-spacing:0.5px;">CURATED</span>
+          </div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px;">${p.level || ''} · ${p.goal || ''} · ${dayCount} day${dayCount !== 1 ? 's' : ''}/wk</div>
+        </div>
+        <div style="color:var(--text2);font-size:13px;" id="arr-${k}">▼</div>
+      </div>
+      <div id="dd-${k}" style="display:none;padding:0 12px 12px;">${inner}</div>
+    </div>`;
+  };
+
+  // Sub-group label helper — keeps the visual structure scannable when
+  // the merged section grows past a couple of programmes.
+  const subLabel = (text) => `<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;padding:14px 20px 6px;">${text}</div>`;
+
+  let html = `<div class="section-label">🏋️ ALL PROGRAMMES</div>`;
+
+  // ── Built-in: ULF + PPL ──
+  html += subLabel('Built-in');
   html += renderBuiltIn('ULF', ULF, 'Upper · Lower · Full Body — 3 days');
   html += renderBuiltIn('PPL', PPL, 'Push · Pull · Legs — 3 or 6 days');
+
+  // ── Curated classics: the LIBRARY_PROGRAMMES list ──
+  if(typeof LIBRARY_PROGRAMMES !== 'undefined' && LIBRARY_PROGRAMMES.length){
+    html += subLabel('Curated Classics');
+    LIBRARY_PROGRAMMES.forEach(p => { html += renderLibrary(p); });
+  }
+
+  // ── Your Custom ──
+  if(customWorkouts.length){
+    html += subLabel('Your Custom');
+  } else {
+    html += subLabel('Your Custom · none yet');
+  }
   customWorkouts.forEach((prog, idx) => { html += renderCustom(prog, idx); });
+
   // Create button — disabled style if at cap (5)
   const atCap = customWorkouts.length >= 5;
   html += `<div style="margin:0 16px 4px;">
@@ -9425,6 +9476,14 @@ function _renderMyProgrammesSection(){
     </button>
   </div>`;
   return html;
+}
+
+// Start a specific day from a curated library programme. Used by the
+// merged "All Programmes" section on the Programme tab.
+function startLibraryDay(progId, day){
+  const lib = (typeof getLibraryProgramme === 'function') ? getLibraryProgramme(progId) : null;
+  if(!lib) return;
+  startSession(day, getLibraryDayMap(lib));
 }
 
 function setHIITSearch(q){
