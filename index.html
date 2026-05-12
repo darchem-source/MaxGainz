@@ -4651,6 +4651,13 @@ function updateSessUI(){
     const wt = ex.weight || 0;
     document.getElementById('currWt').textContent=wt>0?'BW +'+wt:'BW';
     document.getElementById('currWtUnit').textContent='recommended';
+  } else if(ex._userApplied){
+    // User has applied / adjusted this weight manually — respect it and
+    // do NOT recompute from editInfo (which would clobber the user's choice).
+    _setWeightAdjEditable(true);
+    const unit = (getEquipType(ex)==='dumbbell'?'kg/h':'kg');
+    document.getElementById('currWt').textContent=ex.weight||'–';
+    document.getElementById('currWtUnit').textContent=unit+' applied';
   } else {
     // Pre-session: apply smart editability logic based on history
     const editInfo = getWeightEditability(ex.name, parseRepTarget(ex.reps));
@@ -5179,6 +5186,9 @@ function applyPreSessionSuggestion(newWeight){
   const ex = sessExs[curIdx];
   if(!ex || typeof newWeight !== 'number') return;
   ex.weight = newWeight;
+  // Mark as user-applied so updateSessUI() won't overwrite this weight from
+  // editInfo (lastWeight / repAdjustedWeight / suggestedWeight) on the next render.
+  ex._userApplied = true;
   // Refresh weight display + lastTime panel + nextBtn enable state
   if(typeof updateSessUI === 'function') updateSessUI();
   if(typeof haptic === 'function') haptic(20);
@@ -7419,6 +7429,8 @@ function adjW(d){
   const steps=getWeightSteps(ex,equipOverride[curIdx]);
   const cur=ex.weight||0;
   ex.weight=stepWeight(cur,d,steps);
+  // Manual +/- is a user override — keep updateSessUI() from clobbering it later
+  ex._userApplied = true;
   if(ex.bw){
     document.getElementById('currWt').textContent=ex.weight>0?'BW +'+ex.weight:'BW';
     document.getElementById('currWtUnit').textContent='';
