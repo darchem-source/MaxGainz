@@ -15227,15 +15227,22 @@ function _scoreWorkoutFocus(focusGroups, sortedByWeakness) {
   return score;
 }
 
-// Returns an array of up to 3 recommendation objects: { name, prog, day, duration, diff, focusGroups, reason }
+// Returns an array of recommendation objects: { name, prog, day, duration, diff, focusGroups, reason }
 // addOnType: 'HIIT' → recommend HIIT workouts; 'ULF'/'PPL' → recommend strength days
-function getAddOnRecommendations(addOnType, balance) {
+// recentlyDone: optional Set of workout names completed recently — these get a heavy
+//               negative score penalty so unseen alternatives surface first.
+// maxResults: optional cap on returned recs (default 3 — Path schedule passes more for variety).
+function getAddOnRecommendations(addOnType, balance, recentlyDone, maxResults) {
   const groups   = ['push','pull','legs','core'];
   const sorted   = [...groups].sort((a, b) => balance[a] - balance[b]); // weakest first
   const groupNames = { push:'Push (Chest/Shoulders/Tri)', pull:'Pull (Back/Biceps)', legs:'Legs & Glutes', core:'Core' };
+  const _recent = recentlyDone instanceof Set ? recentlyDone : null;
+  const _cap = (typeof maxResults === 'number' && maxResults > 0) ? maxResults : 3;
+  const _recentPenalty = (name) => (_recent && _recent.has(name)) ? -1000 : 0;
 
-  function makeReason(focusGroups) {
+  function makeReason(focusGroups, isRecent) {
     const weak = sorted.slice(0, 2).filter(g => focusGroups.includes(g));
+    if(isRecent) return 'You did this recently — a fresh option is preferred';
     if(!balance.hasData) return 'No recent data — a great all-round choice';
     if(weak.length === 0) return 'Good balance workout';
     if(weak.length === 1) {
@@ -15252,12 +15259,12 @@ function getAddOnRecommendations(addOnType, balance) {
     HIIT.forEach((w, idx) => {
       const focus = HIIT_MUSCLE_FOCUS[w.name] || ['push','pull','legs','core'];
       candidates.push({ idx, name:w.name, prog:'HIIT', duration:w.duration, diff:w.diff,
-        focusGroups:focus, score:_scoreWorkoutFocus(focus, sorted), format:w.format });
+        focusGroups:focus, score:_scoreWorkoutFocus(focus, sorted) + _recentPenalty(w.name), format:w.format });
     });
     // Include custom HIITs (no muscle focus data — score 0)
     (typeof customHIITs !== 'undefined' ? customHIITs : []).forEach((w, ci) => {
       candidates.push({ ci, name:w.name, prog:'CUSTOM_HIIT', duration:w.duration||20, diff:w.diff||2,
-        focusGroups:['push','pull','legs','core'], score:1, format:w.format||'Custom' });
+        focusGroups:['push','pull','legs','core'], score: 1 + _recentPenalty(w.name), format:w.format||'Custom' });
     });
   } else {
     // Recommend ULF + PPL days
@@ -15269,32 +15276,34 @@ function getAddOnRecommendations(addOnType, balance) {
 
     ulfDays.forEach(day => {
       const focus = STRENGTH_MUSCLE_FOCUS[day] || [];
-      candidates.push({ day, prog:'ULF', duration:60, diff:2, focusGroups:focus,
-        score:_scoreWorkoutFocus(focus, sorted) });
+      candidates.push({ day, name:day, prog:'ULF', duration:60, diff:2, focusGroups:focus,
+        score:_scoreWorkoutFocus(focus, sorted) + _recentPenalty(day) });
     });
     pplDays.forEach(day => {
       const focus = STRENGTH_MUSCLE_FOCUS[day] || [];
-      candidates.push({ day, prog:'PPL', duration:60, diff:2, focusGroups:focus,
-        score:_scoreWorkoutFocus(focus, sorted) });
+      candidates.push({ day, name:day, prog:'PPL', duration:60, diff:2, focusGroups:focus,
+        score:_scoreWorkoutFocus(focus, sorted) + _recentPenalty(day) });
     });
     (typeof customWorkouts !== 'undefined' ? customWorkouts : []).forEach((w, ci) => {
       candidates.push({ ci, name:w.name, prog:'CUSTOM', duration:w.duration||60, diff:2,
-        focusGroups:['push','pull','legs','core'], score:1 });
+        focusGroups:['push','pull','legs','core'], score: 1 + _recentPenalty(w.name) });
     });
   }
 
   // Sort by score desc, then duration asc (shorter first as a tiebreaker for quick wins)
   candidates.sort((a, b) => b.score - a.score || a.duration - b.duration);
 
-  // Deduplicate by focus profile — don't show 3 identical workouts
+  // Deduplicate by focus profile — don't show 3 identical workouts.
+  // When maxResults is requested (Path scheduling), keep more unique profiles for variety.
   const seen = new Set();
   const recs = [];
   for(const c of candidates) {
     const key = c.focusGroups.slice().sort().join(',');
-    if(!seen.has(key) || recs.length < 2) {
+    const isRec = _recent && c.name && _recent.has(c.name);
+    if(!seen.has(key) || recs.length < Math.max(2, Math.ceil(_cap / 2))) {
       seen.add(key);
-      recs.push({ ...c, reason: makeReason(c.focusGroups) });
-      if(recs.length >= 3) break;
+      recs.push({ ...c, reason: makeReason(c.focusGroups, isRec) });
+      if(recs.length >= _cap) break;
     }
   }
   return recs;
@@ -15546,9 +15555,36 @@ function _renderPathTabActive() {
   const _libCurrent = isLibraryProgramme(userPath.programme) ? getLibraryProgramme(userPath.programme) : null;
   const _progDisplay = _libCurrent ? _libCurrent.short : userPath.programme;
   // ── HIIT add-on recommendation via muscle imbalance ──
+  // Pull HIIT workouts done in the last 14 days so the path doesn't recommend
+  // something the user just completed — that's a major source of week-to-week
+  // sameness when the imbalance profile is stable.
   const _schedBalance = calcMuscleImbalance(4);
-  const _hiitRecs = getAddOnRecommendations('HIIT', _schedBalance);
-  const _topHIITName = _hiitRecs[0]?.name || null;
+  const _hiitNamesSet = new Set(HIIT.map(h => h.name));
+  if(typeof customHIITs !== 'undefined') customHIITs.forEach(h => _hiitNamesSet.add(h.name));
+  const _recentCutoff = new Date(); _recentCutoff.setDate(_recentCutoff.getDate() - 14);
+  const _recentlyDoneHIIT = new Set();
+  completedSessions.forEach(s => {
+    if(s.manualActivity) return;
+    const sd = s.date instanceof Date ? s.date : new Date(s.date);
+    if(sd < _recentCutoff) return;
+    if(_hiitNamesSet.has(s.day)) _recentlyDoneHIIT.add(s.day);
+  });
+  // Ask for up to 6 recs so we have alternatives when multiple HIIT add-on
+  // days fall in the same week (and to allow fallbacks if all top recs collide).
+  const _hiitRecs = getAddOnRecommendations('HIIT', _schedBalance, _recentlyDoneHIIT, 6);
+  // Pick a different rec for each HIIT add-on day within this week so two
+  // add-on days never show the same workout.
+  const _hiitScheduledThisWeek = new Set();
+  const _pickNextHIITRec = () => {
+    for(const rec of _hiitRecs){
+      if(!_hiitScheduledThisWeek.has(rec.name)){
+        _hiitScheduledThisWeek.add(rec.name);
+        return rec.name;
+      }
+    }
+    // Exhausted unique recs (more HIIT days than recs) — fall back to top.
+    return _hiitRecs[0]?.name || null;
+  };
 
   let _coreIdx = _baseCoreSessionsDone;
   const scheduleDays = [];
@@ -15579,10 +15615,11 @@ function _renderPathTabActive() {
       specificWorkout = _coreWorkoutCycle[_coreIdx % _coreWorkoutCycle.length];
       _coreIdx++;
     }
-    // Add-on specific name — HIIT gets muscle-imbalance recommendation
+    // Add-on specific name — HIIT gets muscle-imbalance recommendation, with
+    // each scheduled HIIT day in the week picking a different workout.
     let addOnSpecific = null;
     if(addOnForDay){
-      if(addOnForDay.type === 'HIIT') addOnSpecific = _topHIITName;
+      if(addOnForDay.type === 'HIIT') addOnSpecific = _pickNextHIITRec();
     }
     const dayLabel = date.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' });
     scheduleDays.push({ date, dayName, dayLabel, isToday, isPast:false, isCoreDay, addOnForDay, isRest, completed, specificWorkout, addOnSpecific, loggedActivities });
