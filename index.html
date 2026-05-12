@@ -5447,9 +5447,26 @@ function openCoreRoundLog(roundIdx){
   pendingRepSetIdx=roundIdx;
   pendingIsCoreRound=true;
   document.getElementById('repMod').classList.add('open');
+  // Reset scroll position so each new round opens at the FIRST exercise.
+  // The modal element is reused across rounds, so the browser preserves the
+  // scroll position from the previous round otherwise — leaving the user at
+  // the end of the list when round N+1 starts.
+  _resetRepModalScroll();
   // Store abdominal statuses
   if(!window.abdominalStatuses) window.abdominalStatuses={};
   window.abdominalStatuses[roundIdx]=exs.map((e,i)=>({name:e.name,status:existing[i]?existing[i].status||'completed':'completed'}));
+}
+
+// Reset both scroll axes on the rep modal's scrollable inner pane so a
+// re-opened modal always starts at the top-left, regardless of how far the
+// user scrolled the previous time it was open. Defer one frame so the
+// slideUp animation and any DOM repaint settle before we touch scrollTop.
+function _resetRepModalScroll(){
+  const inner = document.querySelector('#repMod .modal');
+  if(!inner) return;
+  const reset = () => { inner.scrollTop = 0; inner.scrollLeft = 0; };
+  reset();
+  if(typeof requestAnimationFrame === 'function') requestAnimationFrame(reset);
 }
 
 let pendingIsCoreRound=false;
@@ -7148,6 +7165,9 @@ function openRepInput(setIdx){
   document.getElementById('setWtVal').textContent=sw;
 
   document.getElementById('repMod').classList.add('open');
+  // Ensure a freshly opened modal always starts at the top — same fix as
+  // openCoreRoundLog (the modal element is reused across sets/rounds).
+  _resetRepModalScroll();
 }
 
 function selectRep(n,el){
