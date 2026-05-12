@@ -920,7 +920,26 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
         <!-- Garry's Settings Section -->
         <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;">
           <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:12px;">🏃 Garry's Workout Settings</div>
-          
+
+          <!-- Runner Level -->
+          <div style="margin-bottom:12px;">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+              <label style="font-size:12px;font-weight:700;color:var(--text2);">Runner Level</label>
+              <button onclick="openRunnerLevelInfo()" title="What do these levels mean?"
+                style="background:transparent;border:none;color:var(--text2);font-size:13px;cursor:pointer;padding:0;line-height:1;opacity:0.7;">ⓘ</button>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;">
+              <button onclick="setRunnerLevel('beginner')" id="runnerLvl-beginner"
+                style="padding:8px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;transition:all 0.2s;">Beginner</button>
+              <button onclick="setRunnerLevel('intermediate')" id="runnerLvl-intermediate"
+                style="padding:8px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;transition:all 0.2s;">Intermediate</button>
+              <button onclick="setRunnerLevel('advanced')" id="runnerLvl-advanced"
+                style="padding:8px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;transition:all 0.2s;">Advanced</button>
+              <button onclick="setRunnerLevel('elite')" id="runnerLvl-elite"
+                style="padding:8px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;transition:all 0.2s;">Elite</button>
+            </div>
+          </div>
+
           <!-- Speed Unit -->
           <div style="margin-bottom:12px;">
             <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">Treadmill Speed</label>
@@ -937,6 +956,51 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
               <button onclick="setWeightUnit('kg')" id="weightBtn-kg" style="flex:1;padding:8px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;transition:all 0.2s;">Kilograms (kg)</button>
               <button onclick="setWeightUnit('lbs')" id="weightBtn-lbs" style="flex:1;padding:8px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;transition:all 0.2s;">Pounds (lbs)</button>
             </div>
+          </div>
+        </div>
+
+        <!-- Runner Level Info Modal -->
+        <div class="modal-ov" id="runnerLevelInfoMod" onclick="if(event.target===this)this.classList.remove('open')">
+          <div class="modal" style="display:flex;flex-direction:column;max-height:88vh;padding-bottom:8px;">
+            <div class="modal-handle"></div>
+            <div style="font-size:19px;font-weight:800;margin-bottom:4px;">Runner Level</div>
+            <div style="font-size:13px;color:var(--text2);margin-bottom:12px;">Pick the level that best matches your current running fitness. Treadmill speed ranges in Garry's workouts adjust to suit.</div>
+            <div style="overflow-y:auto;flex:1;">
+              <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px;">
+                <div style="font-size:13px;font-weight:800;color:var(--green);margin-bottom:6px;">🌱 Beginner</div>
+                <ul style="font-size:12px;color:var(--text2);line-height:1.5;margin:0;padding-left:20px;">
+                  <li>New to running or returning after a long break</li>
+                  <li>Comfortable walking but building running fitness</li>
+                  <li>Can jog for short bursts (1–2 minutes)</li>
+                </ul>
+              </div>
+              <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px;">
+                <div style="font-size:13px;font-weight:800;color:var(--accent);margin-bottom:6px;">🏃 Intermediate</div>
+                <ul style="font-size:12px;color:var(--text2);line-height:1.5;margin:0;padding-left:20px;">
+                  <li>Run regularly (3–6 months experience)</li>
+                  <li>Can sustain a jog for 10–20 minutes</li>
+                  <li>Building stamina and speed confidence</li>
+                </ul>
+              </div>
+              <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px;">
+                <div style="font-size:13px;font-weight:800;color:var(--orange);margin-bottom:6px;">⚡ Advanced</div>
+                <ul style="font-size:12px;color:var(--text2);line-height:1.5;margin:0;padding-left:20px;">
+                  <li>Experienced runner (6+ months consistent training)</li>
+                  <li>Comfortable running at pace for 30+ minutes</li>
+                  <li>Uses intervals and speed work regularly</li>
+                </ul>
+              </div>
+              <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px;">
+                <div style="font-size:13px;font-weight:800;color:var(--red);margin-bottom:6px;">🔥 Elite</div>
+                <ul style="font-size:12px;color:var(--text2);line-height:1.5;margin:0;padding-left:20px;">
+                  <li>Competitive or highly trained runner</li>
+                  <li>High sustained speeds feel comfortable</li>
+                  <li>Pushes maximum effort during sprints</li>
+                </ul>
+              </div>
+            </div>
+            <button onclick="document.getElementById('runnerLevelInfoMod').classList.remove('open')"
+              style="width:100%;margin-top:8px;background:transparent;border:none;color:var(--text2);font-size:13px;padding:8px;cursor:pointer;flex-shrink:0;">Close</button>
           </div>
         </div>
         
@@ -3164,7 +3228,8 @@ async function cloudSaveProfile() {
     prefs: {
       speedUnit:    localStorage.getItem('userSpeedUnit')    || 'mph',
       weightUnit:   localStorage.getItem('userWeightUnit')   || 'kg',
-      audioEnabled: userPreferences.audioEnabled
+      audioEnabled: userPreferences.audioEnabled,
+      runnerLevel:  localStorage.getItem('userRunnerLevel')  || 'intermediate'
     }
   });
   // Try to upsert — will silently fail if notes column doesn't exist yet
@@ -3261,6 +3326,7 @@ async function cloudLoadAll() {
           }
           if (blob.prefs) {
             if (blob.prefs.speedUnit)  { localStorage.setItem('userSpeedUnit',  blob.prefs.speedUnit);  userPreferences.speedUnit  = blob.prefs.speedUnit;  }
+            if (blob.prefs.runnerLevel){ localStorage.setItem('userRunnerLevel', blob.prefs.runnerLevel); userPreferences.runnerLevel = blob.prefs.runnerLevel; }
             if (blob.prefs.weightUnit) { localStorage.setItem('userWeightUnit', blob.prefs.weightUnit); userPreferences.weightUnit = blob.prefs.weightUnit; }
             if (blob.prefs.audioEnabled !== undefined) {
               userPreferences.audioEnabled = !!blob.prefs.audioEnabled;
@@ -3510,6 +3576,7 @@ function _buildExportPayload(){
       speedUnit:    lsReadRaw('userSpeedUnit')    || 'mph',
       weightUnit:   lsReadRaw('userWeightUnit')   || 'kg',
       audioEnabled: lsReadRaw('userAudioEnabled') === '1',
+      runnerLevel:  lsReadRaw('userRunnerLevel')  || 'intermediate',
     },
     // Optional UI state
     progSections:  lsRead('maxgainz_progSections', {}),
@@ -3614,6 +3681,7 @@ function applyImportPayload(payload){
   // Preferences
   const p = payload.prefs || {};
   if(p.speedUnit)    { localStorage.setItem('userSpeedUnit',    p.speedUnit);    userPreferences.speedUnit    = p.speedUnit; }
+  if(p.runnerLevel)  { localStorage.setItem('userRunnerLevel',  p.runnerLevel);  userPreferences.runnerLevel  = p.runnerLevel; }
   if(p.weightUnit)   { localStorage.setItem('userWeightUnit',   p.weightUnit);   userPreferences.weightUnit   = p.weightUnit; }
   if(p.audioEnabled !== undefined){
     userPreferences.audioEnabled = !!p.audioEnabled;
@@ -4614,7 +4682,7 @@ function updateSessUI(){
   
   // Garry's exercises show duration; EMOM shows which minutes; regular shows sets × reps
   if(ex.duration){
-    document.getElementById('currMeta').textContent=ex.duration+'s · '+(ex.speed?'Speed: '+getDisplaySpeed(ex.speed):'')+(ex.weight?' · '+getDisplayWeight(ex.weight):'');
+    document.getElementById('currMeta').textContent=ex.duration+'s · '+(ex.speed?'Speed: '+getDisplaySpeed(ex.speed,ex.name):'')+(ex.weight?' · '+getDisplayWeight(ex.weight):'');
     document.getElementById('setCountLbl').textContent=ex.duration+' seconds';
   } else if(ex.emomNote){
     document.getElementById('currMeta').textContent=ex.reps+' · '+ex.emomNote;
@@ -5571,7 +5639,7 @@ function setupTimedExercise(ex){
       if(ex.block === 'treadmill'){
         // ── TREADMILL HERO ──
         const zone = getSpeedEffortLabel(ex.name);
-        const speedDisplay = ex.speed ? getDisplaySpeed(ex.speed) : null;
+        const speedDisplay = ex.speed ? getDisplaySpeed(ex.speed, ex.name) : null;
         const inclineStr = ex.incline ? `<div style="font-size:16px;font-weight:700;color:var(--accent2);">📐 ${ex.incline} incline</div>` : '';
         const zoneColor = zone ? zone.color : 'var(--accent2)';
         const zoneBadge = zone ? `
@@ -16644,6 +16712,7 @@ function renderProfile(){
   // Update Garry's settings buttons
   updateSpeedUnitButtons();
   updateWeightUnitButtons();
+  updateRunnerLevelButtons();
   _updateAudioToggleBtn();
   renderThemeSwatches();
 }
@@ -16740,15 +16809,80 @@ applyTheme(activeTheme);
 let userPreferences = {
   speedUnit:    localStorage.getItem('userSpeedUnit')    || 'mph', // mph or kph
   weightUnit:   localStorage.getItem('userWeightUnit')   || 'kg',  // kg or lbs
-  audioEnabled: localStorage.getItem('userAudioEnabled') !== '0'   // default ON
+  audioEnabled: localStorage.getItem('userAudioEnabled') !== '0',  // default ON
+  // Runner level — drives the treadmill speed range shown in Garry's blocks.
+  // Defaults to 'intermediate' when not previously set. Persisted to
+  // localStorage and synced to cloud via cloudSaveProfile.
+  runnerLevel:  localStorage.getItem('userRunnerLevel')  || 'intermediate'  // beginner | intermediate | advanced | elite
 };
 
-// Helper function to display speed based on user preference — includes unit label
-function getDisplaySpeed(speedObj){
-  if(!speedObj) return '';
-  const unit = userPreferences.speedUnit;
-  const val = speedObj[unit] || speedObj.mph;
+// ── RUNNER LEVEL SPEED TABLE ──
+// Per-element ranges by level and unit. km/h and mph are independently
+// rounded to nearest 0.5 — NOT direct conversions of each other (so a
+// Beginner Sprint in km/h might display 12.0–14.0 while in mph it
+// shows 7.5–8.5, even though those aren't equal). Each entry is a
+// pre-formatted "X.X–Y.Y" string ready to drop into the UI.
+const RUNNER_SPEED_TABLE = {
+  beginner: {
+    walk:     { kph:'4.0–5.5',  mph:'2.5–3.5' },
+    jog:      { kph:'6.5–7.5',  mph:'4.0–4.5' },
+    run:      { kph:'8.5–10.0', mph:'5.5–6.0' },
+    runFast:  { kph:'10.5–12.0',mph:'6.5–7.5' },
+    sprint:   { kph:'12.0–14.0',mph:'7.5–8.5' }
+  },
+  intermediate: {
+    walk:     { kph:'5.0–6.0',  mph:'3.0–4.0' },
+    jog:      { kph:'7.5–8.5',  mph:'4.5–5.5' },
+    run:      { kph:'10.0–11.5',mph:'6.0–7.0' },
+    runFast:  { kph:'12.0–13.5',mph:'7.5–8.5' },
+    sprint:   { kph:'14.0–16.0',mph:'8.5–10.0'}
+  },
+  advanced: {
+    walk:     { kph:'5.5–6.5',  mph:'3.5–4.0' },
+    jog:      { kph:'8.5–9.5',  mph:'5.5–6.0' },
+    run:      { kph:'11.5–13.0',mph:'7.0–8.0' },
+    runFast:  { kph:'13.5–15.0',mph:'8.5–9.5' },
+    sprint:   { kph:'16.0–18.0',mph:'10.0–11.5'}
+  },
+  elite: {
+    walk:     { kph:'6.0–7.0',  mph:'4.0–4.5' },
+    jog:      { kph:'9.5–10.5', mph:'6.0–6.5' },
+    run:      { kph:'13.0–14.5',mph:'8.0–9.0' },
+    runFast:  { kph:'15.0–16.5',mph:'9.5–10.5'},
+    sprint:   { kph:'18.0–20.0',mph:'11.5–12.5'}
+  }
+};
+
+// Map a treadmill exercise name (e.g. "Run Fast (4% Incline)") to an
+// element key in RUNNER_SPEED_TABLE. Returns null if no match — the
+// caller falls back to the exercise's hardcoded speed object.
+function _runnerElement(exName){
+  const n = (exName || '').toLowerCase();
+  if(n.includes('all-out')) return 'sprint';  // treat "All-Out Sprint" as sprint
+  if(n.includes('sprint'))  return 'sprint';
+  if(n.includes('fast run') || n.includes('run fast')) return 'runFast';
+  if(n.includes('run'))     return 'run';
+  if(n.includes('jog'))     return 'jog';
+  if(n.includes('walk') || n.includes('recover')) return 'walk';
+  return null;
+}
+
+// Helper function to display speed based on user preference — includes unit label.
+// When the exercise name resolves to a known treadmill element and the user
+// has a runner level set, prefer the personalised table over the hardcoded
+// per-exercise range. Hardcoded values remain a fallback for unknown elements.
+function getDisplaySpeed(speedObj, exName){
+  const unit  = userPreferences.speedUnit;
   const label = unit === 'kph' ? 'km/h' : 'mph';
+  const element = _runnerElement(exName);
+  const level   = userPreferences.runnerLevel || 'intermediate';
+  if(element && RUNNER_SPEED_TABLE[level] && RUNNER_SPEED_TABLE[level][element]){
+    const range = RUNNER_SPEED_TABLE[level][element][unit];
+    if(range) return `${range} ${label}`;
+  }
+  // Fall back to the hardcoded per-exercise ranges (older data, unknown elements)
+  if(!speedObj) return '';
+  const val = speedObj[unit] || speedObj.mph;
   return `${val} ${label}`;
 }
 
@@ -16778,6 +16912,31 @@ function setSpeedUnit(unit){
   localStorage.setItem('userSpeedUnit', unit);
   updateSpeedUnitButtons();
   cloudSaveProfile();
+}
+
+function setRunnerLevel(level){
+  if(!['beginner','intermediate','advanced','elite'].includes(level)) return;
+  userPreferences.runnerLevel = level;
+  localStorage.setItem('userRunnerLevel', level);
+  updateRunnerLevelButtons();
+  cloudSaveProfile();
+  showToast('🏃 Runner level: ' + level.charAt(0).toUpperCase() + level.slice(1), 1800);
+}
+
+function updateRunnerLevelButtons(){
+  const current = userPreferences.runnerLevel || 'intermediate';
+  ['beginner','intermediate','advanced','elite'].forEach(lvl => {
+    const btn = document.getElementById('runnerLvl-' + lvl);
+    if(!btn) return;
+    const active = lvl === current;
+    btn.style.background  = active ? 'var(--accent)' : 'var(--surface)';
+    btn.style.color       = active ? '#000' : 'var(--text)';
+    btn.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
+  });
+}
+
+function openRunnerLevelInfo(){
+  document.getElementById('runnerLevelInfoMod').classList.add('open');
 }
 
 function setWeightUnit(unit){
