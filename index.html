@@ -15694,6 +15694,8 @@ function _renderPathTabActive() {
     const addOnForDay = userPath.addOns.find(a => a.preferredDays.includes(dayName));
     const isRest = !isCoreDay && !addOnForDay;
     let completed = false;
+    let addOnCompleted = false;
+    let addOnCompletedName = null;
     let loggedActivities = [];
     if(isToday){
       completed = completedSessions.some(s => {
@@ -15706,6 +15708,16 @@ function _renderPathTabActive() {
         const sd = new Date(s.date);
         return sd.toDateString() === date.toDateString() && s.manualActivity;
       });
+      // Add-on sessions are stored with adhoc:true, so the `completed` check
+      // above intentionally misses them. Re-use the existing helper to detect
+      // a completed add-on of today's planned type.
+      if(addOnForDay && typeof _findTodayAddOnSession === 'function'){
+        const addOnSess = _findTodayAddOnSession(addOnForDay.type);
+        if(addOnSess){
+          addOnCompleted = true;
+          addOnCompletedName = addOnSess.day || null;
+        }
+      }
     }
     // Specific workout name from rotation
     let specificWorkout = null;
@@ -15715,12 +15727,18 @@ function _renderPathTabActive() {
     }
     // Add-on specific name — HIIT gets muscle-imbalance recommendation, with
     // each scheduled HIIT day in the week picking a different workout.
+    // If today's add-on is already done, show the actual workout name instead
+    // of the recommendation (the user wants confirmation, not a fresh suggestion).
     let addOnSpecific = null;
     if(addOnForDay){
-      if(addOnForDay.type === 'HIIT') addOnSpecific = _pickNextHIITRec();
+      if(addOnCompleted && addOnCompletedName){
+        addOnSpecific = addOnCompletedName;
+      } else if(addOnForDay.type === 'HIIT'){
+        addOnSpecific = _pickNextHIITRec();
+      }
     }
     const dayLabel = date.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' });
-    scheduleDays.push({ date, dayName, dayLabel, isToday, isPast:false, isCoreDay, addOnForDay, isRest, completed, specificWorkout, addOnSpecific, loggedActivities });
+    scheduleDays.push({ date, dayName, dayLabel, isToday, isPast:false, isCoreDay, addOnForDay, isRest, completed, addOnCompleted, specificWorkout, addOnSpecific, loggedActivities });
   }
 
   const scheduleHtml = scheduleDays.map(d => {
@@ -15731,8 +15749,15 @@ function _renderPathTabActive() {
 
     if(d.isToday){ bg = 'rgba(200,255,0,0.06)'; border = 'rgba(200,255,0,0.4)'; }
 
+    // Today is "all done" only when every planned item (core if a core day,
+    // add-on if an add-on day) has been completed. Add-on completion is
+    // tracked separately because add-on sessions are stored adhoc:true.
+    const _coreDone   = !d.isCoreDay   || d.completed;
+    const _addOnDone  = !d.addOnForDay || d.addOnCompleted;
+    const _todayAllDone = _coreDone && _addOnDone;
+
     if(d.isToday){
-      indicator = d.completed
+      indicator = _todayAllDone
         ? `<div style="width:22px;height:22px;border-radius:50%;background:var(--green);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;">✓</div>`
         : `<div style="width:22px;height:22px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0;color:#000;font-weight:800;">▶</div>`;
     } else {
@@ -15757,15 +15782,25 @@ function _renderPathTabActive() {
     } else if(d.isCoreDay && d.addOnForDay){
       const coreLabel = d.specificWorkout || _progDisplay;
       const addOnLabel = d.addOnSpecific || d.addOnForDay.type;
-      const addOnSub = d.addOnSpecific ? `<div style="font-size:10px;color:rgba(0,212,255,0.7);margin-top:1px;">📊 Based on muscle balance</div>` : '';
-      workoutLabel = `<div><span style="font-size:11px;color:var(--accent);font-weight:700;">${coreLabel}</span><span style="font-size:11px;color:#00d4ff;margin-left:6px;">+ ${addOnLabel}</span>${addOnSub}</div>`;
+      // Add-on done → swap colour/prefix to a green check; otherwise show the
+      // "+ NAME" with muscle-balance subtitle as before.
+      const addOnColor  = d.addOnCompleted ? 'var(--green)' : '#00d4ff';
+      const addOnPrefix = d.addOnCompleted ? '✓ ' : '+ ';
+      const addOnSub = (!d.addOnCompleted && d.addOnSpecific)
+        ? `<div style="font-size:10px;color:rgba(0,212,255,0.7);margin-top:1px;">📊 Based on muscle balance</div>` : '';
+      workoutLabel = `<div><span style="font-size:11px;color:var(--accent);font-weight:700;">${coreLabel}</span><span style="font-size:11px;color:${addOnColor};margin-left:6px;">${addOnPrefix}${addOnLabel}</span>${addOnSub}</div>`;
     } else if(d.isCoreDay){
       const coreLabel = d.specificWorkout || _progDisplay;
       workoutLabel = `<span style="font-size:11px;color:var(--accent);font-weight:700;">${coreLabel}</span>`;
     } else if(d.addOnForDay){
       const addOnLabel = d.addOnSpecific || d.addOnForDay.type;
-      const addOnSub = d.addOnSpecific ? `<div style="font-size:10px;color:rgba(0,212,255,0.7);margin-top:1px;">📊 Based on muscle balance</div>` : '';
-      workoutLabel = `<div><span style="font-size:11px;color:#00d4ff;font-weight:700;">${addOnLabel} <span style="background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.3);border-radius:4px;padding:1px 5px;font-size:9px;">ADD-ON</span></span>${addOnSub}</div>`;
+      if(d.addOnCompleted){
+        // Completed add-on: green tick, "DONE" pill, no recommendation subtitle.
+        workoutLabel = `<div><span style="font-size:11px;color:var(--green);font-weight:700;">✓ ${addOnLabel} <span style="background:rgba(76,255,145,0.15);border:1px solid rgba(76,255,145,0.4);border-radius:4px;padding:1px 5px;font-size:9px;color:#4cff91;">DONE</span></span></div>`;
+      } else {
+        const addOnSub = d.addOnSpecific ? `<div style="font-size:10px;color:rgba(0,212,255,0.7);margin-top:1px;">📊 Based on muscle balance</div>` : '';
+        workoutLabel = `<div><span style="font-size:11px;color:#00d4ff;font-weight:700;">${addOnLabel} <span style="background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.3);border-radius:4px;padding:1px 5px;font-size:9px;">ADD-ON</span></span>${addOnSub}</div>`;
+      }
     }
 
     return `
