@@ -8807,7 +8807,13 @@ function finishSession(){
         const dt = (ts[sortedKeys[k]] - ts[sortedKeys[k-1]]) / 1000;
         if(dt > 0 && dt < 600) restSecs.push(Math.round(dt)); // sanity: drop > 10min outliers
       }
-      setLog[ex.name]={sets:done,reps:Object.values(rl),weight:ex.weight,setWeights:Object.values(sw),equipOverride:equipOverride[i]||null,note:_exerciseNotes[ex.name]||null,restSecs:restSecs.length?restSecs:undefined};
+      // Sanitize weight to a non-negative finite number. HIIT exercise
+      // definitions sometimes set weight to objects ({kg:"12-15"}) or strings
+      // ("bodyweight") — storing those would NaN-poison muscle balance.
+      // Also sanitize each entry in setWeights (per-set logged weights).
+      const _exW = (typeof ex.weight === 'number' && isFinite(ex.weight) && ex.weight >= 0) ? ex.weight : 0;
+      const _swArr = Object.values(sw).map(v => (typeof v === 'number' && isFinite(v) && v >= 0) ? v : 0);
+      setLog[ex.name]={sets:done,reps:Object.values(rl),weight:_exW,bw:!!ex.bw,setWeights:_swArr,equipOverride:equipOverride[i]||null,note:_exerciseNotes[ex.name]||null,restSecs:restSecs.length?restSecs:undefined};
     }
   });
   // console.log('finishSession: step 5 - progressions');
@@ -9223,9 +9229,18 @@ function startHIIT(idx){
   stopRest(); window._restStoppedManually=false; // clean slate before new session
   sessExs=exercises.map(ex=>{
     const dbEx = EXDB.find(e => e.name === ex.name);
-    const isBW = !!(ex.bw || (dbEx && dbEx.bw) || w.bw);
+    // String-hint bodyweight: HIIT defs sometimes set weight:"bodyweight" or
+    // weight:"bodyweight or 30-50 lbs" or weight:"BW" instead of bw:true.
+    // Treat those as bodyweight so muscle balance attributes them properly.
+    const _wRaw = ex.weight;
+    const _wStrBWHint = typeof _wRaw === 'string' && /bodyweight|^bw$/i.test(_wRaw);
+    const isBW = !!(ex.bw || (dbEx && dbEx.bw) || w.bw || _wStrBWHint);
     return {
       ...ex,
+      // Keep original ex.weight when not bodyweight — getDisplayWeight() in
+      // updateSessUI handles object/string forms ({kg:"12-15"} etc.) for the
+      // on-screen meta line. Sanitization to a number happens at write-time
+      // in finishSession so non-numeric weights can't poison muscle balance.
       weight: isBW ? 0 : (ex.weight || w.weight || 0),
       muscles: ex.muscles || (dbEx && dbEx.muscles) || ['cardio'],
       bw: isBW
@@ -12876,7 +12891,7 @@ function getSplits(exName){
     if(c==='push'||c==='pull'||c==='legs'||c==='core') return [{cat:c,f:1}];
   }
   const l=exName.toLowerCase();
-  if(/squat|lunge|leg press|leg curl|calf|glute|hip thrust|hamstring/.test(l)) return [{cat:'legs',f:1}];
+  if(/squat|lunge|leg press|leg curl|calf|glute|hip thrust|hamstring|\brun\b|\bjog\b|sprint|walk|recover|treadmill|step.?up|bound/.test(l)) return [{cat:'legs',f:1}];
   if(/deadlift/.test(l)) return [{cat:'pull',f:0.6},{cat:'legs',f:0.4}];
   if(/row|pull|chin|curl|lat|pulldown/.test(l)) return [{cat:'pull',f:1}];
   if(/press|fly|dip|push|tricep|shoulder|pec/.test(l)) return [{cat:'push',f:1}];
@@ -14138,13 +14153,21 @@ function renderMuscleBalance(){
       const sets=data.sets||0;
       const repsArr=Array.isArray(data.reps)?data.reps:(data.reps?[data.reps]:[]);
       const repsSum=repsArr.reduce((a,r)=>a+(parseInt(r)||0),0);
-      let ew=data.weight||0;
-      // Bodyweight volume: data.bw is not persisted in setLog, so look it up via EXDB.
-      // "Abdominal Work" is the ULF/PPL core-circuit placeholder (not in EXDB) — treat as bw.
-      let isBW=false;
+      // Defensive: legacy sessions may have data.weight as an object/string
+      // (HIIT defs used {kg:"12-15"} / "bodyweight"). Coerce to a finite
+      // number so we don't NaN-poison the totals.
+      let ew=(typeof data.weight==='number'&&isFinite(data.weight)&&data.weight>0)?data.weight:0;
+      // Bodyweight volume: prefer the persisted data.bw flag (newer sessions);
+      // fall back to EXDB for older sessions. "Abdominal Work" is the ULF/PPL
+      // core-circuit placeholder (not in EXDB) — treat as bw.
+      let isBW=!!data.bw;
       if(!ew){
-        const dbEx=EXDB.find(e=>e.name===exName);
-        if((dbEx&&dbEx.bw)||exName==='Abdominal Work'){ew=userProfile.weight||80;isBW=true;}
+        if(isBW){
+          ew=userProfile.weight||80;
+        } else {
+          const dbEx=EXDB.find(e=>e.name===exName);
+          if((dbEx&&dbEx.bw)||exName==='Abdominal Work'){ew=userProfile.weight||80;isBW=true;}
+        }
       }
       // If no reps were logged (e.g. core circuit sets stored via markCoreRound),
       // estimate 10 reps per set so bodyweight exercises still contribute volume.
@@ -15278,9 +15301,24 @@ function calcMuscleImbalance(windowWeeks) {
       const sets = data.sets || 0;
       const repsArr = Array.isArray(data.reps) ? data.reps : (data.reps ? [data.reps] : []);
       const repsSum = repsArr.reduce((a, r) => a + (parseInt(r) || 0), 0);
-      let ew = data.weight || 0;
-      if(!ew && data.bw) ew = userProfile.weight || 80;
-      const vol = ew * repsSum;
+      // Defensive: legacy sessions may have data.weight stored as an object
+      // ({kg:"12-15"}) or string ("bodyweight"). Coerce to a non-negative
+      // finite number — otherwise vol becomes NaN and poisons every category.
+      let ew = (typeof data.weight === 'number' && isFinite(data.weight) && data.weight > 0) ? data.weight : 0;
+      let isBW = !!data.bw;
+      if(!ew){
+        if(isBW){
+          ew = userProfile.weight || 80;
+        } else {
+          // Fallback for pre-fix sessions without data.bw — consult EXDB.
+          const dbEx = EXDB.find(e => e.name === exName);
+          if(dbEx && dbEx.bw){ ew = userProfile.weight || 80; isBW = true; }
+        }
+      }
+      // Garry's/HIIT-style timed exercises have no logged reps; estimate
+      // 10 reps per bodyweight set so they still contribute volume.
+      const effectiveReps = repsSum > 0 ? repsSum : (isBW ? sets * 10 : 0);
+      const vol = ew * effectiveReps;
       splits.forEach(({cat, f}) => {
         setCounts[cat] += sets * f * w;
         muscleVol[cat] += vol * f * w;
