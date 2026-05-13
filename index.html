@@ -954,33 +954,23 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
               ON
             </button>
           </div>
-          <!-- Custom voice — record your own clips to replace the system TTS -->
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:10px;border-top:0.5px solid var(--border);">
-            <div style="flex:1;">
-              <div style="font-size:13px;font-weight:600;color:var(--text);">Use my voice</div>
-              <div style="font-size:11px;color:var(--text2);margin-top:2px;" id="voiceStatus">Falls back to system voice when off</div>
-            </div>
-            <button id="useMyVoiceBtn" onclick="toggleUseMyVoice()"
-              style="min-width:52px;padding:8px 14px;border-radius:20px;font-size:13px;font-weight:800;cursor:pointer;transition:all 0.2s;">
-              OFF
-            </button>
-          </div>
-          <button onclick="openVoiceRecorder()"
-            style="width:100%;margin-top:8px;background:var(--surface3);border:0.5px solid var(--border);border-radius:10px;padding:10px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer;">
-            🎤 Record my voice
-          </button>
         </div>
 
-        <!-- VOICE RECORDER MODAL -->
+        <!-- VOICE RECORDER MODAL (OWNER ONLY — accessible via ?owner=record URL).
+             Records 5 countdown words into localStorage so the owner can preview,
+             then exports them as a JS snippet to paste into BUNDLED_VOICE_CLIPS
+             in the source. Regular end-users never see this modal. -->
         <div class="modal-ov" id="voiceRecMod" onclick="if(event.target===this)this.classList.remove('open')">
-          <div class="modal" style="display:flex;flex-direction:column;max-height:88vh;padding-bottom:8px;">
+          <div class="modal" style="display:flex;flex-direction:column;max-height:90vh;padding-bottom:8px;">
             <div class="modal-handle"></div>
-            <div style="font-size:19px;font-weight:800;margin-bottom:4px;">Record your countdown voice</div>
-            <div style="font-size:13px;color:var(--text2);margin-bottom:12px;">Tap Record then say each word clearly. Recording captures the first ~1.4 seconds.</div>
+            <div style="font-size:19px;font-weight:800;margin-bottom:4px;">Record bundled countdown voice <span style="font-size:11px;font-weight:700;color:var(--text2);background:var(--surface3);padding:2px 7px;border-radius:5px;margin-left:6px;">OWNER</span></div>
+            <div style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.45;">Tap Record then say each word clearly. ~1.4s per clip. When done, tap <strong>📋 Copy JS snippet</strong> and paste the result into <code>BUNDLED_VOICE_CLIPS</code> in <code>index.html</code>. Commit + deploy and every user hears your voice.</div>
             <div id="voiceRecList" style="overflow-y:auto;flex:1;"></div>
-            <div style="display:flex;gap:8px;margin-top:8px;flex-shrink:0;">
-              <button onclick="clearAllVoice()" style="flex:1;background:rgba(255,77,106,0.08);border:0.5px solid rgba(255,77,106,0.3);border-radius:10px;padding:10px;font-size:12px;font-weight:700;color:var(--red);cursor:pointer;">Clear all</button>
-              <button onclick="document.getElementById('voiceRecMod').classList.remove('open')" style="flex:2;background:var(--accent);color:#000;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:800;cursor:pointer;">Done</button>
+            <textarea id="voiceRecExport" readonly style="display:none;width:100%;min-height:140px;margin-top:8px;background:var(--surface3);border:0.5px solid var(--border);border-radius:8px;padding:8px;font-size:10px;color:var(--text);font-family:monospace;resize:vertical;box-sizing:border-box;"></textarea>
+            <div style="display:flex;gap:6px;margin-top:8px;flex-shrink:0;flex-wrap:wrap;">
+              <button onclick="clearAllVoice()" style="flex:1;min-width:90px;background:rgba(255,77,106,0.08);border:0.5px solid rgba(255,77,106,0.3);border-radius:10px;padding:10px;font-size:12px;font-weight:700;color:var(--red);cursor:pointer;">Clear all</button>
+              <button onclick="exportVoiceBundle()" style="flex:1;min-width:140px;background:var(--accent2);color:#000;border:none;border-radius:10px;padding:10px;font-size:12px;font-weight:800;cursor:pointer;">📋 Copy JS snippet</button>
+              <button onclick="document.getElementById('voiceRecMod').classList.remove('open')" style="flex:1;min-width:80px;background:var(--accent);color:#000;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:800;cursor:pointer;">Done</button>
             </div>
           </div>
         </div>
@@ -7708,24 +7698,39 @@ function playCompletionDing(){
 let _spokenCountdown = new Set();
 
 // Speak a single word for the rest/countdown timer.
-// Priority: user's recorded clip (if useMyVoice is on AND a clip exists)
-// → Web Speech API system voice → silent. The user-clip path is async-safe;
-// if play() rejects (e.g. autoplay policy), we fall through to system TTS.
+// Priority for everyone:
+//   1. Bundled clip (BUNDLED_VOICE_CLIPS) — the owner's voice, shipped
+//      in the source. Used for ALL users.
+//   2. Owner-mode preview — clips recorded in this session via the
+//      ?owner=record flow, sitting in localStorage. Only matters for
+//      the owner while testing before export.
+//   3. System TTS (Web Speech API) — fallback when neither is available.
+// If a clip's play() rejects (autoplay policy, decoding error, etc.) we
+// fall through to the next tier so the countdown still happens.
 function speakCountdown(word){
   if(!userPreferences.audioEnabled) return;
   const key = (word || '').toLowerCase();
-  if(userPreferences.useMyVoice && _userVoiceAudio[key]){
+  // Tier 1: bundled
+  if(_bundledVoiceAudio[key]){
+    try {
+      const a = _bundledVoiceAudio[key];
+      a.currentTime = 0;
+      const p = a.play();
+      if(p && typeof p.then === 'function') p.catch(() => _speakWithTTS(word));
+      return;
+    } catch(e) { /* fall through */ }
+  }
+  // Tier 2: owner-mode preview (only populated when the owner is recording)
+  if(_userVoiceAudio[key]){
     try {
       const a = _userVoiceAudio[key];
       a.currentTime = 0;
       const p = a.play();
-      if(p && typeof p.then === 'function'){
-        // If play() rejects (autoplay blocked, etc.), fall through to TTS.
-        p.catch(() => _speakWithTTS(word));
-      }
+      if(p && typeof p.then === 'function') p.catch(() => _speakWithTTS(word));
       return;
     } catch(e) { /* fall through */ }
   }
+  // Tier 3: system TTS
   _speakWithTTS(word);
 }
 
@@ -7754,37 +7759,6 @@ function _updateAudioToggleBtn(){
   btn.style.background = on ? 'var(--accent)' : 'var(--surface3)';
   btn.style.color      = on ? '#000'          : 'var(--text2)';
   btn.style.border     = on ? '0.5px solid var(--accent)' : '0.5px solid var(--border)';
-  _updateUseMyVoiceBtn();
-}
-
-function toggleUseMyVoice(){
-  userPreferences.useMyVoice = !userPreferences.useMyVoice;
-  localStorage.setItem('userUseMyVoice', userPreferences.useMyVoice ? '1' : '0');
-  _updateUseMyVoiceBtn();
-}
-
-function _updateUseMyVoiceBtn(){
-  const btn = document.getElementById('useMyVoiceBtn');
-  if(!btn) return;
-  const on = userPreferences.useMyVoice;
-  btn.textContent = on ? 'ON' : 'OFF';
-  btn.style.background = on ? 'var(--accent)' : 'var(--surface3)';
-  btn.style.color      = on ? '#000'          : 'var(--text2)';
-  btn.style.border     = on ? '0.5px solid var(--accent)' : '0.5px solid var(--border)';
-  // Status line: how many words are recorded
-  const status = document.getElementById('voiceStatus');
-  if(status){
-    const recorded = VOICE_WORDS.filter(w => _userVoiceClips[w]).length;
-    if(!on){
-      status.textContent = recorded
-        ? `${recorded}/${VOICE_WORDS.length} recorded · using system voice`
-        : 'Falls back to system voice when off';
-    } else {
-      status.textContent = recorded === VOICE_WORDS.length
-        ? `✓ All ${VOICE_WORDS.length} words recorded`
-        : `${recorded}/${VOICE_WORDS.length} recorded · others use system voice`;
-    }
-  }
 }
 
 // ── VOICE RECORDER ──
@@ -7846,7 +7820,6 @@ async function recordVoiceWord(word){
         _saveUserVoiceClips();
         _voiceRec = null;
         _renderVoiceRecMod();
-        _updateUseMyVoiceBtn();
         // Auto-preview so user hears what was captured.
         try { a.currentTime = 0; a.play(); } catch(e) {}
         showToast(`✓ Recorded "${word}"`, 1400);
@@ -7881,7 +7854,6 @@ function clearVoiceWord(word){
   delete _userVoiceAudio[word];
   _saveUserVoiceClips();
   _renderVoiceRecMod();
-  _updateUseMyVoiceBtn();
 }
 
 function clearAllVoice(){
@@ -7891,8 +7863,39 @@ function clearAllVoice(){
   _userVoiceAudio = {};
   _saveUserVoiceClips();
   _renderVoiceRecMod();
-  _updateUseMyVoiceBtn();
   showToast('🗑 Voice recordings cleared', 1500);
+}
+
+// Owner-only: build the JS snippet for BUNDLED_VOICE_CLIPS from whatever
+// is in localStorage right now, show it in the modal's textarea, and copy
+// to the clipboard. Owner pastes this into the constant in index.html,
+// commits + deploys → every user hears their voice.
+async function exportVoiceBundle(){
+  const recorded = VOICE_WORDS.filter(w => _userVoiceClips[w]);
+  if(!recorded.length){
+    showToast('⚠️ Record at least one word first', 2000);
+    return;
+  }
+  const lines = ['const BUNDLED_VOICE_CLIPS = {'];
+  VOICE_WORDS.forEach(w => {
+    const uri = _userVoiceClips[w];
+    if(uri) lines.push(`  ${w}: '${uri}',`);
+  });
+  lines.push('};');
+  const snippet = lines.join('\n');
+  const ta = document.getElementById('voiceRecExport');
+  if(ta){
+    ta.value = snippet;
+    ta.style.display = 'block';
+  }
+  // Try clipboard API; fall back to selecting the textarea so user can copy manually.
+  try {
+    await navigator.clipboard.writeText(snippet);
+    showToast(`📋 Copied snippet (${recorded.length}/${VOICE_WORDS.length} words) — paste into index.html`, 3500);
+  } catch(e) {
+    if(ta){ ta.focus(); ta.select(); }
+    showToast('Tap-hold the textarea to copy manually', 3000);
+  }
 }
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -17248,22 +17251,40 @@ let userPreferences = {
   weightUnit:   localStorage.getItem('userWeightUnit')   || 'kg',  // kg or lbs
   audioEnabled: localStorage.getItem('userAudioEnabled') !== '0',  // default ON
   // Runner level — drives the treadmill speed range shown in Garry's blocks.
-  // Defaults to 'intermediate' when not previously set. Persisted to
-  // localStorage and synced to cloud via cloudSaveProfile.
-  runnerLevel:  localStorage.getItem('userRunnerLevel')  || 'intermediate',  // beginner | intermediate | advanced | elite
-  // Custom voice — when true, speakCountdown() uses user-recorded clips
-  // (see _userVoiceClips below) instead of the system speechSynthesis voice.
-  // Falls back to system voice for any words the user hasn't recorded.
-  useMyVoice:   localStorage.getItem('userUseMyVoice') === '1'
+  runnerLevel:  localStorage.getItem('userRunnerLevel')  || 'intermediate'
 };
 
-// ── USER VOICE CLIPS ──
-// The 5 countdown words we support. Stored as base64 data URIs in
-// localStorage so they survive reloads + work offline. NOT cloud-synced —
-// keeping the feature light. Re-record on a new device if needed.
+// ── BUNDLED COUNTDOWN VOICE ──
+// 5 base64-encoded audio clips baked into the source. When any of these are
+// non-empty, speakCountdown() plays them for ALL users in place of the
+// system speechSynthesis voice. Missing clips fall back to TTS.
+//
+// To populate: visit https://maxgainz.netlify.app/?owner=record (URL param
+// opens a recorder modal automatically). Record each word, tap "📋 Copy
+// JS snippet", paste the result into the constant below, commit + deploy.
 const VOICE_WORDS = ['three', 'two', 'one', 'go', 'done'];
-let _userVoiceClips = {};          // word(lowercase) → data URI
-let _userVoiceAudio  = {};         // word → preloaded HTMLAudioElement
+const BUNDLED_VOICE_CLIPS = {
+  // three: 'data:audio/webm;base64,...',
+  // two:   'data:audio/webm;base64,...',
+  // one:   'data:audio/webm;base64,...',
+  // go:    'data:audio/webm;base64,...',
+  // done:  'data:audio/webm;base64,...'
+};
+
+// Pre-load bundled clips so playback is instant during a workout.
+const _bundledVoiceAudio = {};
+Object.entries(BUNDLED_VOICE_CLIPS).forEach(([w, uri]) => {
+  if(!uri) return;
+  const a = new Audio(uri);
+  a.preload = 'auto';
+  _bundledVoiceAudio[w] = a;
+});
+
+// Owner-mode-only: localStorage clips used during the recording session
+// before they're exported into BUNDLED_VOICE_CLIPS. Regular users never
+// touch this — _bundledVoiceAudio (above) is what plays for them.
+let _userVoiceClips = {};
+let _userVoiceAudio = {};
 
 function _loadUserVoiceClips(){
   try {
@@ -17278,7 +17299,6 @@ function _loadUserVoiceClips(){
     _userVoiceAudio[w] = a;
   });
 }
-
 function _saveUserVoiceClips(){
   try {
     localStorage.setItem('userVoiceClips', JSON.stringify(_userVoiceClips));
@@ -17286,9 +17306,25 @@ function _saveUserVoiceClips(){
     showToast('⚠️ Storage full — clear some recordings', 2500);
   }
 }
-
-// Initialise clips on script load — _loadUserVoiceClips guards against bad JSON.
 _loadUserVoiceClips();
+
+// Auto-open recorder when the owner visits with ?owner=record.
+// Guarded by a flag so we only open it once per page load.
+function _maybeOpenOwnerRecorder(){
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if(params.get('owner') === 'record'){
+      // Wait for DOM to be ready since openVoiceRecorder touches the modal.
+      const open = () => { if(typeof openVoiceRecorder === 'function') openVoiceRecorder(); };
+      if(document.readyState === 'complete' || document.readyState === 'interactive'){
+        setTimeout(open, 200);
+      } else {
+        window.addEventListener('DOMContentLoaded', () => setTimeout(open, 200));
+      }
+    }
+  } catch(e) {}
+}
+_maybeOpenOwnerRecorder();
 
 // ── RUNNER LEVEL SPEED TABLE ──
 // Per-element ranges by level and unit. km/h and mph are independently
