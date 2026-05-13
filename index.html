@@ -7922,20 +7922,34 @@ function initHIITSession(){
   
   // console.log('[HIIT INIT] Initializing HIIT session:', hiitWorkout.format);
   
-  // For Tabata, parse timing from "20s on/10s off" pattern
-  if(hiitWorkout.format === 'Tabata' && exs[0].reps){
+  // For Tabata, parse timing from the first exercise's reps field. We accept:
+  //   • full pattern: "20s on/10s off"
+  //   • work-only:    "20s"   → rest = max(10, work/2), traditional 2:1 ratio
+  // Either form yields a timer-driven session. Falling through to manual
+  // logging only happens if reps is missing or unparseable entirely.
+  if(hiitWorkout.format === 'Tabata' && exs[0] && exs[0].reps){
     const firstReps = exs[0].reps.toString();
-    const match = firstReps.match(/(\d+)s\s*on[^0-9]*(\d+)s\s*off/i);
-    
-    if(!match) {
-      // console.log('[HIIT INIT] Tabata format but no timing pattern found');
+    const fullMatch = firstReps.match(/(\d+)s\s*on[^0-9]*(\d+)s\s*off/i);
+    const bareMatch = firstReps.match(/(\d+)\s*s\b/i);
+
+    let workSecs, restSecs;
+    if(fullMatch){
+      workSecs = parseInt(fullMatch[1]);
+      restSecs = parseInt(fullMatch[2]);
+    } else if(bareMatch){
+      workSecs = parseInt(bareMatch[1]);
+      // Default rest: half the work duration (classic 2:1 work:rest ratio),
+      // floor at 10s so micro-intervals still get a breath.
+      restSecs = Math.max(10, Math.round(workSecs / 2));
+    } else {
+      // No parseable seconds — bail to manual logging.
       return false;
     }
-    
-    const workSecs = parseInt(match[1]); // 20s
-    const restSecs = parseInt(match[2]); // 10s
-    const roundsPerExercise = exs[0].sets || 1; // typically 2 = 8 rounds
-    
+
+    // Built-in convention: 1 "set" = 4 rounds (so 2 sets = a full 8-round
+    // Tabata). Default to 2 when not specified so the standard protocol runs.
+    const roundsPerExercise = exs[0].sets || 2;
+
     // Build blocks: each exercise is one Tabata block
     const blocks = exs.map((ex, idx) => ({
       exerciseIdx: idx,
