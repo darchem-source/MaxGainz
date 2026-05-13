@@ -15785,7 +15785,27 @@ function _renderPathTabActive() {
     return _hiitRecs[0]?.name || null;
   };
 
-  let _coreIdx = _baseCoreSessionsDone;
+  // Detect today's actual completed core session by name. _baseCoreSessionsDone
+  // counts ALL non-adhoc core sessions (including today's if done), so the
+  // rotation index it produces points to the NEXT workout — wrong for today's
+  // row. The Today tab avoids this by reading the session's day field
+  // directly; we now do the same here for parity.
+  const _todayCoreSession = (function(){
+    if(_coreWorkoutCycle.length === 0) return null;
+    const t = new Date(); t.setHours(0,0,0,0);
+    const tom = new Date(t); tom.setDate(t.getDate() + 1);
+    const cycleSet = new Set(_coreWorkoutCycle);
+    return completedSessions.find(s => {
+      if(s.adhoc || s.manualActivity) return false;
+      if(!cycleSet.has(s.day)) return false;
+      const sd = s.date instanceof Date ? s.date : new Date(s.date);
+      return sd >= t && sd < tom;
+    }) || null;
+  })();
+  const _todayCompletedCoreDay = _todayCoreSession ? _todayCoreSession.day : null;
+  // Roll back the rotation cursor by 1 if today's session is already
+  // counted in _baseCoreSessionsDone — otherwise future days would skip ahead.
+  let _coreIdx = _baseCoreSessionsDone - (_todayCompletedCoreDay ? 1 : 0);
   const scheduleDays = [];
   for(let d = 0; d <= 6; d++){
     const date = new Date(); date.setDate(date.getDate() + d); date.setHours(0,0,0,0);
@@ -15820,10 +15840,17 @@ function _renderPathTabActive() {
         }
       }
     }
-    // Specific workout name from rotation
+    // Specific workout name from rotation. For today's row, prefer the
+    // actual completed session's day name when present — matches the Today
+    // tab and prevents an off-by-one rotation index from displaying the
+    // next planned workout as if it were the one just done.
     let specificWorkout = null;
     if(isCoreDay && _coreWorkoutCycle.length > 0){
-      specificWorkout = _coreWorkoutCycle[_coreIdx % _coreWorkoutCycle.length];
+      if(isToday && _todayCompletedCoreDay){
+        specificWorkout = _todayCompletedCoreDay;
+      } else {
+        specificWorkout = _coreWorkoutCycle[_coreIdx % _coreWorkoutCycle.length];
+      }
       _coreIdx++;
     }
     // Add-on specific name — HIIT gets muscle-imbalance recommendation, with
