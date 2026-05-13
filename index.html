@@ -66,7 +66,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
 .page-header { padding: 16px 20px 12px; position: sticky; top: 0; z-index: 50; background: var(--bg); }
 /* Sticky wrapper for multi-element headers (session, programme) */
-.sticky-hdr { position: sticky; top: 0; z-index: 50; background: var(--bg); transition: box-shadow var(--dur-base) var(--ease-out); }
+.sticky-hdr { position: sticky; top: 0; z-index: 50; background: var(--bg); transition: box-shadow var(--dur-base) var(--ease-out); /* sticky is a positioned value → containing block for #sessStickyExName's position:absolute */ }
 .sticky-hdr.stuck { box-shadow: 0 4px 16px rgba(0,0,0,0.45); }
 .sticky-hdr.stuck #sessStickyBadge { opacity: 1; transform: scale(1); max-width: 80px; padding-right: 7px; }
 .sticky-hdr.stuck #sessStickyExName { border-top-color: var(--border); }
@@ -457,8 +457,13 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
           </div>
           <div class="timer-pill" id="sessTimer">0:00</div>
         </div>
-        <!-- Scroll-driven exercise name reveal -->
-        <div id="sessStickyExName" style="height:0;overflow:hidden;opacity:0;transform:translateY(-4px);transition:height var(--dur-base) var(--ease-out),opacity var(--dur-base) var(--ease-out),transform var(--dur-base) var(--ease-out);padding:0 16px;border-top:0.5px solid transparent;">
+        <!-- Scroll-driven exercise name reveal.
+             Positioned absolutely (out of flow) so toggling its visibility
+             never changes the sticky header's own height. Otherwise the
+             height change shifts all content below the header in document
+             flow, which moves the IntersectionObserver sentinel back into
+             view and creates a stuck/unstuck oscillation = visible shake. -->
+        <div id="sessStickyExName" style="position:absolute;left:0;right:0;top:100%;background:var(--bg);overflow:hidden;opacity:0;transform:translateY(-4px);transition:opacity var(--dur-base) var(--ease-out),transform var(--dur-base) var(--ease-out);padding:0 16px;border-top:0.5px solid transparent;pointer-events:none;">
           <div style="font-size:14px;font-weight:800;color:var(--accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:6px 0 4px;" id="sessStickyExNameText"></div>
         </div>
         <div class="prog-strip" style="margin:0 16px 4px;"><div class="prog-fill" id="progFill" style="width:0%"></div></div>
@@ -7082,12 +7087,13 @@ function initScrollDrivenHeader(){
     entries.forEach(entry => {
       const stuck = !entry.isIntersecting;
       stickyHdr.classList.toggle('stuck', stuck);
+      // No height toggle — the reveal is position:absolute (out of flow), so
+      // its visibility never resizes the sticky header. That prevents the
+      // stuck/unstuck oscillation that previously caused a visible shake.
       if(stuck){
-        reveal.style.height    = '30px';
         reveal.style.opacity   = '1';
         reveal.style.transform = 'translateY(0)';
       } else {
-        reveal.style.height    = '0';
         reveal.style.opacity   = '0';
         reveal.style.transform = 'translateY(-4px)';
       }
