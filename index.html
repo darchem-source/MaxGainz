@@ -4920,14 +4920,17 @@ function updateSessUI(){
   if(garrysUpDef && !isBarrysWorkout) garrysUpDef.style.display = 'none';
 
   if(hiitState){
-    // Tabata: show sticky pre-bar before start, hide after
+    // Tabata: show sticky pre-bar before start, hide after.
+    // Once the session is running, surface the Cancel button so the user
+    // can abort — previously both finish and cancel were hidden, leaving
+    // no escape hatch during a running Tabata.
     if(actRow) actRow.style.display='none';
     if(currCard) currCard.style.display='none';
     if(queueWrap) queueWrap.style.display='none';
     if(hiitStartBtn) hiitStartBtn.style.display = hiitState.started ? 'none' : 'block';
     if(hiitPreBar) hiitPreBar.style.display = hiitState.started ? 'none' : 'block';
     if(finishBtn) finishBtn.style.display = 'none';
-    if(cancelBtn) cancelBtn.style.display = 'none';
+    if(cancelBtn) cancelBtn.style.display = hiitState.started ? 'block' : 'none';
     showHIITDisplay();
   } else if(isAMRAPWorkout && !window._nonTabataSessionStarted){
     // AMRAP pre-session: sticky action bar + circuit preview
@@ -7988,15 +7991,17 @@ function initHIITSession(){
 
 function startHIITSession(){
   if(hiitState){
-    // console.log('[HIIT] startHIITSession called, hiitState exists');
     hiitState.started = true;
-    // console.log('[HIIT] Set hiitState.started = true');
-    
+
     const startBtn = document.getElementById('hiitStartBtn');
-    if(startBtn) {
-      startBtn.style.display = 'none';
-      // console.log('[HIIT] Hidden start button');
-    }
+    if(startBtn) startBtn.style.display = 'none';
+
+    // Scroll the active-session view to the top so the countdown panel
+    // isn't partially hidden behind the sticky session header (which can
+    // otherwise clip the "Round X/8" label if the user had scrolled down
+    // through the exercise preview before tapping Start).
+    const tc = document.querySelector('.tab-content');
+    if(tc) tc.scrollTop = 0;
     
     // Show 3-second countdown before starting
     showCountdownTimer(3, () => {
@@ -11915,11 +11920,13 @@ const HIIT_TEMPLATES = [
     name:'Tabata Cardio', format:'Tabata', duration:16, diff:2,
     tagline:'Eight rounds of 20-on / 10-off per exercise — pure conditioning',
     tags:['bw','apt','quick'],
+    // Reps must contain "Ns on/Ns off" for the Tabata engine to parse the
+    // timing; sets:2 → 8 rounds per exercise (sets × 4 = roundsPerBlock).
     exercises:[
-      {name:'Jumping Jacks', reps:'20s', weight:0},
-      {name:'High Knees', reps:'20s', weight:0},
-      {name:'Mountain Climbers', reps:'20s', weight:0},
-      {name:'Burpees', reps:'20s', weight:0}
+      {name:'Jumping Jacks',    reps:'20s on/10s off', sets:2, weight:0},
+      {name:'High Knees',       reps:'20s on/10s off', sets:2, weight:0},
+      {name:'Mountain Climbers',reps:'20s on/10s off', sets:2, weight:0},
+      {name:'Burpees',          reps:'20s on/10s off', sets:2, weight:0}
     ]
   },
   {
@@ -11971,11 +11978,12 @@ const HIIT_TEMPLATES = [
     name:'Pull-Day Conditioning', format:'Tabata', duration:16, diff:3,
     tagline:'Tabata-style pull volume — bar work plus rowing variations to trash the back',
     tags:[],
+    // Standard Tabata: 20s on / 10s off × 8 rounds per exercise (sets:2 × 4).
     exercises:[
-      {name:'Pull-Ups', reps:'20s', weight:0},
-      {name:'Inverted Rows', reps:'20s', weight:0},
-      {name:'Renegade Rows', reps:'20s', weight:15},
-      {name:'Bent-Over Row Burst', reps:'20s', weight:15}
+      {name:'Pull-Ups',            reps:'20s on/10s off', sets:2, weight:0},
+      {name:'Inverted Rows',       reps:'20s on/10s off', sets:2, weight:0},
+      {name:'Renegade Rows',       reps:'20s on/10s off', sets:2, weight:15},
+      {name:'Bent-Over Row Burst', reps:'20s on/10s off', sets:2, weight:15}
     ]
   },
   {
