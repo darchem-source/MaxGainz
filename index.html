@@ -4931,6 +4931,17 @@ function updateSessUI(){
     if(hiitPreBar) hiitPreBar.style.display = hiitState.started ? 'none' : 'block';
     if(finishBtn) finishBtn.style.display = 'none';
     if(cancelBtn) cancelBtn.style.display = hiitState.started ? 'block' : 'none';
+    // Suppress the scroll-driven exercise-name reveal inside the sticky
+    // header for Tabata. The active (cycled) exercise is shown inside the
+    // big countdown panel; leaving the reveal visible mirrors the FIRST
+    // exercise's name (sessExs[0]) and visually overlaps the top of the
+    // panel — clips the "Round X / N · Interval Y / 8" label. Using
+    // display:none here so the IntersectionObserver-driven inline style
+    // updates (height / opacity / transform) can't bring it back.
+    const _reveal = document.getElementById('sessStickyExName');
+    if(_reveal) _reveal.style.display = 'none';
+    const _revealText = document.getElementById('sessStickyExNameText');
+    if(_revealText) _revealText.textContent = '';
     showHIITDisplay();
   } else if(isAMRAPWorkout && !window._nonTabataSessionStarted){
     // AMRAP pre-session: sticky action bar + circuit preview
@@ -5022,6 +5033,11 @@ function updateSessUI(){
     if(hiitPreBar) hiitPreBar.style.display = 'none';
     if(finishBtn) finishBtn.style.display = 'block';
     if(cancelBtn) cancelBtn.style.display = 'block';
+    // Restore the sticky exercise-name reveal in case a prior Tabata
+    // session hid it via inline display:none (the IntersectionObserver
+    // wires up height/opacity/transform but doesn't touch display).
+    const _reveal = document.getElementById('sessStickyExName');
+    if(_reveal && _reveal.style.display === 'none') _reveal.style.display = '';
   }
 }
 
