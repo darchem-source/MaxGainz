@@ -245,6 +245,36 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 .rest-num { font-size:32px; font-weight:900; color:var(--accent2); min-width:50px; }
 .rest-track { flex:1; height:6px; background:var(--surface3); border-radius:3px; overflow:hidden; }
 .rest-fill { height:100%; background:var(--accent2); border-radius:3px; transition:width 0.1s linear; }
+
+/* ── Sticky-header rest-timer progress bar ──
+   Sits directly under the programme .prog-strip. Hidden via max-height
+   collapse so it animates in/out without reserving permanent space (no
+   layout shift). Width of the inner fill drains as restSec counts down. */
+.rest-strip-hdr {
+  margin: 0 16px;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out), margin-bottom var(--dur-base) var(--ease-out);
+}
+.rest-strip-hdr.show {
+  max-height: 4px;
+  opacity: 1;
+  margin-bottom: 4px;
+}
+.rest-strip-hdr .rest-strip-hdr-track {
+  height: 3px;
+  background: var(--surface3);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.rest-strip-hdr .rest-strip-hdr-fill {
+  height: 100%;
+  width: 100%;
+  background: var(--accent2);
+  border-radius: 2px;
+  transition: width 0.1s linear;
+}
 .act-row { display:flex; gap:8px; margin-top:4px; }
 .btn-swap { flex:1; background:var(--surface2); color:var(--text); border:0.5px solid var(--border); border-radius:12px; font-size:14px; font-weight:700; padding:16px; min-height:48px; cursor:pointer; }
 .btn-next { flex:2; background:var(--accent); color:#000; border:none; border-radius:12px; font-size:15px; font-weight:800; padding:16px; min-height:48px; cursor:pointer; transition:all 0.15s; }
@@ -462,6 +492,10 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
           <div style="font-size:14px;font-weight:800;color:var(--accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:6px 0 4px;" id="sessStickyExNameText"></div>
         </div>
         <div class="prog-strip" style="margin:0 16px 4px;"><div class="prog-fill" id="progFill" style="width:0%"></div></div>
+        <!-- Rest-timer progress bar — visible only when rest is active.
+             Drains in sync with the bottom rest-bar (#restFill) and stays
+             pinned in the sticky header so it remains visible when scrolling. -->
+        <div class="rest-strip-hdr" id="restStripHdr"><div class="rest-strip-hdr-track"><div class="rest-strip-hdr-fill" id="restStripHdrFill"></div></div></div>
       </div><!-- /sticky-hdr -->
       <div class="curr-card" id="currCard">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
@@ -6785,20 +6819,28 @@ function skipTimedSet(){
 }
 
 function startTimedRest(secs, onComplete){
-  // Show rest bar
+  // Show rest bar (bottom) + sticky-header progress bar
   restSec=secs;
   const w=document.getElementById('restWrap');
   if(w){w.classList.add('show');}
+  const hdr = document.getElementById('restStripHdr');
+  const hdrFill = document.getElementById('restStripHdrFill');
+  if(hdr) hdr.classList.add('show');
+  if(hdrFill) hdrFill.style.width = '100%';
   restInterval = startTimer('rest', ()=>{
     restSec--;
     const restEl=document.getElementById('restNum');
     const fillEl=document.getElementById('restFill');
+    const pct = (restSec / secs * 100);
     if(restEl) restEl.textContent=restSec;
-    if(fillEl) fillEl.style.width=(restSec/secs*100)+'%';
+    if(fillEl) fillEl.style.width = pct + '%';
+    if(hdrFill) hdrFill.style.width = pct + '%';
     if(restSec<=0){
       clearInterval(restInterval);
       restInterval=null;
       if(w) w.classList.remove('show');
+      if(hdr) hdr.classList.remove('show');
+      if(hdrFill) hdrFill.style.width = '0%';
       if(onComplete) onComplete();
     }
   },1000);
@@ -8011,13 +8053,12 @@ function startRest(duration = 90, label = 'REST'){
   const labelEl = document.getElementById('restLabel');
   if(labelEl) labelEl.textContent = label;
   const w = document.getElementById('restWrap');
-  // console.log('[REST] restWrap element:', w);
-  if(w) {
-    w.classList.add('show');
-    // console.log('[REST] Added show class, classList:', w.classList);
-  } else {
-    // console.log('[REST] ❌ restWrap NOT FOUND!');
-  }
+  if(w) w.classList.add('show');
+  // Sticky-header rest progress bar — show + reset to full.
+  const hdr = document.getElementById('restStripHdr');
+  const hdrFill = document.getElementById('restStripHdrFill');
+  if(hdr) hdr.classList.add('show');
+  if(hdrFill) hdrFill.style.width = '100%';
   clearInterval(restInterval);
   clearTimeout(restInterval);
   restInterval = null;
@@ -8031,10 +8072,15 @@ function updateRestTimer(){
   restSec=Math.max(0,restTotalSecs-elapsed);
   if(!_restNumEl) _restNumEl = document.getElementById('restNum');
   if(!_restFillEl) _restFillEl = document.getElementById('restFill');
+  const pct = (restSec / restTotalSecs * 100);
   if(_restNumEl){
     _restNumEl.textContent=restSec;
-    if(_restFillEl) _restFillEl.style.width=(restSec/restTotalSecs*100)+'%';
+    if(_restFillEl) _restFillEl.style.width = pct + '%';
   }
+  // Mirror the drain on the sticky-header bar so it stays in sync with the
+  // bottom bar even when the user has scrolled past the rest panel.
+  const hdrFill = document.getElementById('restStripHdrFill');
+  if(hdrFill) hdrFill.style.width = pct + '%';
 
   // Voice countdown for final 3 seconds (each number spoken exactly once)
   if(restSec > 0 && restSec <= 3 && !_spokenCountdown.has(restSec)){
@@ -8046,6 +8092,10 @@ function updateRestTimer(){
     restStartTime=null;
     if(_restNumEl) _restNumEl.textContent='0';
     if(_restFillEl) _restFillEl.style.width='0%';
+    if(hdrFill) hdrFill.style.width = '0%';
+    // Collapse the sticky-header bar with the same transition as stopRest
+    const hdr = document.getElementById('restStripHdr');
+    if(hdr) hdr.classList.remove('show');
     window._restStoppedManually = false; // Reset flag since rest completed naturally
     showRestAlert(); // fires once, timer stops permanently
   }else{
@@ -8069,11 +8119,18 @@ function stopRest(){
   if(w) w.classList.remove('show');
   const labelEl=document.getElementById('restLabel');
   if(labelEl) labelEl.textContent='REST';
-  
+
   // Also hide the rest alert modal if showing
   const alert = document.getElementById('restAlert');
   if(alert) alert.classList.remove('show');
-  
+
+  // Hide the sticky-header rest bar + reset its fill so the next rest
+  // starts from 100% instead of wherever this one was cancelled at.
+  const hdr = document.getElementById('restStripHdr');
+  const hdrFill = document.getElementById('restStripHdrFill');
+  if(hdr) hdr.classList.remove('show');
+  if(hdrFill) hdrFill.style.width = '0%';
+
   // Reset display values
   if(!_restNumEl) _restNumEl = document.getElementById('restNum');
   if(!_restFillEl) _restFillEl = document.getElementById('restFill');
