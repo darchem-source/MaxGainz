@@ -939,7 +939,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
         <!-- Audio Settings Section -->
         <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;">
           <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:12px;">🔊 Sound & Feedback</div>
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;">
             <div style="flex:1;">
               <div style="font-size:13px;font-weight:600;color:var(--text);">Rest countdown &amp; completion sounds</div>
               <div style="font-size:11px;color:var(--text2);margin-top:2px;">Voice "3, 2, 1, Go" + ding when timer ends</div>
@@ -948,6 +948,35 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
               style="min-width:52px;padding:8px 14px;border-radius:20px;font-size:13px;font-weight:800;cursor:pointer;transition:all 0.2s;">
               ON
             </button>
+          </div>
+          <!-- Custom voice — record your own clips to replace the system TTS -->
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:10px;border-top:0.5px solid var(--border);">
+            <div style="flex:1;">
+              <div style="font-size:13px;font-weight:600;color:var(--text);">Use my voice</div>
+              <div style="font-size:11px;color:var(--text2);margin-top:2px;" id="voiceStatus">Falls back to system voice when off</div>
+            </div>
+            <button id="useMyVoiceBtn" onclick="toggleUseMyVoice()"
+              style="min-width:52px;padding:8px 14px;border-radius:20px;font-size:13px;font-weight:800;cursor:pointer;transition:all 0.2s;">
+              OFF
+            </button>
+          </div>
+          <button onclick="openVoiceRecorder()"
+            style="width:100%;margin-top:8px;background:var(--surface3);border:0.5px solid var(--border);border-radius:10px;padding:10px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer;">
+            🎤 Record my voice
+          </button>
+        </div>
+
+        <!-- VOICE RECORDER MODAL -->
+        <div class="modal-ov" id="voiceRecMod" onclick="if(event.target===this)this.classList.remove('open')">
+          <div class="modal" style="display:flex;flex-direction:column;max-height:88vh;padding-bottom:8px;">
+            <div class="modal-handle"></div>
+            <div style="font-size:19px;font-weight:800;margin-bottom:4px;">Record your countdown voice</div>
+            <div style="font-size:13px;color:var(--text2);margin-bottom:12px;">Tap Record then say each word clearly. Recording captures the first ~1.4 seconds.</div>
+            <div id="voiceRecList" style="overflow-y:auto;flex:1;"></div>
+            <div style="display:flex;gap:8px;margin-top:8px;flex-shrink:0;">
+              <button onclick="clearAllVoice()" style="flex:1;background:rgba(255,77,106,0.08);border:0.5px solid rgba(255,77,106,0.3);border-radius:10px;padding:10px;font-size:12px;font-weight:700;color:var(--red);cursor:pointer;">Clear all</button>
+              <button onclick="document.getElementById('voiceRecMod').classList.remove('open')" style="flex:2;background:var(--accent);color:#000;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:800;cursor:pointer;">Done</button>
+            </div>
           </div>
         </div>
 
@@ -7623,9 +7652,29 @@ function playCompletionDing(){
 // Tracks which countdown seconds have already been spoken in the current rest
 let _spokenCountdown = new Set();
 
-// Speak a single word using the Web Speech API (voice countdown)
+// Speak a single word for the rest/countdown timer.
+// Priority: user's recorded clip (if useMyVoice is on AND a clip exists)
+// → Web Speech API system voice → silent. The user-clip path is async-safe;
+// if play() rejects (e.g. autoplay policy), we fall through to system TTS.
 function speakCountdown(word){
   if(!userPreferences.audioEnabled) return;
+  const key = (word || '').toLowerCase();
+  if(userPreferences.useMyVoice && _userVoiceAudio[key]){
+    try {
+      const a = _userVoiceAudio[key];
+      a.currentTime = 0;
+      const p = a.play();
+      if(p && typeof p.then === 'function'){
+        // If play() rejects (autoplay blocked, etc.), fall through to TTS.
+        p.catch(() => _speakWithTTS(word));
+      }
+      return;
+    } catch(e) { /* fall through */ }
+  }
+  _speakWithTTS(word);
+}
+
+function _speakWithTTS(word){
   if(!window.speechSynthesis) return;
   try{
     window.speechSynthesis.cancel(); // drop any queued utterance
@@ -7650,6 +7699,145 @@ function _updateAudioToggleBtn(){
   btn.style.background = on ? 'var(--accent)' : 'var(--surface3)';
   btn.style.color      = on ? '#000'          : 'var(--text2)';
   btn.style.border     = on ? '0.5px solid var(--accent)' : '0.5px solid var(--border)';
+  _updateUseMyVoiceBtn();
+}
+
+function toggleUseMyVoice(){
+  userPreferences.useMyVoice = !userPreferences.useMyVoice;
+  localStorage.setItem('userUseMyVoice', userPreferences.useMyVoice ? '1' : '0');
+  _updateUseMyVoiceBtn();
+}
+
+function _updateUseMyVoiceBtn(){
+  const btn = document.getElementById('useMyVoiceBtn');
+  if(!btn) return;
+  const on = userPreferences.useMyVoice;
+  btn.textContent = on ? 'ON' : 'OFF';
+  btn.style.background = on ? 'var(--accent)' : 'var(--surface3)';
+  btn.style.color      = on ? '#000'          : 'var(--text2)';
+  btn.style.border     = on ? '0.5px solid var(--accent)' : '0.5px solid var(--border)';
+  // Status line: how many words are recorded
+  const status = document.getElementById('voiceStatus');
+  if(status){
+    const recorded = VOICE_WORDS.filter(w => _userVoiceClips[w]).length;
+    if(!on){
+      status.textContent = recorded
+        ? `${recorded}/${VOICE_WORDS.length} recorded · using system voice`
+        : 'Falls back to system voice when off';
+    } else {
+      status.textContent = recorded === VOICE_WORDS.length
+        ? `✓ All ${VOICE_WORDS.length} words recorded`
+        : `${recorded}/${VOICE_WORDS.length} recorded · others use system voice`;
+    }
+  }
+}
+
+// ── VOICE RECORDER ──
+// Uses MediaRecorder to capture ~1.4s of mic input per word. Result is
+// blob → base64 data URI → stored in localStorage. Each saved clip also
+// gets a pre-loaded HTMLAudioElement in _userVoiceAudio for instant playback.
+let _voiceRec = null;  // { word, recorder, stream }
+
+function openVoiceRecorder(){
+  _renderVoiceRecMod();
+  document.getElementById('voiceRecMod').classList.add('open');
+}
+
+function _renderVoiceRecMod(){
+  const wrap = document.getElementById('voiceRecList');
+  if(!wrap) return;
+  wrap.innerHTML = VOICE_WORDS.map(w => {
+    const has = !!_userVoiceClips[w];
+    const isRec = _voiceRec && _voiceRec.word === w;
+    const label = w.charAt(0).toUpperCase() + w.slice(1);
+    return `<div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-bottom:6px;display:flex;align-items:center;gap:10px;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:14px;font-weight:800;color:var(--text);">${label}</div>
+        <div style="font-size:11px;color:${has ? 'var(--green)' : 'var(--text2)'};margin-top:2px;">${has ? '✓ Recorded' : isRec ? '● Recording…' : 'Not recorded'}</div>
+      </div>
+      ${has ? `<button onclick="previewVoiceWord('${w}')" style="background:var(--surface3);border:0.5px solid var(--border);border-radius:8px;width:34px;height:34px;font-size:14px;color:var(--text);cursor:pointer;flex-shrink:0;" title="Preview">▶</button>` : ''}
+      <button onclick="recordVoiceWord('${w}')" ${isRec ? 'disabled' : ''} style="background:${isRec ? 'var(--red)' : 'var(--accent)'};color:#000;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:800;cursor:${isRec ? 'wait' : 'pointer'};flex-shrink:0;">${isRec ? '●' : has ? 'Re-record' : '🎤 Record'}</button>
+      ${has ? `<button onclick="clearVoiceWord('${w}')" style="background:rgba(255,77,106,0.1);border:none;border-radius:8px;width:30px;height:30px;font-size:14px;color:var(--red);cursor:pointer;flex-shrink:0;" title="Delete">×</button>` : ''}
+    </div>`;
+  }).join('');
+}
+
+async function recordVoiceWord(word){
+  if(_voiceRec) return;  // one at a time
+  if(!navigator.mediaDevices || !window.MediaRecorder){
+    showToast('⚠️ Recording not supported on this browser', 2500);
+    return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch(e) {
+    showToast('⚠️ Microphone permission needed', 2500);
+    return;
+  }
+  try {
+    const recorder = new MediaRecorder(stream);
+    const chunks = [];
+    recorder.ondataavailable = (e) => { if(e.data && e.data.size > 0) chunks.push(e.data); };
+    recorder.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+      const reader = new FileReader();
+      reader.onload = () => {
+        _userVoiceClips[word] = reader.result;
+        const a = new Audio(reader.result);
+        a.preload = 'auto';
+        _userVoiceAudio[word] = a;
+        _saveUserVoiceClips();
+        _voiceRec = null;
+        _renderVoiceRecMod();
+        _updateUseMyVoiceBtn();
+        // Auto-preview so user hears what was captured.
+        try { a.currentTime = 0; a.play(); } catch(e) {}
+        showToast(`✓ Recorded "${word}"`, 1400);
+      };
+      reader.readAsDataURL(blob);
+    };
+    _voiceRec = { word, recorder, stream };
+    recorder.start();
+    _renderVoiceRecMod();
+    if(navigator.vibrate) navigator.vibrate(15);
+    // Auto-stop after 1.4 seconds — caps clip size + keeps the flow snappy.
+    setTimeout(() => {
+      if(_voiceRec && _voiceRec.recorder.state === 'recording') {
+        _voiceRec.recorder.stop();
+      }
+    }, 1400);
+  } catch(e) {
+    showToast('⚠️ Recording failed: ' + (e.message || e), 2500);
+    if(stream) stream.getTracks().forEach(t => t.stop());
+    _voiceRec = null;
+  }
+}
+
+function previewVoiceWord(word){
+  const a = _userVoiceAudio[word];
+  if(!a) return;
+  try { a.currentTime = 0; a.play(); } catch(e) {}
+}
+
+function clearVoiceWord(word){
+  delete _userVoiceClips[word];
+  delete _userVoiceAudio[word];
+  _saveUserVoiceClips();
+  _renderVoiceRecMod();
+  _updateUseMyVoiceBtn();
+}
+
+function clearAllVoice(){
+  if(!Object.keys(_userVoiceClips).length){ showToast('Nothing to clear', 1500); return; }
+  if(!confirm('Delete all your voice recordings?')) return;
+  _userVoiceClips = {};
+  _userVoiceAudio = {};
+  _saveUserVoiceClips();
+  _renderVoiceRecMod();
+  _updateUseMyVoiceBtn();
+  showToast('🗑 Voice recordings cleared', 1500);
 }
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -16870,8 +17058,45 @@ let userPreferences = {
   // Runner level — drives the treadmill speed range shown in Garry's blocks.
   // Defaults to 'intermediate' when not previously set. Persisted to
   // localStorage and synced to cloud via cloudSaveProfile.
-  runnerLevel:  localStorage.getItem('userRunnerLevel')  || 'intermediate'  // beginner | intermediate | advanced | elite
+  runnerLevel:  localStorage.getItem('userRunnerLevel')  || 'intermediate',  // beginner | intermediate | advanced | elite
+  // Custom voice — when true, speakCountdown() uses user-recorded clips
+  // (see _userVoiceClips below) instead of the system speechSynthesis voice.
+  // Falls back to system voice for any words the user hasn't recorded.
+  useMyVoice:   localStorage.getItem('userUseMyVoice') === '1'
 };
+
+// ── USER VOICE CLIPS ──
+// The 5 countdown words we support. Stored as base64 data URIs in
+// localStorage so they survive reloads + work offline. NOT cloud-synced —
+// keeping the feature light. Re-record on a new device if needed.
+const VOICE_WORDS = ['three', 'two', 'one', 'go', 'done'];
+let _userVoiceClips = {};          // word(lowercase) → data URI
+let _userVoiceAudio  = {};         // word → preloaded HTMLAudioElement
+
+function _loadUserVoiceClips(){
+  try {
+    const raw = localStorage.getItem('userVoiceClips');
+    if(raw) _userVoiceClips = JSON.parse(raw) || {};
+  } catch(e) { _userVoiceClips = {}; }
+  _userVoiceAudio = {};
+  Object.entries(_userVoiceClips).forEach(([w, uri]) => {
+    if(!uri) return;
+    const a = new Audio(uri);
+    a.preload = 'auto';
+    _userVoiceAudio[w] = a;
+  });
+}
+
+function _saveUserVoiceClips(){
+  try {
+    localStorage.setItem('userVoiceClips', JSON.stringify(_userVoiceClips));
+  } catch(e) {
+    showToast('⚠️ Storage full — clear some recordings', 2500);
+  }
+}
+
+// Initialise clips on script load — _loadUserVoiceClips guards against bad JSON.
+_loadUserVoiceClips();
 
 // ── RUNNER LEVEL SPEED TABLE ──
 // Per-element ranges by level and unit. km/h and mph are independently
