@@ -4672,7 +4672,7 @@ function updateSessUI(){
     progressLabel = 'Rounds: '+_amrapRounds;
     showProgBar = false;
   } else if(hiitState){
-    progressLabel = 'Block '+(hiitState.currentBlockIdx+1)+' of '+hiitState.blocks.length;
+    progressLabel = 'Round '+(hiitState.currentRoundIdx+1)+' / '+hiitState.totalRounds;
   }
   
   const pct=Math.round((curIdx/tot)*100);
@@ -7870,44 +7870,45 @@ function initHIITSession(){
   
   // console.log('[HIIT INIT] Initializing HIIT session:', hiitWorkout.format);
   
-  // For Tabata, parse timing from "20s on/10s off" pattern
+  // For Tabata, parse timing from "20s on/10s off" pattern.
+  // New model (per user spec): the workout is N ROUNDS (default 4, user
+  // configurable pre-session). Each round = 8 work intervals × (20s work + 10s
+  // rest) with NO rest after the final (8th) interval of that round. Exercises
+  // cycle through the 8 intervals — so 4 exercises = each performed twice per
+  // round, 2 exercises = each performed 4 times, etc. Between rounds: 60s rest.
   if(hiitWorkout.format === 'Tabata' && exs[0].reps){
     const firstReps = exs[0].reps.toString();
     const match = firstReps.match(/(\d+)s\s*on[^0-9]*(\d+)s\s*off/i);
-    
-    if(!match) {
-      // console.log('[HIIT INIT] Tabata format but no timing pattern found');
-      return false;
+
+    if(!match){
+      // No timing pattern — fall back to canonical 20/10
+      // (don't fail init; just use the canonical values).
     }
-    
-    const workSecs = parseInt(match[1]); // 20s
-    const restSecs = parseInt(match[2]); // 10s
-    const roundsPerExercise = exs[0].sets || 1; // typically 2 = 8 rounds
-    
-    // Build blocks: each exercise is one Tabata block
-    const blocks = exs.map((ex, idx) => ({
-      exerciseIdx: idx,
-      exerciseName: ex.name,
-      workSecs,
-      restSecs,
-      roundsPerBlock: roundsPerExercise * 4, // 2 sets × 4 = 8 rounds per exercise
-      currentRound: 0,
-    }));
-    
+
+    const workSecs = match ? parseInt(match[1]) : 20;
+    const restSecs = match ? parseInt(match[2]) : 10;
+
     hiitState = {
       format: 'Tabata',
-      blocks,
-      currentBlockIdx: 0,
-      currentRoundIdx: 0,
-      phase: 'work',
+      // Raw exercise list — cycled through 8 intervals per round.
+      exercises: exs.map(ex => ({ name: ex.name })),
+      workSecs,
+      restSecs,
+      intervalsPerRound: 8,          // canonical Tabata
+      totalRounds: 4,                // default — user can adjust pre-session
+      roundRestSecs: 60,             // between-round recovery
+      currentRoundIdx: 0,            // 0..totalRounds-1
+      currentIntervalIdx: 0,         // 0..7 within current round
+      phase: 'work',                 // 'work' | 'rest' | 'roundRest'
       timeLeft: workSecs,
       totalTime: 0,
-      blockRestDurationSecs: 120,
-      blockRestTimeLeft: 120,
       started: false,
       transitionPending: false,
       roundStartTime: 0,
-      blockRestStartTime: 0,
+      // Round-rest fields (renamed from block-rest in the old model)
+      roundRestDurationSecs: 60,
+      roundRestTimeLeft: 60,
+      roundRestStartTime: 0,
     };
     
     // console.log('[HIIT INIT] ✅ Tabata session initialized');
@@ -7928,14 +7929,13 @@ function startHIITSession(){
     if(startBtn) startBtn.style.display = 'none';
 
     // Scroll the active-session view to the top so the countdown panel
-    // isn't partially hidden behind the sticky session header (which can
-    // otherwise clip the "Round X/8" label if the user had scrolled down
-    // through the exercise preview before tapping Start).
+    // isn't partially hidden behind the sticky session header.
     const tc = document.querySelector('.tab-content');
     if(tc) tc.scrollTop = 0;
-    
-    // Show 3-second countdown before starting
-    showCountdownTimer(3, () => {
+
+    // Tabata: 10s "Get Ready" countdown. Other formats use 3s elsewhere.
+    const isTabata = hiitState.format === 'Tabata';
+    showCountdownTimer(isTabata ? 10 : 3, () => {
       // console.log('[HIIT] Countdown complete, starting workout');
 
       // NOW start the session timer (0:00 counter in top right) — starts WITH the 20s work timer.
@@ -8003,233 +8003,226 @@ function showCountdownTimer(seconds, callback){
   countdownIntervalId = startTimer('preCountdown', updateCountdown, 1000);
 }
 
+// Returns the exercise to perform during the current interval. Exercises cycle
+// through the 8 intervals of each round, so the same exercise list rotates.
+function _currentTabataExercise(){
+  if(!hiitState || !hiitState.exercises || !hiitState.exercises.length) return null;
+  const i = hiitState.currentIntervalIdx % hiitState.exercises.length;
+  return hiitState.exercises[i];
+}
+
 function startHIITRound(){
-  if(!hiitState || !hiitState.started) {
-    // console.log('[HIIT] startHIITRound called but session not started yet, ignoring');
-    return;
-  }
-  
-  // console.log('[HIIT] Starting round', hiitState.currentRoundIdx + 1, 'of block', hiitState.currentBlockIdx);
-  
+  if(!hiitState || !hiitState.started) return;
+  // Begin the WORK phase of the current interval.
   hiitState.phase = 'work';
-  hiitState.timeLeft = hiitState.blocks[hiitState.currentBlockIdx].workSecs;
-  // Sync start time for precision
+  hiitState.timeLeft = hiitState.workSecs;
   hiitState.roundStartTime = Date.now();
-  
-  // Play work start sound
   playHIITAudio('workStart');
-  
-  hiitIntervalId = startTimer('hiit', updateHIITTimer, 100); // High precision
+  hiitIntervalId = startTimer('hiit', updateHIITTimer, 100);
   showHIITDisplay();
 }
 
 function updateHIITTimer(){
   if(!hiitState || !hiitState.started) return;
-  
-  // Use elapsed time from round start for precision sync
+
+  // Use elapsed time from interval start for precision sync.
   const elapsed = (Date.now() - hiitState.roundStartTime) / 1000;
-  hiitState.timeLeft = Math.max(0, hiitState.blocks[hiitState.currentBlockIdx].workSecs - elapsed);
-  
+  const phaseDuration = hiitState.phase === 'work' ? hiitState.workSecs : hiitState.restSecs;
+  hiitState.timeLeft = Math.max(0, phaseDuration - elapsed);
+
   showHIITDisplay();
-  
+
   // Phase transition logic - trigger when timer hits 0 or below
   if(hiitState.timeLeft <= 0 && !hiitState.transitionPending){
-    // console.log('[HIIT] Transition triggered - phase:', hiitState.phase, 'timeLeft:', hiitState.timeLeft);
-    hiitState.transitionPending = true; // Prevent multiple triggers
+    hiitState.transitionPending = true;
     clearInterval(hiitIntervalId);
-    
-    const block = hiitState.blocks[hiitState.currentBlockIdx];
-    const isLastRound = hiitState.currentRoundIdx >= block.roundsPerBlock - 1;
-    const isLastBlock = hiitState.currentBlockIdx >= hiitState.blocks.length - 1;
-    
-    // console.log('[HIIT] Timer expired - phase:', hiitState.phase, 'isLastRound:', isLastRound, 'isLastBlock:', isLastBlock, 'currentRound:', hiitState.currentRoundIdx, 'roundsPerBlock:', block.roundsPerBlock);
-    
+
+    const isLastIntervalInRound = hiitState.currentIntervalIdx >= hiitState.intervalsPerRound - 1;
+    const isLastRound = hiitState.currentRoundIdx >= hiitState.totalRounds - 1;
+
     if(hiitState.phase === 'work'){
-      // Work phase complete
-      if(!isLastRound){
-        // More rounds in this block — start rest period
-        // console.log('[HIIT] Starting rest between rounds (round', hiitState.currentRoundIdx + 1, 'of', block.roundsPerBlock, ')');
-        playHIITAudio('restStart'); // Sound for rest starting
+      // WORK complete.
+      if(!isLastIntervalInRound){
+        // Not the 8th interval — short rest between intervals.
+        playHIITAudio('restStart');
         hiitState.phase = 'rest';
-        hiitState.timeLeft = block.restSecs;
-        hiitState.transitionPending = false; // Allow next transition
-        // console.log('[HIIT] Rest phase set, timeLeft now:', hiitState.timeLeft);
-        showHIITDisplay(); // Show updated display with rest timer
+        hiitState.timeLeft = hiitState.restSecs;
+        hiitState.roundStartTime = Date.now();
+        hiitState.transitionPending = false;
+        showHIITDisplay();
         hiitIntervalId = startTimer('hiit', updateHIITTimer, 100);
-      } else if(!isLastBlock){
-        // Block complete, more blocks remain — start inter-block rest
-        // console.log('[HIIT] Block complete, starting inter-block rest (2 min)');
-        playHIITAudio('restStart'); // Sound for rest starting
-        hiitState.currentRoundIdx = 0;
-        hiitState.currentBlockIdx++;
-        hiitState.phase = 'blockRest';
-        hiitState.blockRestTimeLeft = hiitState.blockRestDurationSecs;
-        hiitState.blockRestStartTime = Date.now(); // Sync start time
-        hiitState.transitionPending = false; // Allow next transition
-        showHIITBlockRestDisplay(); // Show block rest display
-        updateSessUI(); // Update progress bar to show new block number
-        hiitIntervalId = startTimer('hiit', updateHIITBlockRestTimer, 100);
+      } else if(!isLastRound){
+        // 8th interval of a non-final round → ROUND REST (no inter-interval rest).
+        playHIITAudio('restStart');
+        hiitState.phase = 'roundRest';
+        hiitState.roundRestTimeLeft = hiitState.roundRestDurationSecs;
+        hiitState.roundRestStartTime = Date.now();
+        hiitState.transitionPending = false;
+        showRoundRestDisplay();
+        updateSessUI();
+        hiitIntervalId = startTimer('hiit', updateRoundRestTimer, 100);
       } else {
-        // All blocks done
-        // console.log('[HIIT] All blocks complete!');
+        // 8th interval of the final round — workout done.
         hiitState = null;
         clearInterval(hiitIntervalId);
         dismissHIITDisplay();
         setTimeout(() => showCelebrate(), 300);
       }
     } else if(hiitState.phase === 'rest'){
-      // Rest period complete - advance to next round
-      // console.log('[HIIT] Rest complete, starting next round');
-      playHIITAudio('workStart'); // Sound for work starting
-      hiitState.currentRoundIdx++;
-      hiitState.transitionPending = false; // Allow next transition
+      // REST complete — advance to next interval within the same round.
+      playHIITAudio('workStart');
+      hiitState.currentIntervalIdx++;
+      hiitState.transitionPending = false;
       startHIITRound();
     }
   }
 }
 
-function updateHIITBlockRestTimer(){
-  if(!hiitState || hiitState.phase !== 'blockRest') return;
-  
-  // Use elapsed time from rest start for precision sync
-  const elapsed = (Date.now() - hiitState.blockRestStartTime) / 1000;
-  hiitState.blockRestTimeLeft = Math.max(0, hiitState.blockRestDurationSecs - elapsed);
-  
-  showHIITBlockRestDisplay();
-  
-  // Auto-advance to next block when rest expires (only once)
-  if(hiitState.blockRestTimeLeft <= 0){
+function updateRoundRestTimer(){
+  if(!hiitState || hiitState.phase !== 'roundRest') return;
+  const elapsed = (Date.now() - hiitState.roundRestStartTime) / 1000;
+  hiitState.roundRestTimeLeft = Math.max(0, hiitState.roundRestDurationSecs - elapsed);
+  showRoundRestDisplay();
+  if(hiitState.roundRestTimeLeft <= 0){
     clearInterval(hiitIntervalId);
-    // console.log('[HIIT] Block rest complete, starting next block');
-    playHIITAudio('workStart'); // Sound for work starting
-    hiitState.currentRoundIdx = 0;
+    playHIITAudio('workStart');
+    // Advance to the next round, reset interval index, restart at work.
+    hiitState.currentRoundIdx++;
+    hiitState.currentIntervalIdx = 0;
+    hiitState.phase = 'work';
     startHIITRound();
   }
 }
 
-function skipBlockRest(){
-  // console.log('[BUTTON] Skip button clicked, hiitState exists:', !!hiitState, 'phase:', hiitState?.phase);
-  if(!hiitState || hiitState.phase !== 'blockRest') {
-    // console.log('[BUTTON] Skip ignored - invalid state');
-    return;
-  }
-  // console.log('[HIIT] Skipping block rest, starting next block');
+function skipRoundRest(){
+  if(!hiitState || hiitState.phase !== 'roundRest') return;
   clearInterval(hiitIntervalId);
-  hiitState.currentRoundIdx = 0;
-  // Play a confirmation sound
+  hiitState.currentRoundIdx++;
+  hiitState.currentIntervalIdx = 0;
   playHIITAudio('workStart');
   startHIITRound();
 }
 
-function addBlockRestTime(seconds){
-  // console.log('[BUTTON] +' + seconds + 's button clicked, hiitState exists:', !!hiitState, 'phase:', hiitState?.phase);
-  if(!hiitState || hiitState.phase !== 'blockRest') {
-    // console.log('[BUTTON] Button ignored - invalid state');
-    return;
-  }
-  // console.log('[HIIT] Adding', seconds, 'seconds to block rest');
-  hiitState.blockRestDurationSecs += seconds;
-  hiitState.blockRestTimeLeft += seconds;
-  
-  // Play confirmation sound
+function addRoundRestTime(seconds){
+  if(!hiitState || hiitState.phase !== 'roundRest') return;
+  hiitState.roundRestDurationSecs += seconds;
+  hiitState.roundRestTimeLeft += seconds;
   playHIITAudio('restStart');
+  showRoundRestDisplay();
   
-  // Immediately update display to show new time
-  showHIITBlockRestDisplay();
-  
-  // Force an immediate visual update
-  // console.log('[BUTTON] Rest time is now:', hiitState.blockRestTimeLeft.toFixed(1) + 's');
 }
 
 function showHIITDisplay(){
-  if(!hiitState) {
-    // console.log('[DISPLAY] showHIITDisplay: hiitState is null, returning');
-    return;
-  }
-  const block = hiitState.blocks[hiitState.currentBlockIdx];
-  if(!_hiitDisplayEl) _hiitDisplayEl = document.getElementById('hiitDisplay');
-  const display = _hiitDisplayEl;
-  if(!display) {
-    // console.log('[DISPLAY] showHIITDisplay: hiitDisplay element not found!');
-    return;
-  }
-  
-  // console.log('[DISPLAY] showHIITDisplay called, started=', hiitState.started, 'phase=', hiitState.phase, 'timeLeft=', hiitState.timeLeft);
-  
-  // Only show timer if session has actually started
-  if(!hiitState.started){
-    // console.log('[DISPLAY] Session not started, showing exercise list');
-    // Show exercise list instead of timer countdown
-    const formatLabel = hiitState.format === 'Tabata' ? 'Tabata Workout' : `${hiitState.format} HIIT`;
-    
-    display.innerHTML = `
-      <div style="text-align:center;padding:16px;background:rgba(157,123,255,0.15);border-radius:12px;border:1px solid rgba(157,123,255,0.3);">
-        <div style="font-size:12px;color:var(--text2);margin-bottom:8px;">📋 ${formatLabel}</div>
-        <div style="font-size:14px;font-weight:700;color:var(--accent);margin-bottom:12px;">Exercises in This Session:</div>
-        ${hiitState.blocks.map((b, idx) => `
-          <div style="padding:8px;background:rgba(0,0,0,0.2);border-radius:8px;margin-bottom:8px;font-size:13px;color:var(--text);">
-            <strong>${idx + 1}.</strong> ${b.exerciseName}<br>
-            ${hiitState.format === 'Tabata' ? '<span style="font-size:11px;color:var(--text2);">8 rounds × 20s work / 10s rest = 4 min</span>' : '<span style="font-size:11px;color:var(--text2);">' + hiitState.format + '</span>'}
-          </div>
-        `).join('')}
-        ${hiitState.format === 'Tabata' ? `
-        <div style="margin-top:12px;padding:10px;background:rgba(200,255,0,0.1);border-radius:8px;border:1px solid rgba(200,255,0,0.3);">
-          <div style="font-size:11px;color:var(--accent);font-weight:700;">Total: ${hiitState.blocks.length} × 4 min = ${hiitState.blocks.length * 4} min</div>
-          <div style="font-size:11px;color:var(--accent);margin-top:4px;">+ ${hiitState.blocks.length - 1} × 2 min rest = ${(hiitState.blocks.length - 1) * 2} min</div>
-          <div style="font-size:11px;color:var(--accent);margin-top:4px;">≈ ${hiitState.blocks.length * 4 + (hiitState.blocks.length - 1) * 2} minutes total</div>
-        </div>
-        ` : ''}
-      </div>
-    `;
-    return;
-  }
-  
-  // console.log('[DISPLAY] Session started, showing countdown timer');
-  // Timer is running - show countdown with contrasting colors
-  const roundNum = hiitState.currentRoundIdx + 1;
-  const totalRounds = block.roundsPerBlock;
-  const timeStr = hiitState.timeLeft.toFixed(1);
-  const isWorkPhase = hiitState.phase === 'work';
-  const phaseText = isWorkPhase ? '🔥 GO!' : '⏸️ REST';
-  
-  // Work phase = bright yellow background, rest phase = cool blue background
-  const bgColor = isWorkPhase ? 'rgba(200,255,0,0.15)' : 'rgba(0,212,255,0.15)';
-  const borderColor = isWorkPhase ? 'rgba(200,255,0,0.3)' : 'rgba(0,212,255,0.3)';
-  const textColor = isWorkPhase ? '#c8ff00' : '#00d4ff';
-  
-  display.innerHTML = `
-    <div style="text-align:center;padding:20px;background:${bgColor};border-radius:12px;border:2px solid ${borderColor};">
-      <div style="font-size:12px;color:var(--text2);margin-bottom:8px;">${block.exerciseName} · Round ${roundNum}/${totalRounds}</div>
-      <div style="font-size:48px;font-weight:900;color:${textColor};font-family:monospace;margin-bottom:12px;">${timeStr}s</div>
-      <div style="font-size:16px;font-weight:700;color:${textColor};">${phaseText}</div>
-    </div>
-  `;
-}
-
-function showHIITBlockRestDisplay(){
   if(!hiitState) return;
   if(!_hiitDisplayEl) _hiitDisplayEl = document.getElementById('hiitDisplay');
   const display = _hiitDisplayEl;
   if(!display) return;
-  
-  const nextBlock = hiitState.blocks[hiitState.currentBlockIdx];
-  const timeStr = Math.max(0, hiitState.blockRestTimeLeft).toFixed(1);
-  const blockNum = hiitState.currentBlockIdx + 1; // Current block we're about to start
-  const totalBlocks = hiitState.blocks.length;
-  const isLastBlock = hiitState.currentBlockIdx >= hiitState.blocks.length - 1;
-  
+
+  // ── PRE-SESSION ── show exercise list, round picker, estimated total time
+  if(!hiitState.started){
+    const N        = hiitState.totalRounds;
+    const W        = hiitState.workSecs;
+    const R        = hiitState.restSecs;
+    const intRound = hiitState.intervalsPerRound;
+    const roundRest = hiitState.roundRestSecs;
+    // Time per round = 8 intervals × (work + rest) − 1 rest (no rest after 8th)
+    const roundSecs  = intRound * (W + R) - R;
+    const totalSecs  = N * roundSecs + (N - 1) * roundRest;
+    const fmt = (s) => {
+      const m = Math.floor(s / 60), ss = Math.round(s % 60);
+      return ss ? `${m}m ${ss}s` : `${m} min`;
+    };
+
+    display.innerHTML = `
+      <div style="background:var(--surface2);border:1px solid rgba(157,123,255,0.3);border-radius:14px;padding:16px;">
+        <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px;">⚡ TABATA</div>
+        <div style="font-size:13px;color:var(--text);line-height:1.5;margin-bottom:12px;">
+          <strong>${intRound} intervals per round.</strong> Each interval = <strong>${W}s work / ${R}s rest</strong>, no rest after the final interval. Exercises cycle through the round.
+        </div>
+        <!-- Round picker -->
+        <div style="display:flex;align-items:center;gap:10px;background:var(--surface3);border-radius:10px;padding:8px 12px;margin-bottom:12px;">
+          <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;flex:1;">Rounds</div>
+          <button onclick="adjustTabataRounds(-1)" class="sc-btn">−</button>
+          <div id="tabataRoundsDisplay" style="font-size:22px;font-weight:900;color:var(--accent);min-width:32px;text-align:center;">${N}</div>
+          <button onclick="adjustTabataRounds(1)" class="sc-btn">+</button>
+        </div>
+        <!-- Exercise list (cycled within each round) -->
+        <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Exercises (cycled across intervals)</div>
+        ${hiitState.exercises.map((e, idx) => `
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--surface);border-radius:8px;margin-bottom:4px;">
+            <div style="font-size:12px;font-weight:700;color:var(--text2);width:18px;">${idx+1}</div>
+            <div style="font-size:13px;font-weight:700;color:var(--text);flex:1;">${e.name}</div>
+          </div>
+        `).join('')}
+        <!-- Totals -->
+        <div style="margin-top:12px;padding:10px;background:rgba(200,255,0,0.08);border:1px solid rgba(200,255,0,0.25);border-radius:8px;font-size:12px;color:var(--accent);line-height:1.5;">
+          ${N} rounds × ${fmt(roundSecs)} work + ${N-1} × ${roundRest}s round rest<br>
+          <strong>≈ ${fmt(totalSecs)} total</strong>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  // ── RUNNING ── show big countdown for current interval
+  const ex          = _currentTabataExercise();
+  const roundNum    = hiitState.currentRoundIdx + 1;
+  const totalRounds = hiitState.totalRounds;
+  const intNum      = hiitState.currentIntervalIdx + 1;
+  const totalInts   = hiitState.intervalsPerRound;
+  const timeStr     = hiitState.timeLeft.toFixed(1);
+  const isWorkPhase = hiitState.phase === 'work';
+  const phaseText   = isWorkPhase ? '🔥 GO!' : '⏸️ REST';
+  const bgColor     = isWorkPhase ? 'rgba(200,255,0,0.15)' : 'rgba(0,212,255,0.15)';
+  const borderColor = isWorkPhase ? 'rgba(200,255,0,0.3)' : 'rgba(0,212,255,0.3)';
+  const textColor   = isWorkPhase ? '#c8ff00' : '#00d4ff';
+
+  display.innerHTML = `
+    <div style="text-align:center;padding:20px;background:${bgColor};border-radius:12px;border:2px solid ${borderColor};">
+      <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px;">Round ${roundNum} / ${totalRounds} · Interval ${intNum} / ${totalInts}</div>
+      <div style="font-size:22px;font-weight:800;color:var(--text);margin-bottom:8px;">${ex ? ex.name : ''}</div>
+      <div style="font-size:64px;font-weight:900;color:${textColor};font-family:monospace;line-height:1;margin-bottom:8px;">${timeStr}s</div>
+      <div style="font-size:18px;font-weight:800;color:${textColor};">${phaseText}</div>
+    </div>
+  `;
+}
+
+function showRoundRestDisplay(){
+  if(!hiitState) return;
+  if(!_hiitDisplayEl) _hiitDisplayEl = document.getElementById('hiitDisplay');
+  const display = _hiitDisplayEl;
+  if(!display) return;
+
+  const timeStr     = Math.max(0, hiitState.roundRestTimeLeft).toFixed(1);
+  const justDone    = hiitState.currentRoundIdx + 1;     // round we just finished
+  const nextRound   = justDone + 1;                       // round we're about to start
+  const totalRounds = hiitState.totalRounds;
+  // Next round starts at interval 0 — first exercise in the rotation.
+  const nextEx = hiitState.exercises[0] ? hiitState.exercises[0].name : '';
+
   display.innerHTML = `
     <div style="text-align:center;padding:20px;background:rgba(0,212,255,0.15);border-radius:12px;border:1px solid rgba(0,212,255,0.3);">
-      <div style="font-size:12px;color:var(--text2);margin-bottom:8px;">Block Rest</div>
-      <div style="font-size:48px;font-weight:900;color:#00d4ff;font-family:monospace;margin-bottom:12px;">${timeStr}s</div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:16px;">Next: ${nextBlock.exerciseName} ${!isLastBlock ? `(Block ${blockNum}/${totalBlocks})` : '(Final block)'}</div>
+      <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px;">Round ${justDone} done · Recover</div>
+      <div style="font-size:64px;font-weight:900;color:#00d4ff;font-family:monospace;line-height:1;margin-bottom:8px;">${timeStr}s</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:14px;">Next: Round ${nextRound}/${totalRounds} — starts with <strong style="color:var(--text);">${nextEx}</strong></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button onclick="addBlockRestTime(30)" style="flex:1;min-width:80px;padding:8px;background:rgba(0,212,255,0.2);border:0.5px solid #00d4ff;border-radius:8px;color:#00d4ff;font-weight:700;font-size:12px;cursor:pointer;">+30s</button>
-        <button onclick="addBlockRestTime(60)" style="flex:1;min-width:80px;padding:8px;background:rgba(0,212,255,0.2);border:0.5px solid #00d4ff;border-radius:8px;color:#00d4ff;font-weight:700;font-size:12px;cursor:pointer;">+1min</button>
-        <button onclick="skipBlockRest()" style="flex:1;min-width:80px;padding:8px;background:rgba(200,255,0,0.2);border:0.5px solid #c8ff00;border-radius:8px;color:#c8ff00;font-weight:700;font-size:12px;cursor:pointer;">Skip</button>
+        <button onclick="addRoundRestTime(30)" style="flex:1;min-width:80px;padding:8px;background:rgba(0,212,255,0.2);border:0.5px solid #00d4ff;border-radius:8px;color:#00d4ff;font-weight:700;font-size:12px;cursor:pointer;">+30s</button>
+        <button onclick="addRoundRestTime(60)" style="flex:1;min-width:80px;padding:8px;background:rgba(0,212,255,0.2);border:0.5px solid #00d4ff;border-radius:8px;color:#00d4ff;font-weight:700;font-size:12px;cursor:pointer;">+1min</button>
+        <button onclick="skipRoundRest()" style="flex:1;min-width:80px;padding:8px;background:rgba(200,255,0,0.2);border:0.5px solid #c8ff00;border-radius:8px;color:#c8ff00;font-weight:700;font-size:12px;cursor:pointer;">Skip</button>
       </div>
     </div>
   `;
+}
+
+// Round picker — adjusts the number of rounds before the session starts.
+function adjustTabataRounds(delta){
+  if(!hiitState || hiitState.started) return;
+  const next = Math.max(1, Math.min(20, hiitState.totalRounds + delta));
+  hiitState.totalRounds = next;
+  const el = document.getElementById('tabataRoundsDisplay');
+  if(el) el.textContent = next;
+  // Re-render the whole panel so the estimated total time updates too.
+  showHIITDisplay();
 }
 
 function dismissHIITDisplay(){
@@ -8887,21 +8880,24 @@ function renderSessionExerciseList(){
   }
   if(listSection) listSection.style.display = 'block';
 
-  // ── Tabata / Garry's HIIT blocks ──
+  // ── Tabata exercise cycle ──
+  // Exercises rotate through the 8 intervals of each round. Highlight the
+  // exercise currently being performed; the rest are in the rotation.
   if(hiitState){
-    listDiv.innerHTML = hiitState.blocks.map((block, idx) => {
-      const isActive    = idx === hiitState.currentBlockIdx;
-      const isComplete  = idx < hiitState.currentBlockIdx;
-      const bg    = isActive   ? 'rgba(200,255,0,0.08)'    : 'rgba(157,123,255,0.06)';
-      const border= isActive   ? '1px solid var(--accent)'  : '0.5px solid rgba(157,123,255,0.2)';
-      const color = isComplete ? 'var(--accent)' : isActive ? 'var(--accent)' : 'var(--text2)';
-      const icon  = isComplete ? '✓' : isActive ? '▶' : '⚪';
-      const badge = isActive ? ' <span style="font-size:9px;font-weight:800;background:var(--accent);color:#000;border-radius:4px;padding:1px 5px;margin-left:4px;">NOW</span>' : '';
+    const activeIdx = (hiitState.currentIntervalIdx || 0) % hiitState.exercises.length;
+    listDiv.innerHTML = hiitState.exercises.map((ex, idx) => {
+      const isActive = idx === activeIdx && hiitState.started && hiitState.phase !== 'roundRest';
+      const bg     = isActive ? 'rgba(200,255,0,0.08)' : 'rgba(157,123,255,0.06)';
+      const border = isActive ? '1px solid var(--accent)' : '0.5px solid rgba(157,123,255,0.2)';
+      const color  = isActive ? 'var(--accent)' : 'var(--text2)';
+      const icon   = isActive ? '▶' : '⚪';
+      const badge  = isActive ? ' <span style="font-size:9px;font-weight:800;background:var(--accent);color:#000;border-radius:4px;padding:1px 5px;margin-left:4px;">NOW</span>' : '';
+      const progressTag = isActive ? `<span style="float:right;font-size:10px;color:var(--text2);">R ${hiitState.currentRoundIdx+1}/${hiitState.totalRounds} · ${hiitState.currentIntervalIdx+1}/${hiitState.intervalsPerRound}</span>` : '';
       return `<div style="padding:8px 10px;background:${bg};border:${border};border-radius:8px;font-size:11px;color:${color};font-weight:${isActive?'700':'400'};">
-        ${icon} ${block.exerciseName}${badge}
-        ${isActive ? `<span style="float:right;font-size:10px;color:var(--text2);">Round ${hiitState.currentRoundIdx+1}/8</span>` : isComplete ? '<span style="float:right;font-size:10px;">✓</span>' : ''}
+        ${icon} ${ex.name}${badge}
+        ${progressTag}
       </div>`;
-    }).join('') || '<div style="color:var(--text2);font-size:11px;">No blocks</div>';
+    }).join('') || '<div style="color:var(--text2);font-size:11px;">No exercises</div>';
     return;
   }
 
@@ -11837,12 +11833,13 @@ const HIIT_TEMPLATES = [
     tagline:'Eight rounds of 20-on / 10-off per exercise — pure conditioning',
     tags:['bw','apt','quick'],
     // Reps must contain "Ns on/Ns off" for the Tabata engine to parse the
-    // timing; sets:2 → 8 rounds per exercise (sets × 4 = roundsPerBlock).
+    // work/rest timing. Rounds are session-level (default 4, user picks
+    // pre-session); the 4 exercises cycle through the 8 intervals per round.
     exercises:[
-      {name:'Jumping Jacks',    reps:'20s on/10s off', sets:2, weight:0},
-      {name:'High Knees',       reps:'20s on/10s off', sets:2, weight:0},
-      {name:'Mountain Climbers',reps:'20s on/10s off', sets:2, weight:0},
-      {name:'Burpees',          reps:'20s on/10s off', sets:2, weight:0}
+      {name:'Jumping Jacks',    reps:'20s on/10s off', weight:0},
+      {name:'High Knees',       reps:'20s on/10s off', weight:0},
+      {name:'Mountain Climbers',reps:'20s on/10s off', weight:0},
+      {name:'Burpees',          reps:'20s on/10s off', weight:0}
     ]
   },
   {
@@ -11894,12 +11891,12 @@ const HIIT_TEMPLATES = [
     name:'Pull-Day Conditioning', format:'Tabata', duration:16, diff:3,
     tagline:'Tabata-style pull volume — bar work plus rowing variations to trash the back',
     tags:[],
-    // Standard Tabata: 20s on / 10s off × 8 rounds per exercise (sets:2 × 4).
+    // Standard Tabata: 20s on / 10s off. Rounds are session-level (default 4).
     exercises:[
-      {name:'Pull-Ups',            reps:'20s on/10s off', sets:2, weight:0},
-      {name:'Inverted Rows',       reps:'20s on/10s off', sets:2, weight:0},
-      {name:'Renegade Rows',       reps:'20s on/10s off', sets:2, weight:15},
-      {name:'Bent-Over Row Burst', reps:'20s on/10s off', sets:2, weight:15}
+      {name:'Pull-Ups',            reps:'20s on/10s off', weight:0},
+      {name:'Inverted Rows',       reps:'20s on/10s off', weight:0},
+      {name:'Renegade Rows',       reps:'20s on/10s off', weight:15},
+      {name:'Bent-Over Row Burst', reps:'20s on/10s off', weight:15}
     ]
   },
   {
