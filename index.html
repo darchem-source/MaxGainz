@@ -947,12 +947,22 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;">
             <div style="flex:1;">
               <div style="font-size:13px;font-weight:600;color:var(--text);">Rest countdown &amp; completion sounds</div>
-              <div style="font-size:11px;color:var(--text2);margin-top:2px;">Voice "3, 2, 1, Go" + ding when timer ends</div>
+              <div style="font-size:11px;color:var(--text2);margin-top:2px;">Audio cues for "3, 2, 1, Go" + ding when timer ends</div>
             </div>
             <button id="audioToggleBtn" onclick="toggleAudio()"
               style="min-width:52px;padding:8px 14px;border-radius:20px;font-size:13px;font-weight:800;cursor:pointer;transition:all 0.2s;">
               ON
             </button>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:10px;border-top:0.5px solid var(--border);">
+            <div style="flex:1;">
+              <div style="font-size:13px;font-weight:600;color:var(--text);">Countdown style</div>
+              <div style="font-size:11px;color:var(--text2);margin-top:2px;">Beeps keep Spotify / Apple Music playing. Voice speaks "3, 2, 1, Go".</div>
+            </div>
+            <div style="display:flex;background:var(--surface3);border-radius:8px;padding:2px;flex-shrink:0;">
+              <button id="cdStyleBeepsBtn" onclick="setCountdownStyle('beeps')" style="padding:6px 12px;border:none;background:transparent;font-size:12px;font-weight:800;border-radius:6px;cursor:pointer;color:var(--text2);transition:all 0.2s;">Beeps</button>
+              <button id="cdStyleVoiceBtn" onclick="setCountdownStyle('voice')" style="padding:6px 12px;border:none;background:transparent;font-size:12px;font-weight:800;border-radius:6px;cursor:pointer;color:var(--text2);transition:all 0.2s;">Voice</button>
+            </div>
           </div>
         </div>
 
@@ -3287,6 +3297,7 @@ async function cloudSaveProfile() {
       speedUnit:    localStorage.getItem('userSpeedUnit')    || 'mph',
       weightUnit:   localStorage.getItem('userWeightUnit')   || 'kg',
       audioEnabled: userPreferences.audioEnabled,
+      countdownStyle: userPreferences.countdownStyle || 'beeps',
       runnerLevel:  localStorage.getItem('userRunnerLevel')  || 'intermediate'
     }
   });
@@ -3389,6 +3400,10 @@ async function cloudLoadAll() {
             if (blob.prefs.audioEnabled !== undefined) {
               userPreferences.audioEnabled = !!blob.prefs.audioEnabled;
               localStorage.setItem('userAudioEnabled', userPreferences.audioEnabled ? '1' : '0');
+            }
+            if (blob.prefs.countdownStyle === 'voice' || blob.prefs.countdownStyle === 'beeps') {
+              userPreferences.countdownStyle = blob.prefs.countdownStyle;
+              localStorage.setItem('userCountdownStyle', userPreferences.countdownStyle);
             }
           }
           if (blob.userPath) {
@@ -3744,6 +3759,10 @@ function applyImportPayload(payload){
   if(p.audioEnabled !== undefined){
     userPreferences.audioEnabled = !!p.audioEnabled;
     localStorage.setItem('userAudioEnabled', userPreferences.audioEnabled ? '1' : '0');
+  }
+  if(p.countdownStyle === 'voice' || p.countdownStyle === 'beeps'){
+    userPreferences.countdownStyle = p.countdownStyle;
+    localStorage.setItem('userCountdownStyle', userPreferences.countdownStyle);
   }
 
   // Optional UI state
@@ -7726,18 +7745,57 @@ function playCompletionDing(){
 // Tracks which countdown seconds have already been spoken in the current rest
 let _spokenCountdown = new Set();
 
+// Music-friendly countdown sound. Uses Web Audio synthesised tones so
+// it doesn't trigger iOS's audio-session takeover — Spotify / Apple Music
+// keep playing through the countdown. Each word maps to a distinct
+// pitch/pattern so the user can still tell 3/2/1 apart aurally:
+//   three → A4 (440 Hz)
+//   two   → C#5 (554 Hz)
+//   one   → E5 (659 Hz)         rising scale across the countdown
+//   go    → B5 (988 Hz) — single bright "go" tone
+//   done  → B5 → G5 → D5 cascade — "completion" feel, distinct from go
+function _playCountdownBeep(word){
+  const ac = _ac(); if(!ac) return;
+  try{ if(ac.state === 'suspended') ac.resume(); }catch(e){}
+  const key = (word || '').toLowerCase();
+  // [freq, delayFromNow, dur, peakGain]
+  const PATTERNS = {
+    three: [[440, 0.00, 0.18, 0.25]],
+    two:   [[554, 0.00, 0.18, 0.25]],
+    one:   [[659, 0.00, 0.18, 0.25]],
+    go:    [[988, 0.00, 0.30, 0.32]],
+    done:  [[988, 0.00, 0.14, 0.32], [784, 0.16, 0.18, 0.32], [587, 0.34, 0.32, 0.32]],
+  };
+  const pattern = PATTERNS[key];
+  if(!pattern) return;
+  try{
+    pattern.forEach(([freq, delay, dur, gain]) => {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.connect(g); g.connect(ac.destination);
+      o.type = 'sine'; o.frequency.value = freq;
+      const t = ac.currentTime + delay;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(gain, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      o.start(t); o.stop(t + dur + 0.05);
+    });
+  }catch(e){}
+}
+
 // Speak a single word for the rest/countdown timer.
-// Priority for everyone:
-//   1. Bundled clip (BUNDLED_VOICE_CLIPS) — the owner's voice, shipped
-//      in the source. Used for ALL users.
-//   2. Owner-mode preview — clips recorded in this session via the
-//      ?owner=record flow, sitting in localStorage. Only matters for
-//      the owner while testing before export.
-//   3. System TTS (Web Speech API) — fallback when neither is available.
-// If a clip's play() rejects (autoplay policy, decoding error, etc.) we
-// fall through to the next tier so the countdown still happens.
+// Mode dispatch:
+//   • countdownStyle === 'beeps' → _playCountdownBeep (default, music-friendly)
+//   • countdownStyle === 'voice' → bundled clip → user clip → system TTS
+// Voice mode interrupts background music on iOS because both <audio>
+// playback and speechSynthesis take over the audio session and don't
+// auto-restore it. Beeps via Web Audio don't have that side effect.
 function speakCountdown(word){
   if(!userPreferences.audioEnabled) return;
+  // Music-friendly default — synthesised beeps via Web Audio.
+  if(userPreferences.countdownStyle !== 'voice'){
+    _playCountdownBeep(word);
+    return;
+  }
   const key = (word || '').toLowerCase();
   // Tier 1: bundled
   if(_bundledVoiceAudio[key]){
@@ -7788,6 +7846,41 @@ function _updateAudioToggleBtn(){
   btn.style.background = on ? 'var(--accent)' : 'var(--surface3)';
   btn.style.color      = on ? '#000'          : 'var(--text2)';
   btn.style.border     = on ? '0.5px solid var(--accent)' : '0.5px solid var(--border)';
+  // Also refresh the countdown-style buttons; they're disabled when audio is off.
+  _updateCountdownStyleBtns();
+}
+
+function setCountdownStyle(style){
+  userPreferences.countdownStyle = (style === 'voice') ? 'voice' : 'beeps';
+  localStorage.setItem('userCountdownStyle', userPreferences.countdownStyle);
+  _updateCountdownStyleBtns();
+  // Play a tiny preview so the user immediately hears the chosen style.
+  if(userPreferences.audioEnabled){
+    if(userPreferences.countdownStyle === 'beeps'){
+      _playCountdownBeep('go');
+    } else {
+      // Voice preview — fall through the existing tiered playback by
+      // setting style back to 'voice' before calling speakCountdown.
+      speakCountdown('Go');
+    }
+  }
+  if(typeof cloudSaveProfile === 'function') cloudSaveProfile();
+}
+
+function _updateCountdownStyleBtns(){
+  const beepsBtn = document.getElementById('cdStyleBeepsBtn');
+  const voiceBtn = document.getElementById('cdStyleVoiceBtn');
+  if(!beepsBtn || !voiceBtn) return;
+  const isBeeps    = userPreferences.countdownStyle !== 'voice';
+  const audioOff   = !userPreferences.audioEnabled;
+  const setActive  = (b, active) => {
+    b.style.background = active ? 'var(--accent)' : 'transparent';
+    b.style.color      = active ? '#000'          : 'var(--text2)';
+    b.style.opacity    = audioOff ? '0.4' : '1';
+    b.style.cursor     = audioOff ? 'not-allowed' : 'pointer';
+  };
+  setActive(beepsBtn, isBeeps);
+  setActive(voiceBtn, !isBeeps);
 }
 
 // ── VOICE RECORDER ──
@@ -17304,6 +17397,12 @@ let userPreferences = {
   speedUnit:    localStorage.getItem('userSpeedUnit')    || 'mph', // mph or kph
   weightUnit:   localStorage.getItem('userWeightUnit')   || 'kg',  // kg or lbs
   audioEnabled: localStorage.getItem('userAudioEnabled') !== '0',  // default ON
+  // Countdown style — 'beeps' (Web Audio synth, doesn't interrupt
+  // background music like Spotify/Apple Music on iOS) or 'voice' (spoken
+  // 3/2/1/Go/Done — uses speech synthesis or bundled clips which DO trigger
+  // the iOS audio-session takeover and stop background playback).
+  // Default to 'beeps' so music keeps playing through HIIT countdowns.
+  countdownStyle: localStorage.getItem('userCountdownStyle') || 'beeps',
   // Runner level — drives the treadmill speed range shown in Garry's blocks.
   runnerLevel:  localStorage.getItem('userRunnerLevel')  || 'intermediate'
 };
