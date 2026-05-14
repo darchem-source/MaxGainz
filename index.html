@@ -957,7 +957,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:10px;border-top:0.5px solid var(--border);">
             <div style="flex:1;">
               <div style="font-size:13px;font-weight:600;color:var(--text);">Countdown style</div>
-              <div style="font-size:11px;color:var(--text2);margin-top:2px;">Beeps keep Spotify / Apple Music playing. Voice speaks "3, 2, 1, Go".</div>
+              <div style="font-size:11px;color:var(--text2);margin-top:2px;">Both keep Spotify / Apple Music playing. Voice speaks "3, 2, 1, Go"; Beeps plays synth tones.</div>
             </div>
             <div style="display:flex;background:var(--surface3);border-radius:8px;padding:2px;flex-shrink:0;">
               <button id="cdStyleBeepsBtn" onclick="setCountdownStyle('beeps')" style="padding:6px 12px;border:none;background:transparent;font-size:12px;font-weight:800;border-radius:6px;cursor:pointer;color:var(--text2);transition:all 0.2s;">Beeps</button>
@@ -7782,43 +7782,103 @@ function _playCountdownBeep(word){
   }catch(e){}
 }
 
+// Decoded AudioBuffers for voice clips — populated lazily and cached.
+// Played via AudioBufferSourceNode (Web Audio), which on iOS doesn't
+// trigger the media audio-session takeover that HTMLAudio / speechSynthesis
+// do, so Spotify / Apple Music keep playing.
+const _bundledVoiceBuffers = {};
+const _userVoiceBuffers    = {};
+const _voiceDecodePromises = {}; // {key: Promise} — in-flight decodes
+
+async function _decodeVoiceClip(word, dataUri, targetMap){
+  if(!dataUri || !word) return null;
+  const key = word.toLowerCase();
+  if(targetMap[key]) return targetMap[key];
+  if(_voiceDecodePromises[key]) return _voiceDecodePromises[key];
+  const ac = _ac(); if(!ac) return null;
+  const promise = (async () => {
+    try {
+      const resp = await fetch(dataUri);
+      const arr  = await resp.arrayBuffer();
+      // Some Safari builds want the callback form; awaitable Promise form
+      // is supported on iOS 14.5+. Use the modern form with a try/catch
+      // and let the catch path fall back to the callback form.
+      let buf;
+      try {
+        buf = await ac.decodeAudioData(arr);
+      } catch(e) {
+        buf = await new Promise((res, rej) => ac.decodeAudioData(arr, res, rej));
+      }
+      targetMap[key] = buf;
+      return buf;
+    } catch(e) {
+      // Decode failed — leave map empty so speakCountdown falls back to beeps.
+      return null;
+    } finally {
+      delete _voiceDecodePromises[key];
+    }
+  })();
+  _voiceDecodePromises[key] = promise;
+  return promise;
+}
+
+// Decode every available clip up-front so the first countdown plays
+// the voice instead of falling back to a beep. Idempotent.
+function _prewarmVoiceBuffers(){
+  if(typeof BUNDLED_VOICE_CLIPS === 'object'){
+    Object.entries(BUNDLED_VOICE_CLIPS).forEach(([w, uri]) => {
+      _decodeVoiceClip(w, uri, _bundledVoiceBuffers);
+    });
+  }
+  if(typeof _userVoiceClips === 'object'){
+    Object.entries(_userVoiceClips).forEach(([w, uri]) => {
+      _decodeVoiceClip(w, uri, _userVoiceBuffers);
+    });
+  }
+}
+
+// Play a decoded voice clip through Web Audio. User-recorded clips win
+// over bundled clips so owner-mode previews and end-user recordings
+// override the shipped voice. Returns true iff a clip was scheduled.
+function _playVoiceClipViaWebAudio(word){
+  const ac = _ac(); if(!ac) return false;
+  try{ if(ac.state === 'suspended') ac.resume(); }catch(e){}
+  const key = (word || '').toLowerCase();
+  const buf = _userVoiceBuffers[key] || _bundledVoiceBuffers[key];
+  if(!buf) return false;
+  try {
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    src.connect(ac.destination);
+    src.start();
+    return true;
+  } catch(e) {
+    return false;
+  }
+}
+
 // Speak a single word for the rest/countdown timer.
-// Mode dispatch:
-//   • countdownStyle === 'beeps' → _playCountdownBeep (default, music-friendly)
-//   • countdownStyle === 'voice' → bundled clip → user clip → system TTS
-// Voice mode interrupts background music on iOS because both <audio>
-// playback and speechSynthesis take over the audio session and don't
-// auto-restore it. Beeps via Web Audio don't have that side effect.
+// Both modes use Web Audio so neither interrupts background music:
+//   • countdownStyle === 'voice' → decoded voice clip (Web Audio buffer
+//     source). Falls back to a beep for any single word whose clip
+//     hasn't decoded yet, then kicks off the decode so the next call uses
+//     the real voice.
+//   • countdownStyle === 'beeps' → synthesised tones via oscillator.
+// The legacy HTMLAudio / speechSynthesis paths have been retired because
+// they're the source of the iOS audio-session interruption that paused
+// Spotify mid-workout.
 function speakCountdown(word){
   if(!userPreferences.audioEnabled) return;
-  // Music-friendly default — synthesised beeps via Web Audio.
-  if(userPreferences.countdownStyle !== 'voice'){
+  if(userPreferences.countdownStyle === 'beeps'){
     _playCountdownBeep(word);
     return;
   }
-  const key = (word || '').toLowerCase();
-  // Tier 1: bundled
-  if(_bundledVoiceAudio[key]){
-    try {
-      const a = _bundledVoiceAudio[key];
-      a.currentTime = 0;
-      const p = a.play();
-      if(p && typeof p.then === 'function') p.catch(() => _speakWithTTS(word));
-      return;
-    } catch(e) { /* fall through */ }
-  }
-  // Tier 2: owner-mode preview (only populated when the owner is recording)
-  if(_userVoiceAudio[key]){
-    try {
-      const a = _userVoiceAudio[key];
-      a.currentTime = 0;
-      const p = a.play();
-      if(p && typeof p.then === 'function') p.catch(() => _speakWithTTS(word));
-      return;
-    } catch(e) { /* fall through */ }
-  }
-  // Tier 3: system TTS
-  _speakWithTTS(word);
+  // Voice mode (default). Try the decoded buffer first.
+  if(_playVoiceClipViaWebAudio(word)) return;
+  // Buffer not decoded yet — play a beep right now for cue parity and kick
+  // off decoding in the background so subsequent calls use the real voice.
+  _prewarmVoiceBuffers();
+  _playCountdownBeep(word);
 }
 
 function _speakWithTTS(word){
@@ -7940,6 +8000,14 @@ async function recordVoiceWord(word){
         a.preload = 'auto';
         _userVoiceAudio[word] = a;
         _saveUserVoiceClips();
+        // Also decode into the Web Audio buffer pool so the new recording
+        // plays via Web Audio (music-friendly) during real countdowns.
+        if(typeof _decodeVoiceClip === 'function'){
+          // Drop any previously-decoded buffer for this word so the new
+          // recording replaces it.
+          delete _userVoiceBuffers[word];
+          _decodeVoiceClip(word, reader.result, _userVoiceBuffers);
+        }
         _voiceRec = null;
         _renderVoiceRecMod();
         // Auto-preview so user hears what was captured.
@@ -7974,6 +8042,9 @@ function previewVoiceWord(word){
 function clearVoiceWord(word){
   delete _userVoiceClips[word];
   delete _userVoiceAudio[word];
+  // Also drop the decoded Web Audio buffer so playback falls back to
+  // the bundled clip (or to a beep if nothing's bundled either).
+  if(typeof _userVoiceBuffers === 'object') delete _userVoiceBuffers[word];
   _saveUserVoiceClips();
   _renderVoiceRecMod();
 }
@@ -7983,6 +8054,9 @@ function clearAllVoice(){
   if(!confirm('Delete all your voice recordings?')) return;
   _userVoiceClips = {};
   _userVoiceAudio = {};
+  if(typeof _userVoiceBuffers === 'object'){
+    Object.keys(_userVoiceBuffers).forEach(k => delete _userVoiceBuffers[k]);
+  }
   _saveUserVoiceClips();
   _renderVoiceRecMod();
   showToast('🗑 Voice recordings cleared', 1500);
@@ -17397,12 +17471,14 @@ let userPreferences = {
   speedUnit:    localStorage.getItem('userSpeedUnit')    || 'mph', // mph or kph
   weightUnit:   localStorage.getItem('userWeightUnit')   || 'kg',  // kg or lbs
   audioEnabled: localStorage.getItem('userAudioEnabled') !== '0',  // default ON
-  // Countdown style — 'beeps' (Web Audio synth, doesn't interrupt
-  // background music like Spotify/Apple Music on iOS) or 'voice' (spoken
-  // 3/2/1/Go/Done — uses speech synthesis or bundled clips which DO trigger
-  // the iOS audio-session takeover and stop background playback).
-  // Default to 'beeps' so music keeps playing through HIIT countdowns.
-  countdownStyle: localStorage.getItem('userCountdownStyle') || 'beeps',
+  // Countdown style — both options are music-friendly now:
+  //   'voice' — Owner's recorded voice (or user-recorded), decoded once
+  //             into an AudioBuffer and played via Web Audio. Doesn't
+  //             trigger the iOS audio-session takeover that HTMLAudio /
+  //             speechSynthesis cause, so Spotify / Apple Music keep playing.
+  //   'beeps' — Web Audio synth tones, distinct pitches per word.
+  // Default 'voice' — best of both worlds: real voice + uninterrupted music.
+  countdownStyle: localStorage.getItem('userCountdownStyle') || 'voice',
   // Runner level — drives the treadmill speed range shown in Garry's blocks.
   runnerLevel:  localStorage.getItem('userRunnerLevel')  || 'intermediate'
 };
@@ -17460,6 +17536,21 @@ function _saveUserVoiceClips(){
   }
 }
 _loadUserVoiceClips();
+
+// Decode all voice clips into Web Audio buffers in the background so
+// the first countdown of a session plays the real voice (not a beep).
+// Wrapped in setTimeout so we don't block paint, and tied to the first
+// user gesture so the AudioContext can resume in mobile Safari.
+function _kickoffVoiceDecode(){
+  try { if(typeof _prewarmVoiceBuffers === 'function') _prewarmVoiceBuffers(); } catch(e){}
+}
+setTimeout(_kickoffVoiceDecode, 200);
+// Many mobile browsers won't let the AudioContext resume until a user
+// gesture; redo the decode pass on the first interaction so any buffers
+// that failed pre-gesture get a second chance.
+['touchstart','click','keydown'].forEach(ev => {
+  document.addEventListener(ev, _kickoffVoiceDecode, { once: true, passive: true });
+});
 
 // Auto-open recorder when the owner visits with ?owner=record.
 // Guarded by a flag so we only open it once per page load.
