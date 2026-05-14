@@ -8109,6 +8109,11 @@ function startHIITRound(){
   playHIITAudio('workStart');
   hiitIntervalId = startTimer('hiit', updateHIITTimer, 100);
   showHIITDisplay();
+  // Refresh the "SESSION EXERCISES" list so the NOW highlight tracks the
+  // current interval's exercise. Without this, the list re-renders only on
+  // updateSessUI() (round transitions), so the bottom list stays stuck on
+  // Jumping Jacks even though the big timer has already moved on.
+  if(typeof renderSessionExerciseList === 'function') renderSessionExerciseList();
 }
 
 function updateHIITTimer(){
