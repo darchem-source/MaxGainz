@@ -3924,7 +3924,17 @@ function goTab(tab,el){
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('s-'+tab).classList.add('active');
   el.classList.add('active');
-  
+
+  // Reset the actual scroll container to the top on every tab switch.
+  // All screens share one .tab-content scroller, so scrollTop persists when
+  // swapping the visible screen. Without this, entering a HIIT session
+  // (especially from a scrolled Programme/Path/Progress tab) can land the
+  // user mid-scroll — the sticky-hdr is then pinned at top:0, obscures the
+  // top of the HIIT timer/preview block, and there's nowhere left to scroll
+  // up to since the previous tab's content no longer exists in flow.
+  const _tc = document.querySelector('.tab-content');
+  if(_tc) _tc.scrollTop = 0;
+
   // Hide profile button during active session, show otherwise
   const profileBtn = document.getElementById('nav-profile-btn');
   if(tab === 'active'){
@@ -3932,7 +3942,7 @@ function goTab(tab,el){
   } else {
     profileBtn.style.display = 'flex';
   }
-  
+
   if(tab==='progress')renderProgress();
   if(tab==='workout'){renderProgrammeFeed();}
   if(tab==='game')renderGame();
@@ -8426,15 +8436,25 @@ function skipRest(){
       // console.log('[SKIP REST] Jumping to first exercise of superset:', sessExs[sortedIndices[0]].name);
       curIdx = sortedIndices[0];
       updateSessUI();
-      document.getElementById('s-active').scrollTop=0;
+      // The actual scroll container is .tab-content (s-active itself doesn't
+      // scroll), so reset there. Previously this was a silent no-op.
+      const _tc1 = document.querySelector('.tab-content');
+      if(_tc1) _tc1.scrollTop = 0;
       return;
     }
   }
-  
+
   // Not in a superset, or superset is complete - use normal logic
   // console.log('[SKIP REST] Not in superset, using normal skip logic');
-  if(done>=ex.sets&&curIdx<sessExs.length-1){curIdx++;updateSessUI();document.getElementById('s-active').scrollTop=0;}
-  else{renderBubbles(ex);updNextBtn();}
+  if(done>=ex.sets&&curIdx<sessExs.length-1){
+    curIdx++;
+    updateSessUI();
+    const _tc2 = document.querySelector('.tab-content');
+    if(_tc2) _tc2.scrollTop = 0;
+  } else {
+    renderBubbles(ex);
+    updNextBtn();
+  }
 }
 
 function showRestAlert(){
