@@ -591,7 +591,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
         <button id="hiitStartSessionBtn" onclick="handleHIITStart()" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:12px;font-size:15px;font-weight:800;padding:14px;cursor:pointer;">▶ Start Session</button>
       </div>
       <!-- Session queue -->
-      <div id="mainFinishBtn" style="padding:12px 16px 0;"><button onclick="finishSession()" style="width:100%;background:var(--green);color:#000;border:none;border-radius:12px;font-size:15px;font-weight:800;padding:14px;cursor:pointer;">🏁 Finish &amp; Save Session</button></div>
+      <div id="mainFinishBtn" style="padding:12px 16px 0;"><button onclick="confirmFinishSession()" style="width:100%;background:var(--green);color:#000;border:none;border-radius:12px;font-size:15px;font-weight:800;padding:14px;cursor:pointer;">🏁 Finish &amp; Save Session</button></div>
       <div id="mainCancelBtn" style="padding:8px 16px 0;"><button onclick="cancelSession()" style="width:100%;background:rgba(255,77,106,0.08);color:var(--red);border:0.5px solid rgba(255,77,106,0.25);border-radius:12px;font-size:13px;font-weight:600;padding:11px;cursor:pointer;">✕ Cancel &amp; discard session</button></div>
 
       <!-- Garry's Upcoming Block Section (shown only during Garry's sessions) -->
@@ -8977,6 +8977,15 @@ function renderSessionExerciseList(){
 }
 
 // ── FINISH SESSION ──
+// Button-only wrapper that adds a confirmation prompt before finishing, so
+// an accidental tap on the green "🏁 Finish & Save Session" button doesn't
+// end the workout. Programmatic callers (AMRAP/EMOM auto-finish, etc.) keep
+// calling finishSession() directly and skip the prompt.
+function confirmFinishSession(){
+  if(!confirm('Finish this session and save your progress?')) return;
+  finishSession();
+}
+
 function finishSession(){
   // AMRAP: confirm rounds before saving
   const isAMRAP = HIIT.some(h => h.name === sessDay && h.amrapMinutes);
