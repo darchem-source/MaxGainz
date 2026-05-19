@@ -15277,12 +15277,18 @@ function renderTodayWithPath() {
   const catchUp = _getPathCatchUpSuggestion();
   if(catchUp){
     const exCount = (catchUp.exercises || []).length;
+    const missedLabel = catchUp.missed === 1
+      ? '1 missed session'
+      : `${catchUp.missed} missed sessions`;
+    const daysLabel = catchUp.daysLeftInclToday === 1
+      ? '1 day left this week'
+      : `${catchUp.daysLeftInclToday} days left to fit it in`;
     html += `
       <div style="margin:12px 16px 0;">
         <div style="background:var(--surface2);border:1px solid rgba(255,140,66,0.45);border-radius:14px;padding:14px;">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
             <span style="font-size:11px;font-weight:800;color:var(--orange);text-transform:uppercase;letter-spacing:1.5px;">🎯 Catch up</span>
-            <span style="font-size:11px;color:var(--text2);">${catchUp.behind} behind core this week · ${catchUp.daysLeftInclToday} day${catchUp.daysLeftInclToday !== 1 ? 's' : ''} left</span>
+            <span style="font-size:11px;color:var(--text2);">${missedLabel} · ${daysLabel}</span>
           </div>
           <div style="font-size:14px;color:var(--text);line-height:1.45;margin-bottom:10px;">
             <strong style="color:var(--orange);">${catchUp.suggestedDay}</strong> is up next in your rotation${exCount ? ` · ${exCount} exercises` : ''}.
@@ -15503,10 +15509,11 @@ function _getCorePathDayNames(programme){
   return null;
 }
 
-// If the user is behind on their core weekly target AND days remain in the
-// week, returns the missed workout suggestion. Else null. Used to surface a
-// catch-up card on the Today tab that's independent of whether today happens
-// to be a rest day, core day, or add-on day.
+// Returns a catch-up suggestion ONLY if the user has actually missed a
+// scheduled core day this week (i.e. a preferred day has passed without
+// matching completion). Future preferred days don't count — we don't want
+// to scold the user on Tuesday for not having done their Friday session
+// yet. Returns null when on track / ahead / no path.
 function _getPathCatchUpSuggestion(){
   if(typeof isPathActive !== 'function' || !isPathActive() || !userPath) return null;
   const programme = userPath.programme;
@@ -15526,17 +15533,29 @@ function _getPathCatchUpSuggestion(){
     return d >= wStart;
   }).length;
 
-  const target = (userPath.coreSchedule && userPath.coreSchedule.daysPerWeek) || 0;
-  const behind = target - completedCoreThisWeek;
-  if(behind <= 0) return null;
+  // How many of the user's preferred core days have STRICTLY passed (ended
+  // before today)? Only those count toward "missed" — today's slot is still
+  // live, and future days haven't happened yet.
+  const preferredDays = (userPath.coreSchedule && userPath.coreSchedule.preferredDays) || [];
+  const dowNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const todayMonIdx = (now.getDay() + 6) % 7; // 0=Mon..6=Sun
+  const passedScheduledCount = preferredDays.filter(name => {
+    const i = dowNames.indexOf(name);
+    if(i < 0) return false;
+    const monIdx = (i + 6) % 7;
+    return monIdx < todayMonIdx; // strictly before today
+  }).length;
+
+  // Actual deficit = scheduled days passed but not yet matched by sessions.
+  const missed = Math.max(0, passedScheduledCount - completedCoreThisWeek);
+  if(missed <= 0) return null;
 
   // Days left in week incl today (1..7)
-  const dayOfWeek = (now.getDay() + 6) % 7;
-  const daysLeftInclToday = 7 - dayOfWeek;
+  const daysLeftInclToday = 7 - todayMonIdx;
   if(daysLeftInclToday <= 0) return null;
 
   // Suggested = next in rotation. If the user already did this exact workout
-  // today (and is still "behind" due to a separate count quirk), don't pester.
+  // today, don't pester.
   const suggestedDay = getNextPathDay(programme);
   if(!suggestedDay) return null;
 
@@ -15552,8 +15571,8 @@ function _getPathCatchUpSuggestion(){
   return {
     programme,
     suggestedDay,
-    behind,
-    daysLeftInclToday,
+    missed,            // count of scheduled days passed but not matched
+    daysLeftInclToday, // includes today
     exercises: (typeof getExercisesForPathDay === 'function')
       ? getExercisesForPathDay(programme, suggestedDay)
       : []
