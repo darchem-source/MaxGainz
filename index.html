@@ -15268,6 +15268,31 @@ function renderTodayWithPath() {
     </div>`;
   }
 
+  // ── CATCH-UP CARD ──
+  // Independent of whether today is a rest day, core day, or add-on day —
+  // if the user is behind on core sessions this week and the next workout
+  // in the rotation is the missed one, surface it here. They can tap to
+  // start the missed workout. Today's planned workout (if any) still
+  // renders below; both can coexist.
+  const catchUp = _getPathCatchUpSuggestion();
+  if(catchUp){
+    const exCount = (catchUp.exercises || []).length;
+    html += `
+      <div style="margin:12px 16px 0;">
+        <div style="background:var(--surface2);border:1px solid rgba(255,140,66,0.45);border-radius:14px;padding:14px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+            <span style="font-size:11px;font-weight:800;color:var(--orange);text-transform:uppercase;letter-spacing:1.5px;">🎯 Catch up</span>
+            <span style="font-size:11px;color:var(--text2);">${catchUp.behind} behind core this week · ${catchUp.daysLeftInclToday} day${catchUp.daysLeftInclToday !== 1 ? 's' : ''} left</span>
+          </div>
+          <div style="font-size:14px;color:var(--text);line-height:1.45;margin-bottom:10px;">
+            <strong style="color:var(--orange);">${catchUp.suggestedDay}</strong> is up next in your rotation${exCount ? ` · ${exCount} exercises` : ''}.
+          </div>
+          <button onclick="startCatchUpWorkout()"
+            style="width:100%;background:var(--orange);color:#000;border:none;border-radius:10px;padding:12px;font-size:14px;font-weight:800;cursor:pointer;">▶ Start ${catchUp.suggestedDay}</button>
+        </div>
+      </div>`;
+  }
+
   // ── REST DAY ──
   if(todayInfo.isRestDay){
     // If the user already logged something today, the day isn't really a
@@ -15461,6 +15486,97 @@ function renderTodayWithPath() {
 }
 
 // ── Path session day helpers ──
+// Returns the array of core day-names for the user's path programme. Used by
+// the catch-up logic to know which sessions count toward "core completion".
+function _getCorePathDayNames(programme){
+  if(programme === 'ULF') return ['Upper','Lower','Full Body'];
+  if(programme === 'PPL'){
+    const variant = (userPath && userPath.coreSchedule && userPath.coreSchedule.variant) || 'standard';
+    return variant === '6day'
+      ? ['Push A','Pull A','Legs A','Push B','Pull B','Legs B']
+      : ['Push A','Pull A','Legs A'];
+  }
+  if(typeof isLibraryProgramme === 'function' && isLibraryProgramme(programme)){
+    const lib = getLibraryProgramme(programme);
+    return lib ? lib.schedule.map(d => d.day) : null;
+  }
+  return null;
+}
+
+// If the user is behind on their core weekly target AND days remain in the
+// week, returns the missed workout suggestion. Else null. Used to surface a
+// catch-up card on the Today tab that's independent of whether today happens
+// to be a rest day, core day, or add-on day.
+function _getPathCatchUpSuggestion(){
+  if(typeof isPathActive !== 'function' || !isPathActive() || !userPath) return null;
+  const programme = userPath.programme;
+  const coreDayNames = _getCorePathDayNames(programme);
+  if(!coreDayNames || !coreDayNames.length) return null;
+
+  // Week boundaries (Mon-start)
+  const now = new Date();
+  const wStart = new Date(now);
+  wStart.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  wStart.setHours(0, 0, 0, 0);
+
+  const completedCoreThisWeek = completedSessions.filter(s => {
+    if(s.adhoc || s.manualActivity) return false;
+    if(!coreDayNames.includes(s.day)) return false;
+    const d = s.date instanceof Date ? s.date : new Date(s.date);
+    return d >= wStart;
+  }).length;
+
+  const target = (userPath.coreSchedule && userPath.coreSchedule.daysPerWeek) || 0;
+  const behind = target - completedCoreThisWeek;
+  if(behind <= 0) return null;
+
+  // Days left in week incl today (1..7)
+  const dayOfWeek = (now.getDay() + 6) % 7;
+  const daysLeftInclToday = 7 - dayOfWeek;
+  if(daysLeftInclToday <= 0) return null;
+
+  // Suggested = next in rotation. If the user already did this exact workout
+  // today (and is still "behind" due to a separate count quirk), don't pester.
+  const suggestedDay = getNextPathDay(programme);
+  if(!suggestedDay) return null;
+
+  const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+  const didTodayAlready = completedSessions.some(s => {
+    if(s.adhoc || s.manualActivity) return false;
+    if(s.day !== suggestedDay) return false;
+    const d = s.date instanceof Date ? s.date : new Date(s.date);
+    return d >= todayStart;
+  });
+  if(didTodayAlready) return null;
+
+  return {
+    programme,
+    suggestedDay,
+    behind,
+    daysLeftInclToday,
+    exercises: (typeof getExercisesForPathDay === 'function')
+      ? getExercisesForPathDay(programme, suggestedDay)
+      : []
+  };
+}
+
+// Router for the catch-up CTA. Starts the next-in-rotation core workout
+// using whichever start function the programme uses.
+function startCatchUpWorkout(){
+  const c = _getPathCatchUpSuggestion();
+  if(!c) return;
+  if(c.programme === 'ULF') {
+    if(typeof startSessionULF === 'function') startSessionULF(c.suggestedDay);
+  } else if(c.programme === 'PPL') {
+    if(typeof startSession === 'function') startSession(c.suggestedDay, PPL);
+  } else if(typeof isLibraryProgramme === 'function' && isLibraryProgramme(c.programme)) {
+    const lib = getLibraryProgramme(c.programme);
+    if(lib && typeof startSession === 'function') {
+      startSession(c.suggestedDay, getLibraryDayMap(lib));
+    }
+  }
+}
+
 function getNextPathDay(programme) {
   if(programme === 'ULF'){
     const ulfDays = ['Upper','Lower','Full Body'];
