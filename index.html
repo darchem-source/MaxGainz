@@ -5492,6 +5492,44 @@ function computeProgressionSuggestions(){
 }
 
 // ── CORE CIRCUIT ──
+// Flat pool of core exercises drawn on by pickCoreCircuit(). Each session's
+// "Abdominal Work" exercise becomes a 3-exercise circuit picked from this
+// pool, biased toward exercises the user HASN'T done in the last few
+// sessions — so variety improves over time without the user having to do
+// anything. Mix of static holds (isTimer:true), crunches/leg raises,
+// rotation/anti-rotation, and stability work to keep stimulus varied.
+const CORE_EXERCISES = [
+  // Static holds — timer-driven
+  {name:'Plank',             reps:'45s',          isTimer:true},
+  {name:'Side Plank',        reps:'30s each',     isTimer:true},
+  {name:'Hollow Hold',       reps:'30s',          isTimer:true},
+  {name:'L-Sit',             reps:'20s',          isTimer:true},
+  {name:'Bear Hold',         reps:'30s',          isTimer:true},
+  // Crunches / leg raises — rep-driven
+  {name:'Cable Crunch',      reps:'15'},
+  {name:'Sit-Ups',           reps:'20'},
+  {name:'V-Ups',             reps:'15'},
+  {name:'Decline Crunch',    reps:'15'},
+  {name:'Crunch',            reps:'20'},
+  {name:'Hanging Leg Raise', reps:'12'},
+  {name:'Leg Raises',        reps:'15'},
+  {name:'Reverse Crunch',    reps:'15'},
+  // Rotation / anti-rotation
+  {name:'Russian Twist',     reps:'15 each'},
+  {name:'Bicycle Crunch',    reps:'20 each'},
+  {name:'Cable Wood Chop',   reps:'12 each'},
+  {name:'Pallof Press',      reps:'12 each'},
+  // Stability / anti-extension
+  {name:'Dead Bug',          reps:'10 each'},
+  {name:'Bird Dog',          reps:'10 each'},
+  // Advanced
+  {name:'Ab Wheel Rollout',  reps:'10'},
+  {name:'Mountain Climbers', reps:'40s',          isTimer:true},
+];
+const _CORE_NAMES = new Set(CORE_EXERCISES.map(e => e.name));
+
+// Kept for any legacy reference / fallback. pickCoreCircuit() no longer
+// reads this — the picker draws from CORE_EXERCISES with a recency filter.
 const CORE_POOL=[
   [{name:'Plank',reps:'45s',isTimer:true},{name:'Cable Crunch',reps:'15'},      {name:'Russian Twist',reps:'12 each'}],
   [{name:'Hanging Leg Raise',reps:'12'}, {name:'Ab Wheel Rollout',reps:'10'},   {name:'Plank',reps:'45s',isTimer:true}],
@@ -5618,8 +5656,74 @@ function closeCircuitTimer(){
 }
 
 function pickCoreCircuit(){
-  const count=completedSessions.filter(s=>!s.manualActivity).length;
-  return CORE_POOL[count%CORE_POOL.length];
+  // Build a 3-exercise circuit from CORE_EXERCISES, biased toward exercises
+  // the user hasn't logged in the last few sessions. Old behaviour rotated
+  // through 6 fixed circuits with heavy exercise overlap — Plank, Cable
+  // Crunch and Russian Twist appeared in 3 of 6 each — so users saw the
+  // same handful of moves repeatedly even though the indices were rotating.
+
+  // LOOK_BACK = how many recent non-manual sessions to consult for the
+  // "stale" set. 3 gives a balance between strong recency-avoidance and
+  // keeping the candidate pool large.
+  const LOOK_BACK = 3;
+  const recentNames = new Set();
+  let counted = 0;
+  for(let i = completedSessions.length - 1; i >= 0 && counted < LOOK_BACK; i--){
+    const s = completedSessions[i];
+    if(s.manualActivity) continue;
+    counted++;
+    if(!s.setLog) continue;
+    Object.keys(s.setLog).forEach(name => {
+      if(_CORE_NAMES.has(name)) recentNames.add(name);
+    });
+  }
+
+  // Fisher-Yates shuffle on a copy.
+  const shuffle = (arr) => {
+    const out = arr.slice();
+    for(let i = out.length - 1; i > 0; i--){
+      const j = Math.floor(Math.random() * (i + 1));
+      [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
+  };
+
+  const fresh = shuffle(CORE_EXERCISES.filter(e => !recentNames.has(e.name)));
+  const stale = shuffle(CORE_EXERCISES.filter(e =>  recentNames.has(e.name)));
+
+  // Draw fresh first; only dip into stale if we ran out (rare given a 21-
+  // exercise pool against a 3-session window of ~9 blocked names).
+  const picks = [];
+  const seen = new Set();
+  const drain = (pool) => {
+    for(const e of pool){
+      if(picks.length >= 3) return;
+      if(seen.has(e.name)) continue;
+      picks.push(e);
+      seen.add(e.name);
+    }
+  };
+  drain(fresh);
+  drain(stale);
+
+  // Light variety bias: prefer at least one timer-based hold in every
+  // circuit. If none of our 3 picks is a timer move, swap in a fresh
+  // timer-based one if available.
+  if(picks.length === 3 && !picks.some(e => e.isTimer)){
+    const timerCandidate = [...fresh, ...stale].find(e =>
+      e.isTimer && !seen.has(e.name)
+    );
+    if(timerCandidate){
+      // Replace the last pick (highest-recency among the 3) with the timer.
+      const replaced = picks.pop();
+      seen.delete(replaced.name);
+      picks.push(timerCandidate);
+      seen.add(timerCandidate.name);
+    }
+  }
+
+  // Final shuffle so the order varies even when the same 3 are picked twice.
+  return shuffle(picks);
 }
 
 function isCoreCircuit(ex){return ex.coreCircuit===true;}
@@ -13414,7 +13518,7 @@ const _muscleMap={
   'Barbell Row':'pull','Bent Over Barbell Row':'pull','Dumbbell Row':'pull','Cable Row':'pull','Lat Pulldown':'pull','Pulldowns':'pull','Straight Arm Pulldown':'pull','Pull-Ups':'pull','Chin-Ups':'pull','Barbell Curls':'pull','Barbell Curl':'pull','Dumbbell Curl':'pull','Hammer Curl':'pull',
   'Face Pulls':'pull','Band Pull-Aparts':'pull','Reverse Fly':'pull','Shrugs':'pull','Chest-Supported Row':'pull','T-Bar Row':'pull','Meadows Row':'pull','Rack Pulls':'pull','Concentration Curl':'pull','Preacher Curl':'pull','EZ Bar Curl':'pull','Incline Dumbbell Curl':'pull','Standing One-Arm Cable Curl':'pull','Cable Curl':'pull','Rowing Machine':'pull',
   'Squat':'legs','Front Squat':'legs','Bulgarian Split Squat':'legs','Leg Press':'legs','Hack Squat':'legs','Leg Curl':'legs','Leg Extension':'legs','Calf Raises':'legs','Hip Thrusts':'legs','Lunges':'legs','Walking Lunges':'legs','Step Ups':'legs','Stiff-Leg Deadlift':'legs','Sumo Deadlift':'legs','Good Mornings':'legs','Glute Kickback':'legs','Donkey Calf Raise':'legs','Seated Calf Raise':'legs','Glute Bridge':'legs','Nordic Curl':'legs','Glute-Ham Raise':'legs','Abductor Machine':'legs','Leg Press (Single Leg)':'legs','Jump Squats':'legs','Box Jumps':'legs','Tuck Jumps':'legs','Broad Jumps':'legs','Skater Hops':'legs','Lateral Band Walks':'legs','Sprint':'legs','Jog':'legs','High Knees':'legs','Kettlebell Swings':'legs',
-  'Plank':'core','Side Plank':'core','Dead Bug':'core','Pallof Press':'core','Hanging Leg Raise':'core','Ab Wheel Rollout':'core','Cable Crunch':'core','Russian Twist':'core','Decline Crunch':'core','V-Ups':'core','Abdominal Work':'core','Sit-Ups':'core','Crunch':'core','Hollow Hold':'core','L-Sit':'core','Dragon Flag':'core','Windmill':'core','Mountain Climbers':'core','Medicine Ball Slams':'core','Cable Wood Chop':'core',
+  'Plank':'core','Side Plank':'core','Dead Bug':'core','Pallof Press':'core','Hanging Leg Raise':'core','Ab Wheel Rollout':'core','Cable Crunch':'core','Russian Twist':'core','Decline Crunch':'core','V-Ups':'core','Abdominal Work':'core','Sit-Ups':'core','Crunch':'core','Hollow Hold':'core','L-Sit':'core','Dragon Flag':'core','Windmill':'core','Mountain Climbers':'core','Medicine Ball Slams':'core','Cable Wood Chop':'core','Bear Hold':'core','Bird Dog':'core','Bicycle Crunch':'core','Reverse Crunch':'core','Leg Raises':'core',
 };
 const _compoundSplits={
   'Deadlift':          [{cat:'pull',f:0.6},{cat:'legs',f:0.4}],
