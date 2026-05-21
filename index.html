@@ -1599,7 +1599,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 </div>
 
 <!-- SUPERSET PICKER -->
-<div class="modal-ov" id="circuitTimerMod" onclick="if(event.target===this)this.classList.remove('open')" style="z-index:200;">
+<div class="modal-ov" id="circuitTimerMod" onclick="if(event.target===this)closeCircuitTimer()" style="z-index:200;">
   <div class="modal" style="text-align:center;">
     <div class="modal-handle"></div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:8px;" id="timerExName">Plank Hold</div>
@@ -1607,7 +1607,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
     <div style="font-size:14px;color:var(--text2);margin-bottom:20px;" id="timerStatus">Ready to start</div>
     <div style="display:flex;gap:8px;justify-content:center;">
       <button onclick="startCircuitTimerCountdown()" id="circuitTimerStartBtn" style="background:var(--accent);color:#000;border:none;border-radius:12px;padding:12px 28px;font-size:15px;font-weight:800;cursor:pointer;">▶ Start</button>
-      <button onclick="document.getElementById('circuitTimerMod').classList.remove('open')" style="background:transparent;border:0.5px solid var(--border);color:var(--text2);border-radius:12px;padding:12px 28px;font-size:15px;font-weight:700;cursor:pointer;">Close</button>
+      <button onclick="closeCircuitTimer()" style="background:transparent;border:0.5px solid var(--border);color:var(--text2);border-radius:12px;padding:12px 28px;font-size:15px;font-weight:700;cursor:pointer;">Close</button>
     </div>
   </div>
 </div>
@@ -5506,33 +5506,66 @@ let coreTimerInterval=null;
 let coreTimerSec=0;
 let circuitTimerRunning=false;
 let circuitTimerDuration=0;
+// Per-side state for "each side" exercises (e.g. Side Plank 30s each).
+// When repsStr matches /each|per side/, the timer runs twice — once for
+// each side — with a "switch sides" prompt in between.
+let circuitTimerSides = 1;        // 1 = single-sided, 2 = per-side
+let circuitTimerCurrentSide = 1;  // which side we're currently timing (1 or 2)
+let circuitTimerExName = '';      // base exercise name (without side suffix)
 
-// Circuit timer for core exercises like Plank holds
-function startCircuitTimer(exerciseName, duration){
-  circuitTimerDuration = parseInt(duration);
-  coreTimerSec = circuitTimerDuration;
+// Circuit timer for core exercises like Plank holds.
+//   exerciseName — e.g. "Side Plank"
+//   repsStr      — the original reps string, e.g. "30s", "45s", "30s each".
+//                  Anything matching /each|per\s*side/ is treated as
+//                  bilateral and triggers a two-pass timer.
+function startCircuitTimer(exerciseName, repsStr){
+  const str = String(repsStr || '');
+  const m = str.match(/(\d+)/);
+  const seconds = m ? parseInt(m[1], 10) : 30;
+  const perSide = /each|per\s*side/i.test(str);
+
+  circuitTimerSides = perSide ? 2 : 1;
+  circuitTimerCurrentSide = 1;
+  circuitTimerExName = exerciseName;
+  circuitTimerDuration = seconds;
+  coreTimerSec = seconds;
   circuitTimerRunning = false;
-  
-  document.getElementById('timerExName').textContent = exerciseName;
-  document.getElementById('circuitTimerDisplay').textContent = coreTimerSec;
-  document.getElementById('timerStatus').textContent = 'Ready to start';
-  document.getElementById('circuitTimerStartBtn').textContent = '▶ Start';
-  document.getElementById('circuitTimerStartBtn').disabled = false;
-  
+
+  const sideTag = perSide
+    ? ' <span style="color:var(--accent2);font-weight:700;">· LEFT SIDE</span>'
+    : '';
+  document.getElementById('timerExName').innerHTML = exerciseName + sideTag;
+  document.getElementById('circuitTimerDisplay').textContent = seconds;
+  document.getElementById('timerStatus').textContent = perSide
+    ? 'Side 1 of 2 · Ready'
+    : 'Ready to start';
+  const startBtn = document.getElementById('circuitTimerStartBtn');
+  startBtn.textContent = '▶ Start';
+  startBtn.disabled = false;
+  // Reset the click handler — the "Done" state at the end of a timer
+  // rebinds it to closeCircuitTimer, so we restore the default here.
+  startBtn.onclick = startCircuitTimerCountdown;
+
   document.getElementById('circuitTimerMod').classList.add('open');
 }
 
 function startCircuitTimerCountdown(){
   if(circuitTimerRunning) return;
   circuitTimerRunning = true;
-  document.getElementById('circuitTimerStartBtn').textContent = '⏱ Running…';
-  document.getElementById('circuitTimerStartBtn').disabled = true;
-  document.getElementById('timerStatus').textContent = 'Go!';
+  const startBtn = document.getElementById('circuitTimerStartBtn');
+  startBtn.textContent = '⏱ Running…';
+  startBtn.disabled = true;
+  document.getElementById('timerStatus').textContent = circuitTimerSides === 2
+    ? `Go! Side ${circuitTimerCurrentSide} of 2`
+    : 'Go!';
 
   clearInterval(coreTimerInterval);
   const _circuitSpoken = new Set();
   let _circuitStartTime = Date.now();
-  const _circuitTotal = coreTimerSec;
+  const _circuitTotal = circuitTimerDuration;
+  coreTimerSec = _circuitTotal;
+  document.getElementById('circuitTimerDisplay').textContent = _circuitTotal;
+
   coreTimerInterval = startTimer('coreCircuit', () => {
     const elapsed = (Date.now() - _circuitStartTime) / 1000;
     const secsLeft = Math.max(0, Math.ceil(_circuitTotal - elapsed));
@@ -5547,12 +5580,41 @@ function startCircuitTimerCountdown(){
       clearInterval(coreTimerInterval);
       circuitTimerRunning = false;
       playCompletionDing();
-      document.getElementById('circuitTimerDisplay').textContent = '✓';
-      document.getElementById('timerStatus').textContent = 'Time\'s up! Tap Done to continue.';
-      document.getElementById('circuitTimerStartBtn').textContent = '✓ Done';
-      document.getElementById('circuitTimerStartBtn').disabled = false;
+
+      if(circuitTimerSides === 2 && circuitTimerCurrentSide === 1){
+        // Side 1 complete — set up side 2 and wait for user to tap Start.
+        // Two-tap flow lets them physically switch position before the
+        // next 30s window begins.
+        circuitTimerCurrentSide = 2;
+        document.getElementById('timerExName').innerHTML =
+          circuitTimerExName + ' <span style="color:var(--accent2);font-weight:700;">· RIGHT SIDE</span>';
+        document.getElementById('circuitTimerDisplay').textContent = circuitTimerDuration;
+        document.getElementById('timerStatus').textContent = '↻ Switch sides — tap Start when ready';
+        startBtn.textContent = '▶ Start side 2';
+        startBtn.disabled = false;
+      } else {
+        // Fully done — show ✓ and rebind the button to close the modal.
+        document.getElementById('circuitTimerDisplay').textContent = '✓';
+        document.getElementById('timerStatus').textContent = circuitTimerSides === 2
+          ? 'Both sides done! Tap Done to continue.'
+          : 'Time\'s up! Tap Done to continue.';
+        startBtn.textContent = '✓ Done';
+        startBtn.disabled = false;
+        startBtn.onclick = closeCircuitTimer;
+      }
     }
   }, 100);
+}
+
+// Close the timer modal. Also called by the "✓ Done" button after the
+// final side completes. Always stops any running interval so dismissing
+// mid-countdown doesn't leak a timer.
+function closeCircuitTimer(){
+  clearInterval(coreTimerInterval);
+  circuitTimerRunning = false;
+  document.getElementById('circuitTimerMod').classList.remove('open');
+  // Restore default handler for the next time the modal opens.
+  document.getElementById('circuitTimerStartBtn').onclick = startCircuitTimerCountdown;
 }
 
 function pickCoreCircuit(){
@@ -5576,7 +5638,11 @@ function renderCoreCircuit(ex){
     exs.map((e,i)=>{
       const repDisplay = e.isTimer ? `<span style="color:var(--accent2);font-weight:700;">${e.reps}</span>` : `<span style="color:var(--accent2);font-weight:700;">${e.reps}</span>`;
       const typeLabel = e.isTimer ? '<span style="font-size:10px;color:var(--text2);">⏱ hold</span>' : '<span style="font-size:10px;color:var(--text2);">reps</span>';
-      const timerBtn = e.isTimer ? `<button onclick="startCircuitTimer('${e.name}',${e.reps})" style="background:transparent;border:0.5px solid var(--accent2);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:700;color:var(--accent2);cursor:pointer;white-space:nowrap;">⏱ Timer</button>` : '';
+      // Note: reps is passed as a quoted string so values like "30s each" or
+      // "45s" reach the handler intact. The handler parses seconds + detects
+      // "each" to drive the per-side flow. Using single quotes on the
+      // onclick attribute so JSON.stringify's double quotes don't collide.
+      const timerBtn = e.isTimer ? `<button onclick='startCircuitTimer(${JSON.stringify(e.name)},${JSON.stringify(e.reps)})' style="background:transparent;border:0.5px solid var(--accent2);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:700;color:var(--accent2);cursor:pointer;white-space:nowrap;">⏱ Timer</button>` : '';
       return `
       <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:0.5px solid var(--border);">
         <div style="flex:1;font-size:13px;font-weight:600;">${i+1}. ${e.name}</div>
