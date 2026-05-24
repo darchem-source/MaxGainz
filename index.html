@@ -15834,17 +15834,28 @@ function renderTodayWithPath() {
         const lib = isLibraryProgramme(prog) ? getLibraryProgramme(prog) : null;
         const badgeLabel = lib ? lib.short : prog;
         const titleLabel = dayName || (lib ? lib.name : prog);
-        // Equipment chip selector — only for HIIT series workouts. The chip
-        // selection lives on window._pendingSessionTier (per-session override).
-        // Tapping a chip re-renders Today so the active state updates AND
-        // the exercise preview reflects the chosen tier's swaps. Path default
-        // is untouched — picking 'gym' once doesn't permanently change the
-        // userPath.equipmentDefault.
+        // Equipment chip selector — only for HIIT series workouts AND only
+        // when at least one exercise in the workout actually has a
+        // homeSwap / gymSwap variant. Showing the toggle on a pure-bodyweight
+        // workout (e.g. all exercises are static holds with no weighted
+        // option) is misleading: tapping Bodyweight/Home/Full Gym changes
+        // nothing, so the chips look broken.
         let _equipChipsHtml = '';
-        if(_isSeriesCard){
+        // Look at the RAW (unresolved) exercises for swap fields — the
+        // already-resolved `exs` has had homeSwap/gymSwap stripped.
+        const _rawSeriesExs = _isSeriesCard && dayName
+          ? getExercisesForPathDay(prog, dayName)
+          : [];
+        const _hasAnySwap = _rawSeriesExs.some(e => e && (e.homeSwap || e.gymSwap));
+        if(_isSeriesCard && _hasAnySwap){
           const _activeTier = window._pendingSessionTier
             || userPath.equipmentDefault
             || 'home';
+          // How many exercises change between tiers — used as a subtitle so
+          // the user knows the toggle is meaningful (and how many moves it
+          // actually affects).
+          const _swapCount = _rawSeriesExs.filter(e => e && (e.homeSwap || e.gymSwap)).length;
+          const _swapHint = `${_swapCount} of ${_rawSeriesExs.length} exercise${_swapCount === 1 ? '' : 's'} adapt${_swapCount === 1 ? 's' : ''} to your equipment`;
           _equipChipsHtml = `
               <div style="margin-bottom:14px;">
                 <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Equipment today</div>
@@ -15857,6 +15868,7 @@ function renderTodayWithPath() {
                     </button>
                   `).join('')}
                 </div>
+                <div style="font-size:10px;color:var(--text2);margin-top:6px;text-align:center;">${_swapHint}</div>
               </div>`;
         }
         html += `
@@ -15871,14 +15883,46 @@ function renderTodayWithPath() {
                 </div>
               </div>
               ${_equipChipsHtml}
-              <!-- Exercise preview -->
-              <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px;">
-                ${exs.slice(0,4).map(e =>
-                  `<span style="background:var(--surface3);border-radius:6px;padding:4px 8px;font-size:11px;color:var(--text2);">${e.name}</span>`
-                ).join('')}
-                ${exs.length > 4 ?
-                  `<span style="background:var(--surface3);border-radius:6px;padding:4px 8px;font-size:11px;color:var(--text2);">+${exs.length - 4} more</span>` : ''}
-              </div>
+              <!-- Exercise preview. Chip text includes the kg weight when
+                   the active tier has loaded the exercise — that's the only
+                   way to surface a swap that adds weight without changing
+                   the exercise name (e.g. Russian Twists 5kg vs 10kg).
+                   We also bias the visible slice toward swap-aware exercises
+                   so the user sees what actually changes when they toggle a
+                   tier — otherwise a 1-swap workout like Core Ignite hides
+                   its only swap behind "+N more". -->
+              ${(() => {
+                const _chipLabel = (e) => {
+                  if(e && !e.bw && typeof e.weight === 'number' && e.weight > 0){
+                    const unit = (userPreferences && userPreferences.weightUnit === 'lbs') ? 'lbs' : 'kg';
+                    return `${e.name} ${e.weight}${unit}`;
+                  }
+                  return e ? e.name : '';
+                };
+                // Identify which exercise indices actually swap by tier so
+                // we can prioritize them in the visible 4.
+                const swapIdxSet = new Set();
+                if(_isSeriesCard && Array.isArray(_rawSeriesExs)){
+                  _rawSeriesExs.forEach((e, i) => {
+                    if(e && (e.homeSwap || e.gymSwap)) swapIdxSet.add(i);
+                  });
+                }
+                const ordered = exs.map((e, i) => ({e, i}))
+                  .sort((a, b) => {
+                    const aHas = swapIdxSet.has(a.i) ? 0 : 1;
+                    const bHas = swapIdxSet.has(b.i) ? 0 : 1;
+                    if(aHas !== bHas) return aHas - bHas;
+                    return a.i - b.i;
+                  })
+                  .map(o => o.e);
+                const visible = ordered.slice(0, 4);
+                const overflow = ordered.length - visible.length;
+                return `
+                <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px;">
+                  ${visible.map(e => `<span style="background:var(--surface3);border-radius:6px;padding:4px 8px;font-size:11px;color:var(--text2);">${_chipLabel(e)}</span>`).join('')}
+                  ${overflow > 0 ? `<span style="background:var(--surface3);border-radius:6px;padding:4px 8px;font-size:11px;color:var(--text2);">+${overflow} more</span>` : ''}
+                </div>`;
+              })()}
               <button class="btn-p" style="width:100%;font-size:15px;padding:14px;"
                       onclick="startPathSession('${prog}','${dayName || ''}')">
                 ▶ Start Session
