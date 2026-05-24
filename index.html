@@ -15495,12 +15495,16 @@ function hasCorePathWorkoutBeenCompletedToday(programme) {
   const pplDays = Object.keys(PPL);
   const lib = isLibraryProgramme(programme) ? getLibraryProgramme(programme) : null;
   const libDayNames = lib ? new Set(lib.schedule.map(d => d.day)) : null;
+  // HIIT series: any rotation workout counts as "today's core" done.
+  const isSeries = programme === 'HIIT'
+    && typeof isHIITSeriesPath === 'function' && isHIITSeriesPath();
   const match = completedSessions.find(s => {
     if(s.adhoc) return false; // core path sessions are non-adhoc
     const sd = s.date instanceof Date ? s.date : new Date(s.date);
     if(sd < today || sd >= tomorrow) return false;
     if(programme === 'ULF') return ulfDays.includes(s.day);
     if(programme === 'PPL') return pplDays.includes(s.day);
+    if(isSeries) return HIIT_SERIES_NAMES.has(s.day);
     if(libDayNames) return libDayNames.has(s.day);
     return false;
   });
@@ -15844,6 +15848,10 @@ function _getCorePathDayNames(programme){
       ? ['Push A','Pull A','Legs A','Push B','Pull B','Legs B']
       : ['Push A','Pull A','Legs A'];
   }
+  // HIIT series — "day names" are the workout names in the series rotation.
+  if(programme === 'HIIT' && typeof isHIITSeriesPath === 'function' && isHIITSeriesPath()){
+    return HIIT_SERIES[userPath.hiitSeries].rotation.slice();
+  }
   if(typeof isLibraryProgramme === 'function' && isLibraryProgramme(programme)){
     const lib = getLibraryProgramme(programme);
     return lib ? lib.schedule.map(d => d.day) : null;
@@ -15888,8 +15896,36 @@ function _getPathCatchUpSuggestion(){
     return monIdx < todayMonIdx; // strictly before today
   }).length;
 
-  // Actual deficit = scheduled days passed but not yet matched by sessions.
-  const missed = Math.max(0, passedScheduledCount - completedCoreThisWeek);
+  let missed;
+  if(typeof isHIITSeriesPath === 'function' && isHIITSeriesPath()){
+    // Summer Series ethos: never nag on days she's logged other activity.
+    // The user also does Barry's, pilates, yoga etc. — if ANY session
+    // (manual activity OR Series workout) was logged on a scheduled day,
+    // that day counts as satisfied. Missed = passed preferred days with
+    // literally nothing logged.
+    const passedDayIndices = preferredDays
+      .map(name => dowNames.indexOf(name))
+      .filter(i => i >= 0 && ((i + 6) % 7) < todayMonIdx);
+
+    missed = passedDayIndices.filter(dowIdx => {
+      // Compute the date of this weekday in the current week.
+      const dayMonIdx = (dowIdx + 6) % 7;
+      const dayStart = new Date(wStart);
+      dayStart.setDate(wStart.getDate() + dayMonIdx);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayStart.getDate() + 1);
+      // Was anything (manual OR core) logged on that day?
+      const hadSomething = completedSessions.some(s => {
+        if(s.adhoc) return false; // adhoc extras don't satisfy a scheduled day
+        const d = s.date instanceof Date ? s.date : new Date(s.date);
+        return d >= dayStart && d < dayEnd;
+      });
+      return !hadSomething;
+    }).length;
+  } else {
+    // Default: deficit = scheduled days passed minus core sessions completed.
+    missed = Math.max(0, passedScheduledCount - completedCoreThisWeek);
+  }
   if(missed <= 0) return null;
 
   // Days left in week incl today (1..7)
@@ -15930,12 +15966,26 @@ function startCatchUpWorkout(){
     if(typeof startSessionULF === 'function') startSessionULF(c.suggestedDay);
   } else if(c.programme === 'PPL') {
     if(typeof startSession === 'function') startSession(c.suggestedDay, PPL);
+  } else if(c.programme === 'HIIT' && typeof HIIT_SERIES_NAMES !== 'undefined' && HIIT_SERIES_NAMES.has(c.suggestedDay)) {
+    // HIIT series catch-up — same routing as startPathSession's series branch.
+    const idx = (typeof getHIITIndexByName === 'function') ? getHIITIndexByName(c.suggestedDay) : -1;
+    if(idx >= 0 && typeof startHIIT === 'function') startHIIT(idx);
   } else if(typeof isLibraryProgramme === 'function' && isLibraryProgramme(c.programme)) {
     const lib = getLibraryProgramme(c.programme);
     if(lib && typeof startSession === 'function') {
       startSession(c.suggestedDay, getLibraryDayMap(lib));
     }
   }
+}
+
+// Returns true when the current Path is a HIIT series (e.g. Summer Series).
+// Freestyle HIIT Paths (no .hiitSeries field) return false and continue to
+// route via the add-on selector — existing behaviour is preserved.
+function isHIITSeriesPath() {
+  return !!(userPath
+    && userPath.programme === 'HIIT'
+    && userPath.hiitSeries
+    && HIIT_SERIES[userPath.hiitSeries]);
 }
 
 function getNextPathDay(programme) {
@@ -15952,6 +16002,16 @@ function getNextPathDay(programme) {
     const done = completedSessions.filter(s => !s.adhoc && Object.keys(PPL).includes(s.day)).length;
     return pplDays[done % pplDays.length];
   }
+  // HIIT series — rotate through HIIT_SERIES[id].rotation by completed-count,
+  // mirroring the library-programme branch. Only sessions whose `day` matches
+  // a name in the rotation count, so freestyle/adhoc HIIT logged on a Series
+  // Path won't skew the rotation. Adhoc sessions (manual extras) are ignored.
+  if(programme === 'HIIT' && isHIITSeriesPath()){
+    const series = HIIT_SERIES[userPath.hiitSeries];
+    const rotationSet = new Set(series.rotation);
+    const done = completedSessions.filter(s => !s.adhoc && rotationSet.has(s.day)).length;
+    return series.rotation[done % series.rotation.length];
+  }
   if(isLibraryProgramme(programme)){
     const lib = getLibraryProgramme(programme);
     if(!lib) return null;
@@ -15960,13 +16020,18 @@ function getNextPathDay(programme) {
     const done = completedSessions.filter(s => !s.adhoc && dayNameSet.has(s.day)).length;
     return dayNames[done % dayNames.length];
   }
-  return null; // HIIT handled via openAddOnSelector
+  return null; // Freestyle HIIT still handled via openAddOnSelector
 }
 
 function getExercisesForPathDay(programme, dayName) {
   if(!dayName) return [];
   if(programme === 'ULF') return getULFDay(dayName) || [];
   if(programme === 'PPL') return PPL[dayName] || [];
+  // HIIT series — dayName is the workout name; look up the HIIT entry.
+  if(programme === 'HIIT' && typeof HIIT_SERIES_NAMES !== 'undefined' && HIIT_SERIES_NAMES.has(dayName)){
+    const idx = getHIITIndexByName(dayName);
+    return idx >= 0 ? (HIIT[idx].exercises || []) : [];
+  }
   if(isLibraryProgramme(programme)){
     const lib = getLibraryProgramme(programme);
     if(!lib) return [];
@@ -15980,7 +16045,16 @@ function startPathSession(programme, dayName) {
   window._currentSessionIsAdhoc = false;
   if(programme === 'ULF') startSessionULF(dayName);
   else if(programme === 'PPL') startSession(dayName, PPL);
-  else if(programme === 'HIIT') openAddOnSelector('HIIT');
+  else if(programme === 'HIIT' && dayName && typeof HIIT_SERIES_NAMES !== 'undefined' && HIIT_SERIES_NAMES.has(dayName)){
+    // HIIT series Path — bridge name → HIIT array index, then hand off to
+    // the HIIT engine directly. If the lookup ever fails (e.g. workout
+    // renamed in code but localStorage still references the old name),
+    // fall back to the freestyle add-on selector so the user isn't stuck.
+    const idx = getHIITIndexByName(dayName);
+    if(idx >= 0) startHIIT(idx);
+    else openAddOnSelector('HIIT');
+  }
+  else if(programme === 'HIIT') openAddOnSelector('HIIT'); // freestyle (unchanged)
   else if(isLibraryProgramme(programme)){
     const lib = getLibraryProgramme(programme);
     if(!lib) return;
