@@ -2428,6 +2428,25 @@ const EXDB=[
   {name:'Bear Crawl Reverse',cat:'hiit',type:'hiit',muscles:['core','shoulders','legs'],muscleGroup:'fullbody',diff:2,equip:'Bodyweight',sets:'3',reps:'10–15m',bw:true,benefits:'Backwards bear crawl — adds coordination challenge and quad emphasis to the standard pattern',cues:['Knees hover off ground','Move in reverse','Hips stay low','Smooth coordination'],joints:['shoulder','hip','knee'],alts:['Bear Crawl','Inchworm','Mountain Climbers'],intensity:'mod',impact:'low',space:'medium'},
   {name:'Spider Lunge',cat:'hiit',type:'hiit',muscles:['legs','core','hips'],muscleGroup:'fullbody',diff:1,equip:'Bodyweight',sets:'3',reps:'8–12 each side',bw:true,benefits:'Deep hip mobility plus core engagement — perfect HIIT warm-up movement',cues:['Step foot outside same hand','Lower hips to open up','Keep back leg long','Alternate sides'],joints:['hip','knee','spine'],alts:['Inchworm','Bear Crawl','Reverse Lunge with Knee Drive'],intensity:'low',impact:'low',space:'small'},
   {name:'Reverse Lunge with Knee Drive',cat:'legs',type:'hiit',muscles:['legs','glutes','core'],muscleGroup:'legs',diff:2,equip:'Bodyweight',sets:'3',reps:'10–12 each side',bw:true,benefits:'Single-leg balance plus knee drive — develops unilateral strength and stability without jumping',cues:['Step back into lunge','Drive back knee up to chest','Stay tall throughout','Don\'t touch floor between reps'],joints:['hip','knee','ankle'],alts:['Step-Ups','Jump Lunges','Single-Leg Hops'],intensity:'mod',impact:'low',space:'small'},
+  // ── Summer Series core/toning additions ──
+  // Added to support the "Summer Series" HIIT Path. These are non-cardio,
+  // floor-paced moves that also surface in the swap modal (filtered by
+  // muscle group) and in the exercise browser.
+  {name:'Side Plank Dips',cat:'core',type:'hiit',muscles:['core','obliques'],muscleGroup:'core',diff:2,equip:'Bodyweight',sets:'3',reps:'10–15 each side',bw:true,benefits:'Dynamic oblique work — adds movement to the static side plank for extra waist sculpting',cues:['Stack feet','Drop hip just below the line','Press back up to a tall side plank','Slow controlled tempo'],joints:['shoulder','spine','hip'],alts:['Side Plank','Russian Twists','Bicycle Crunch'],intensity:'low',impact:'low',space:'small'},
+  {name:'Woodchoppers',cat:'core',type:'hiit',muscles:['core','obliques','shoulders'],muscleGroup:'core',diff:2,equip:'Bodyweight, dumbbell or cable',sets:'3',reps:'10–12 each side',bw:true,benefits:'Diagonal rotation under load — trains the core in the chop pattern that real life actually demands',cues:['Pivot back foot as you rotate','Drive from the hip not the arms','Eyes follow the load','Smooth controlled return'],joints:['shoulder','spine','hip'],alts:['Russian Twists','Side Plank','Pallof Press'],intensity:'mod',impact:'low',space:'small'},
+  {name:'Heel Taps',cat:'core',type:'hiit',muscles:['core','obliques'],muscleGroup:'core',diff:1,equip:'Bodyweight',sets:'3',reps:'30–45s',bw:true,benefits:'Side-to-side oblique reach — short range, high reps, big finisher pump',cues:['Shoulders just off the floor','Reach hand toward heel','Squeeze the side that\'s working','Steady rhythm'],joints:['spine'],alts:['Russian Twists','Bicycle Crunch','Side Plank'],intensity:'low',impact:'low',space:'small'},
+  {name:'Plank Shoulder Taps',cat:'core',type:'hiit',muscles:['core','shoulders'],muscleGroup:'core',diff:2,equip:'Bodyweight',sets:'3',reps:'20–30 reps',bw:true,benefits:'Anti-rotation core work — every tap forces stabilisers to fire to keep the hips square',cues:['Wide stance feet for stability','Tap opposite shoulder','Don\'t let hips rock','Slow over fast'],joints:['shoulder','spine'],alts:['Plank','Renegade Rows','Side Plank'],intensity:'low',impact:'low',space:'small'},
+  {name:'Pike Push-Ups',cat:'push',type:'hiit',muscles:['shoulders','triceps','core'],muscleGroup:'push',diff:3,equip:'Bodyweight',sets:'3',reps:'8–12',bw:true,benefits:'Bodyweight overhead press pattern — builds shoulder strength without dumbbells',cues:['Hips high — inverted V shape','Lower head between hands','Press straight up','Elbows track forward not flared'],joints:['shoulder','elbow'],alts:['Push-Ups','Dumbbell Curl-to-Press','Handstand Push-Up Negatives'],intensity:'mod',impact:'low',space:'small'},
+  {name:'Dumbbell Curl-to-Press',cat:'push',type:'hiit',muscles:['shoulders','biceps'],muscleGroup:'push',diff:1,equip:'Dumbbells',sets:'3',reps:'10–12',benefits:'Two-for-one — biceps on the way up, shoulders to finish. Combo move for fast arm pumps',cues:['Curl with control','Rotate palms forward at the top','Press straight overhead','Reverse the path on the way down'],joints:['elbow','shoulder'],alts:['Dumbbell Shoulder Press','Pike Push-Ups','Push Press'],intensity:'mod',impact:'low',space:'small'},
+  {name:'Squat Hold',cat:'legs',type:'hiit',muscles:['legs','glutes','core'],muscleGroup:'legs',diff:1,equip:'Bodyweight',sets:'3',reps:'30–45s',bw:true,benefits:'Isometric quad and glute burn — no impact, no weight, instant lower-body work',cues:['Sink to parallel','Chest tall','Knees track over toes','Breathe through the burn'],joints:['knee','hip','ankle'],alts:['Goblet Squat Hold','Wall Sit','Reverse Lunge Hold'],intensity:'low',impact:'low',space:'small'},
+  {name:'Goblet Squat Hold',cat:'legs',type:'hiit',muscles:['legs','glutes','core'],muscleGroup:'legs',diff:2,equip:'Dumbbell or kettlebell',sets:'3',reps:'30–45s',benefits:'Weighted squat hold — adds upper-back and core demand on top of the iso leg burn',cues:['Bell at chest','Elbows tucked','Sink low and stay tall','Drive knees out'],joints:['knee','hip','shoulder'],alts:['Squat Hold','Wall Sit','Reverse Lunge Hold'],intensity:'mod',impact:'low',space:'small'},
+  {name:'Single-Leg Glute Bridge',cat:'legs',type:'hiit',muscles:['glutes','core'],muscleGroup:'legs',diff:2,equip:'Bodyweight',sets:'3',reps:'10–15 each side',bw:true,benefits:'Unilateral glute work — exposes side-to-side weakness the two-leg bridge hides',cues:['Other leg extended straight','Drive heel into floor','Squeeze glute hard at top','Hips stay level — no sag'],joints:['hip','knee'],alts:['Glute Bridge','Donkey Kicks','Hip Thrust'],intensity:'low',impact:'low',space:'small'},
+  {name:'Wall Sit',cat:'legs',type:'hiit',muscles:['legs','glutes'],muscleGroup:'legs',diff:1,equip:'Wall',sets:'3',reps:'30–60s',bw:true,benefits:'Pure isometric quad burn — easy on the joints, brutal on the legs',cues:['Back flat against wall','Knees at 90°','Heels under knees','Hold the breath fight'],joints:['knee','hip'],alts:['Squat Hold','Goblet Squat Hold','Reverse Lunge Hold'],intensity:'low',impact:'low',space:'small'},
+  {name:'Donkey Kicks',cat:'legs',type:'hiit',muscles:['glutes','core'],muscleGroup:'legs',diff:1,equip:'Bodyweight',sets:'3',reps:'15–20 each side',bw:true,benefits:'Quadruped glute isolation — direct glute med/max work with no equipment',cues:['Knee stays bent at 90°','Drive heel toward ceiling','Squeeze at the top','Don\'t arch the lower back'],joints:['hip','knee'],alts:['Glute Bridge','Single-Leg Glute Bridge','Bird Dog'],intensity:'low',impact:'low',space:'small'},
+  {name:'Reverse Lunge Hold',cat:'legs',type:'hiit',muscles:['legs','glutes','core'],muscleGroup:'legs',diff:1,equip:'Bodyweight',sets:'3',reps:'30–45s each side',bw:true,benefits:'Static split squat — single-leg quad and glute burn without the unilateral coordination demand',cues:['Step back into lunge','Drop back knee toward floor','Front shin vertical','Hold tall and breathe'],joints:['knee','hip','ankle'],alts:['Wall Sit','Squat Hold','Bulgarian Split Squat'],intensity:'low',impact:'low',space:'small'},
+  {name:'Arm Circles',cat:'push',type:'hiit',muscles:['shoulders'],muscleGroup:'push',diff:1,equip:'Bodyweight',sets:'3',reps:'30s',bw:true,benefits:'Shoulder warm-up that turns into a burner past 20 seconds — perfect AMRAP filler',cues:['Arms straight out to the sides','Small fast circles','Switch direction halfway','Don\'t shrug — let arms hang from shoulders'],joints:['shoulder'],alts:['Dumbbell Lateral Raises','Push-Ups','Pike Push-Ups'],intensity:'low',impact:'low',space:'small'},
+  {name:'Plank Rows',cat:'pull',type:'hiit',muscles:['back','core','shoulders'],muscleGroup:'pull',diff:2,equip:'Bodyweight or dumbbells',sets:'3',reps:'12–16',benefits:'Plank-position row — anti-rotation core demand on top of every rep',cues:['Wide foot stance','Row one arm at a time','Hips stay square — don\'t rotate','Slow control on the way down'],joints:['shoulder','spine','hip'],alts:['Renegade Rows','Plank Shoulder Taps','Dumbbell Row'],intensity:'mod',impact:'low',space:'small'},
+  {name:'Plank Up-Downs',cat:'core',type:'hiit',muscles:['core','shoulders','triceps'],muscleGroup:'core',diff:2,equip:'Bodyweight',sets:'3',reps:'30–45s',bw:true,benefits:'Forearm-to-high-plank transitions — combo core + tricep finisher',cues:['Lead with the same arm each rep','Switch lead halfway','Hips stay still','Smooth not crashing'],joints:['shoulder','elbow','spine'],alts:['Plank','Push-Ups','Plank Shoulder Taps'],intensity:'mod',impact:'low',space:'small'},
 ];
 
 // ── SUPABASE CONFIG ──
@@ -9773,6 +9792,87 @@ const HIIT=[
     {name:"Dead Bug",sets:4,reps:"40s",weight:0,bw:true},
     {name:"Hollow Body Hold",sets:4,reps:"30s",weight:0,bw:true},
     {name:"Russian Twists",sets:4,reps:"40s",weight:8}
+  ]},
+
+  // ── SUMMER SERIES ── (Hot Girl Athletic Club — non-cardio, core-focused toning)
+  // Each exercise's base shape is the "minimal" (bodyweight) variant.
+  // Optional `homeSwap` / `gymSwap` fields are partial overrides applied by
+  // _resolveSummerSeriesExercise() when the session starts. A swap can
+  // change just the weight (still the same move) or fully replace the move
+  // (different name + reps). The swap fields are stripped from the
+  // resolved object so they never reach the engine or session log.
+  {name:"Summer Series · Core Ignite",duration:18,diff:2,format:"Core/Timed",
+   series:"summer-series",
+   desc:"Pure abs foundation. 3 rounds, ~15s rest between exercises.",exercises:[
+    {name:"Plank",sets:3,reps:"45s",weight:0,bw:true},
+    {name:"Dead Bug",sets:3,reps:"40s",weight:0,bw:true},
+    {name:"Hollow Body Hold",sets:3,reps:"30s",weight:0,bw:true},
+    {name:"Bicycle Crunches",sets:3,reps:"40s",weight:0,bw:true},
+    {name:"Leg Raises",sets:3,reps:"40s",weight:0,bw:true},
+    {name:"Russian Twists",sets:3,reps:"40s",weight:0,bw:true,homeSwap:{weight:5},gymSwap:{weight:10}}
+  ]},
+  {name:"Summer Series · Oblique Cut",duration:16,diff:2,format:"Core/Timed",
+   series:"summer-series",
+   desc:"Rotational and lateral core. 3 rounds.",exercises:[
+    {name:"Side Plank (Left)",sets:3,reps:"30s",weight:0,bw:true},
+    {name:"Side Plank (Right)",sets:3,reps:"30s",weight:0,bw:true},
+    {name:"Side Plank Dips (Left)",sets:3,reps:"30s",weight:0,bw:true},
+    {name:"Side Plank Dips (Right)",sets:3,reps:"30s",weight:0,bw:true},
+    {name:"Woodchoppers",sets:3,reps:"40s",weight:0,bw:true,homeSwap:{weight:6},gymSwap:{name:"Cable Woodchoppers",weight:15}},
+    {name:"Heel Taps",sets:3,reps:"40s",weight:0,bw:true}
+  ]},
+  {name:"Summer Series · Tight & Toned",duration:18,diff:2,format:"AMRAP",amrapMinutes:18,
+   series:"summer-series",
+   desc:"Core + glutes + light arm tone. Loop the circuit for the duration.",exercises:[
+    {name:"Glute Bridge",sets:1,reps:"15 reps",weight:0,bw:true,homeSwap:{weight:10},gymSwap:{weight:15}},
+    {name:"Plank Shoulder Taps",sets:1,reps:"20 reps",weight:0,bw:true},
+    {name:"Pike Push-Ups",sets:1,reps:"10 reps",weight:0,bw:true,homeSwap:{name:"Dumbbell Curl-to-Press",reps:"12 reps",weight:8},gymSwap:{name:"Dumbbell Curl-to-Press",reps:"12 reps",weight:10}},
+    {name:"Dead Bug",sets:1,reps:"12 reps",weight:0,bw:true},
+    {name:"Squat Hold",sets:1,reps:"30s",weight:0,bw:true,homeSwap:{name:"Goblet Squat Hold",weight:10},gymSwap:{name:"Goblet Squat Hold",weight:15}}
+  ]},
+  {name:"Summer Series · Lower & Core",duration:20,diff:2,format:"Core/Timed",
+   series:"summer-series",
+   desc:"Glutes and legs anchored by core. 3 rounds.",exercises:[
+    {name:"Glute Bridge",sets:3,reps:"45s",weight:0,bw:true,homeSwap:{weight:10},gymSwap:{weight:15}},
+    {name:"Single-Leg Glute Bridge (Left)",sets:3,reps:"30s",weight:0,bw:true},
+    {name:"Single-Leg Glute Bridge (Right)",sets:3,reps:"30s",weight:0,bw:true},
+    {name:"Wall Sit",sets:3,reps:"45s",weight:0,bw:true,homeSwap:{name:"Goblet Squat Hold",weight:10},gymSwap:{name:"Goblet Squat Hold",weight:15}},
+    {name:"Bird Dog",sets:3,reps:"40s",weight:0,bw:true},
+    {name:"Donkey Kicks",sets:3,reps:"40s",weight:0,bw:true},
+    {name:"Reverse Lunge Hold",sets:3,reps:"40s",weight:0,bw:true}
+  ]},
+  {name:"Summer Series · Upper & Core Sculpt",duration:18,diff:3,format:"AMRAP",amrapMinutes:18,
+   series:"summer-series",
+   desc:"Light shoulders/arms + core. Knee or incline Push-Ups are fine.",exercises:[
+    {name:"Push-Ups",sets:1,reps:"12 reps",weight:0,bw:true},
+    {name:"Arm Circles",sets:1,reps:"30s",weight:0,bw:true,homeSwap:{name:"Dumbbell Lateral Raises",reps:"15 reps",weight:4},gymSwap:{name:"Dumbbell Lateral Raises",reps:"15 reps",weight:5}},
+    {name:"Plank Rows",sets:1,reps:"16 reps",weight:0,bw:true,homeSwap:{name:"Renegade Rows",weight:8},gymSwap:{name:"Renegade Rows",weight:10}},
+    {name:"Superman Hold",sets:1,reps:"30s",weight:0,bw:true},
+    {name:"Tricep Dips",sets:1,reps:"12 reps",weight:0,bw:true,gymSwap:{name:"Bench Tricep Dips",reps:"12 reps"}}
+  ]},
+  {name:"Summer Series · Full Floor Burn",duration:22,diff:3,format:"EMOM",emomMinutes:22,
+   series:"summer-series",
+   desc:"Longer full-body floor circuit, core-heavy. One exercise per minute, 2 rounds through 11 exercises.",exercises:[
+    {name:"Plank",sets:2,reps:"45s",weight:0,bw:true,emomNote:"Minutes 1, 12"},
+    {name:"Glute Bridge",sets:2,reps:"20 reps",weight:0,bw:true,emomNote:"Minutes 2, 13",homeSwap:{weight:10},gymSwap:{weight:15}},
+    {name:"Russian Twists",sets:2,reps:"30 reps",weight:0,bw:true,emomNote:"Minutes 3, 14"},
+    {name:"Bird Dog",sets:2,reps:"40s",weight:0,bw:true,emomNote:"Minutes 4, 15"},
+    {name:"Dead Bug",sets:2,reps:"40s",weight:0,bw:true,emomNote:"Minutes 5, 16"},
+    {name:"Push-Ups",sets:2,reps:"12 reps",weight:0,bw:true,emomNote:"Minutes 6, 17"},
+    {name:"Side Plank",sets:2,reps:"30s each",weight:0,bw:true,emomNote:"Minutes 7, 18"},
+    {name:"Hollow Body Hold",sets:2,reps:"30s",weight:0,bw:true,emomNote:"Minutes 8, 19"},
+    {name:"Superman Hold",sets:2,reps:"30s",weight:0,bw:true,emomNote:"Minutes 9, 20"},
+    {name:"Plank Up-Downs",sets:2,reps:"30s",weight:0,bw:true,emomNote:"Minutes 10, 21"},
+    {name:"Reverse Lunge Hold",sets:2,reps:"30s each",weight:0,bw:true,emomNote:"Minutes 11, 22"}
+  ]},
+  {name:"Summer Series · Express Core",duration:12,diff:1,format:"Core/Timed",
+   series:"summer-series",
+   desc:"Short option for busy days — stacks well after a class. 2 rounds.",exercises:[
+    {name:"Plank",sets:2,reps:"40s",weight:0,bw:true},
+    {name:"Dead Bug",sets:2,reps:"40s",weight:0,bw:true},
+    {name:"Russian Twists",sets:2,reps:"40s",weight:0,bw:true},
+    {name:"Hollow Body Hold",sets:2,reps:"30s",weight:0,bw:true},
+    {name:"Bicycle Crunches",sets:2,reps:"40s",weight:0,bw:true}
   ]}
 ];
 
@@ -9798,7 +9898,123 @@ const HIIT_MUSCLE_FOCUS = {
   "Core Blaster – 24 min":            ['core'],
   "Abs & Obliques – 15 min":          ['core'],
   "Core & Lower Back – 25 min":       ['core','legs'],
+  // ── Summer Series ──
+  "Summer Series · Core Ignite":          ['core'],
+  "Summer Series · Oblique Cut":          ['core'],
+  "Summer Series · Tight & Toned":        ['core','legs'],
+  "Summer Series · Lower & Core":         ['legs','core'],
+  "Summer Series · Upper & Core Sculpt":  ['push','core'],
+  "Summer Series · Full Floor Burn":      ['push','pull','legs','core'],
+  "Summer Series · Express Core":         ['core'],
 };
+
+// ── HIIT SERIES ──
+// Ordered HIIT rotations that can run as a Path. When `userPath.hiitSeries`
+// matches a series id, getNextPathDay/startPathSession look up the next
+// workout here and feed it to startHIIT() via the HIIT engine — instead of
+// the freestyle add-on selector.
+//
+// Rotation order is interleaved on purpose so consecutive sessions vary in
+// focus (core → toning → obliques → lower → upper → full body → express).
+const HIIT_SERIES = {
+  'summer-series': {
+    id: 'summer-series',
+    name: 'Summer Series',
+    subtitle: 'Hot Girl Athletic Club',
+    blurb: 'Non-cardio, core-focused toning — built to run alongside your other training.',
+    description: '7 floor/strength-paced workouts on rotation: core foundations, obliques, lower-body toning, upper-body sculpt, and a longer full-floor burn. No cardio — designed to stack with classes, pilates, runs etc.',
+    defaultDuration: 8,
+    defaultDaysPerWeek: 3,
+    rotation: [
+      'Summer Series · Core Ignite',
+      'Summer Series · Tight & Toned',
+      'Summer Series · Oblique Cut',
+      'Summer Series · Lower & Core',
+      'Summer Series · Upper & Core Sculpt',
+      'Summer Series · Full Floor Burn',
+      'Summer Series · Express Core'
+    ]
+  }
+};
+
+// Convenience: list of all workout names that belong to ANY HIIT series.
+// Used to detect series-path sessions in stats / catch-up / etc.
+const HIIT_SERIES_NAMES = new Set(
+  Object.values(HIIT_SERIES).flatMap(s => s.rotation)
+);
+
+// Look up a HIIT array index by workout name. Returns -1 if not found.
+// Used by startPathSession to bridge series rotation (names) to startHIIT (index).
+function getHIITIndexByName(name){
+  return HIIT.findIndex(w => w.name === name);
+}
+
+// ── EQUIPMENT TIERING ──
+// Three tiers describe the kit the user has on the day:
+//   'minimal' — bodyweight only (hotel, travel)
+//   'home'    — dumbbells + mat (default for the target user)
+//   'gym'     — full gym (cables, benches, full DB rack)
+//
+// Summer Series exercises declare a base (= minimal) shape with optional
+// `homeSwap` / `gymSwap` partial overrides. Resolution rules:
+//   minimal → base as-is
+//   home    → base merged with homeSwap if present, else base
+//   gym     → base merged with gymSwap if present, else homeSwap, else base
+//
+// A swap can change just the weight (still the same move, e.g. weighted
+// Russian Twists) or fully replace the exercise (different name + reps,
+// e.g. Wall Sit → Goblet Squat Hold). The homeSwap/gymSwap fields are
+// stripped from the resolved object so they never reach the session log.
+const EQUIP_TIERS = [
+  { id:'minimal', label:'Bodyweight', desc:'Hotel / travel · mat at most', icon:'🪶' },
+  { id:'home',    label:'Home',       desc:'Dumbbells + mat',              icon:'🏠' },
+  { id:'gym',     label:'Full Gym',   desc:'Cables, benches, full rack',   icon:'🏋️' }
+];
+
+function _getEffectiveEquipTier(){
+  // Per-session override (set when the user taps a chip on the Today card)
+  // takes precedence over the Path default. Falls back to 'home' for any
+  // userPath that predates the equipment system.
+  if(window._pendingSessionTier) return window._pendingSessionTier;
+  if(userPath && userPath.equipmentDefault) return userPath.equipmentDefault;
+  return 'home';
+}
+
+// Chip handler — updates the pending tier for the next-to-start session.
+// Tapping re-renders Today so chip highlight + exercise preview both refresh
+// (the preview substitutes homeSwap/gymSwap variants in place).
+function selectPendingTier(tier){
+  if(!EQUIP_TIERS.some(t => t.id === tier)) return;
+  window._pendingSessionTier = tier;
+  if(typeof renderToday === 'function') renderToday();
+}
+
+function _resolveSummerSeriesExercise(ex, tier){
+  let swap = null;
+  if(tier === 'home')      swap = ex.homeSwap;
+  else if(tier === 'gym')  swap = ex.gymSwap || ex.homeSwap;
+  // minimal (or any unknown tier) → use the base shape unchanged.
+  if(!swap) {
+    const out = {...ex};
+    delete out.homeSwap; delete out.gymSwap;
+    return out;
+  }
+  const resolved = {...ex, ...swap};
+  // Adding weight to a previously bodyweight move flips the bw flag, so
+  // analytics / display logic don't misclassify it.
+  if(swap.weight && swap.weight > 0) resolved.bw = false;
+  delete resolved.homeSwap;
+  delete resolved.gymSwap;
+  return resolved;
+}
+
+// Apply the resolver across an array of HIIT exercises. Safe to call on
+// non-series workouts — exercises without homeSwap/gymSwap are returned
+// untouched.
+function _resolveSummerSeriesExercises(exs, tier){
+  if(!Array.isArray(exs)) return exs;
+  return exs.map(ex => _resolveSummerSeriesExercise(ex, tier));
+}
 
 const HIIT_FORMAT_COLORS={
   'Tabata':'var(--accent)',
@@ -9875,7 +10091,21 @@ function startHIIT(idx){
     // Old format
     exercises = w.exercises;
   }
-  
+
+  // Series equipment resolution — when this workout belongs to a HIIT
+  // series (Summer Series etc.), swap each exercise to the variant that
+  // matches the effective equipment tier. Tier comes from the per-session
+  // override (Today card chip) if set, else userPath.equipmentDefault,
+  // else 'home'. After resolution, clear the per-session override so the
+  // chip falls back to the default on the next Today render — picking
+  // 'gym' for one session shouldn't silently stick across days.
+  let _sessionTier = null;
+  if(w.series && typeof HIIT_SERIES !== 'undefined' && HIIT_SERIES[w.series]){
+    _sessionTier = _getEffectiveEquipTier();
+    exercises = _resolveSummerSeriesExercises(exercises, _sessionTier);
+    window._pendingSessionTier = null;
+  }
+
   stopRest(); window._restStoppedManually=false; // clean slate before new session
   sessExs=exercises.map(ex=>{
     const dbEx = EXDB.find(e => e.name === ex.name);
@@ -10079,7 +10309,11 @@ function renderProgrammeFeed(){
 function _renderActivePathSection(){
   if(!isPathActive() || !userPath) return '';
   const lib = isLibraryProgramme(userPath.programme) ? getLibraryProgramme(userPath.programme) : null;
-  const name = lib ? lib.name : userPath.programme;
+  // Series Paths (Summer Series etc.) show the series name instead of the
+  // generic 'HIIT' programme id.
+  const series = (typeof isHIITSeriesPath === 'function' && isHIITSeriesPath())
+    ? HIIT_SERIES[userPath.hiitSeries] : null;
+  const name = lib ? lib.name : series ? series.name : userPath.programme;
   const week = getPathCurrentWeek();
   const nextDay = getNextPathDay(userPath.programme);
   const exs = nextDay ? getExercisesForPathDay(userPath.programme, nextDay) : [];
@@ -15346,12 +15580,16 @@ function hasCorePathWorkoutBeenCompletedToday(programme) {
   const pplDays = Object.keys(PPL);
   const lib = isLibraryProgramme(programme) ? getLibraryProgramme(programme) : null;
   const libDayNames = lib ? new Set(lib.schedule.map(d => d.day)) : null;
+  // HIIT series: any rotation workout counts as "today's core" done.
+  const isSeries = programme === 'HIIT'
+    && typeof isHIITSeriesPath === 'function' && isHIITSeriesPath();
   const match = completedSessions.find(s => {
     if(s.adhoc) return false; // core path sessions are non-adhoc
     const sd = s.date instanceof Date ? s.date : new Date(s.date);
     if(sd < today || sd >= tomorrow) return false;
     if(programme === 'ULF') return ulfDays.includes(s.day);
     if(programme === 'PPL') return pplDays.includes(s.day);
+    if(isSeries) return HIIT_SERIES_NAMES.has(s.day);
     if(libDayNames) return libDayNames.has(s.day);
     return false;
   });
@@ -15579,12 +15817,48 @@ function renderTodayWithPath() {
       } else {
         // ── Not done yet: show start session button ──
         const dayName = getNextPathDay(prog);
-        const exs = dayName ? getExercisesForPathDay(prog, dayName) : [];
+        let exs = dayName ? getExercisesForPathDay(prog, dayName) : [];
+        // For series workouts, resolve the exercises through the active tier
+        // so the preview chips match what's actually about to launch.
+        const _isSeriesCard = (prog === 'HIIT')
+          && (typeof HIIT_SERIES_NAMES !== 'undefined')
+          && dayName && HIIT_SERIES_NAMES.has(dayName);
+        if(_isSeriesCard && typeof _resolveSummerSeriesExercises === 'function'){
+          const _previewTier = window._pendingSessionTier
+            || (userPath && userPath.equipmentDefault)
+            || 'home';
+          exs = _resolveSummerSeriesExercises(exs, _previewTier);
+        }
         const estMin = Math.max(20, exs.length * 9);
         // Library programmes use their .short label as the badge (e.g. 'PHUL', 'SL 5×5')
         const lib = isLibraryProgramme(prog) ? getLibraryProgramme(prog) : null;
         const badgeLabel = lib ? lib.short : prog;
         const titleLabel = dayName || (lib ? lib.name : prog);
+        // Equipment chip selector — only for HIIT series workouts. The chip
+        // selection lives on window._pendingSessionTier (per-session override).
+        // Tapping a chip re-renders Today so the active state updates AND
+        // the exercise preview reflects the chosen tier's swaps. Path default
+        // is untouched — picking 'gym' once doesn't permanently change the
+        // userPath.equipmentDefault.
+        let _equipChipsHtml = '';
+        if(_isSeriesCard){
+          const _activeTier = window._pendingSessionTier
+            || userPath.equipmentDefault
+            || 'home';
+          _equipChipsHtml = `
+              <div style="margin-bottom:14px;">
+                <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Equipment today</div>
+                <div style="display:flex;gap:6px;">
+                  ${EQUIP_TIERS.map(t => `
+                    <button onclick="selectPendingTier('${t.id}')"
+                      style="flex:1;background:${_activeTier===t.id?'rgba(255,140,66,0.12)':'var(--surface3)'};border:1px solid ${_activeTier===t.id?'var(--orange)':'var(--border)'};border-radius:10px;padding:8px 6px;font-size:11px;font-weight:700;color:${_activeTier===t.id?'var(--orange)':'var(--text2)'};cursor:pointer;text-align:center;">
+                      <div style="font-size:16px;line-height:1;">${t.icon}</div>
+                      <div style="margin-top:3px;">${t.label}</div>
+                    </button>
+                  `).join('')}
+                </div>
+              </div>`;
+        }
         html += `
           <div style="margin:16px 16px 0;">
             <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">TODAY'S PATH WORKOUT</div>
@@ -15596,6 +15870,7 @@ function renderTodayWithPath() {
                   <div style="font-size:12px;color:var(--text2);">${exs.length} exercises · ~${estMin} min</div>
                 </div>
               </div>
+              ${_equipChipsHtml}
               <!-- Exercise preview -->
               <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px;">
                 ${exs.slice(0,4).map(e =>
@@ -15695,6 +15970,10 @@ function _getCorePathDayNames(programme){
       ? ['Push A','Pull A','Legs A','Push B','Pull B','Legs B']
       : ['Push A','Pull A','Legs A'];
   }
+  // HIIT series — "day names" are the workout names in the series rotation.
+  if(programme === 'HIIT' && typeof isHIITSeriesPath === 'function' && isHIITSeriesPath()){
+    return HIIT_SERIES[userPath.hiitSeries].rotation.slice();
+  }
   if(typeof isLibraryProgramme === 'function' && isLibraryProgramme(programme)){
     const lib = getLibraryProgramme(programme);
     return lib ? lib.schedule.map(d => d.day) : null;
@@ -15739,8 +16018,36 @@ function _getPathCatchUpSuggestion(){
     return monIdx < todayMonIdx; // strictly before today
   }).length;
 
-  // Actual deficit = scheduled days passed but not yet matched by sessions.
-  const missed = Math.max(0, passedScheduledCount - completedCoreThisWeek);
+  let missed;
+  if(typeof isHIITSeriesPath === 'function' && isHIITSeriesPath()){
+    // Summer Series ethos: never nag on days she's logged other activity.
+    // The user also does Barry's, pilates, yoga etc. — if ANY session
+    // (manual activity OR Series workout) was logged on a scheduled day,
+    // that day counts as satisfied. Missed = passed preferred days with
+    // literally nothing logged.
+    const passedDayIndices = preferredDays
+      .map(name => dowNames.indexOf(name))
+      .filter(i => i >= 0 && ((i + 6) % 7) < todayMonIdx);
+
+    missed = passedDayIndices.filter(dowIdx => {
+      // Compute the date of this weekday in the current week.
+      const dayMonIdx = (dowIdx + 6) % 7;
+      const dayStart = new Date(wStart);
+      dayStart.setDate(wStart.getDate() + dayMonIdx);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayStart.getDate() + 1);
+      // Was anything (manual OR core) logged on that day?
+      const hadSomething = completedSessions.some(s => {
+        if(s.adhoc) return false; // adhoc extras don't satisfy a scheduled day
+        const d = s.date instanceof Date ? s.date : new Date(s.date);
+        return d >= dayStart && d < dayEnd;
+      });
+      return !hadSomething;
+    }).length;
+  } else {
+    // Default: deficit = scheduled days passed minus core sessions completed.
+    missed = Math.max(0, passedScheduledCount - completedCoreThisWeek);
+  }
   if(missed <= 0) return null;
 
   // Days left in week incl today (1..7)
@@ -15781,12 +16088,26 @@ function startCatchUpWorkout(){
     if(typeof startSessionULF === 'function') startSessionULF(c.suggestedDay);
   } else if(c.programme === 'PPL') {
     if(typeof startSession === 'function') startSession(c.suggestedDay, PPL);
+  } else if(c.programme === 'HIIT' && typeof HIIT_SERIES_NAMES !== 'undefined' && HIIT_SERIES_NAMES.has(c.suggestedDay)) {
+    // HIIT series catch-up — same routing as startPathSession's series branch.
+    const idx = (typeof getHIITIndexByName === 'function') ? getHIITIndexByName(c.suggestedDay) : -1;
+    if(idx >= 0 && typeof startHIIT === 'function') startHIIT(idx);
   } else if(typeof isLibraryProgramme === 'function' && isLibraryProgramme(c.programme)) {
     const lib = getLibraryProgramme(c.programme);
     if(lib && typeof startSession === 'function') {
       startSession(c.suggestedDay, getLibraryDayMap(lib));
     }
   }
+}
+
+// Returns true when the current Path is a HIIT series (e.g. Summer Series).
+// Freestyle HIIT Paths (no .hiitSeries field) return false and continue to
+// route via the add-on selector — existing behaviour is preserved.
+function isHIITSeriesPath() {
+  return !!(userPath
+    && userPath.programme === 'HIIT'
+    && userPath.hiitSeries
+    && HIIT_SERIES[userPath.hiitSeries]);
 }
 
 function getNextPathDay(programme) {
@@ -15803,6 +16124,16 @@ function getNextPathDay(programme) {
     const done = completedSessions.filter(s => !s.adhoc && Object.keys(PPL).includes(s.day)).length;
     return pplDays[done % pplDays.length];
   }
+  // HIIT series — rotate through HIIT_SERIES[id].rotation by completed-count,
+  // mirroring the library-programme branch. Only sessions whose `day` matches
+  // a name in the rotation count, so freestyle/adhoc HIIT logged on a Series
+  // Path won't skew the rotation. Adhoc sessions (manual extras) are ignored.
+  if(programme === 'HIIT' && isHIITSeriesPath()){
+    const series = HIIT_SERIES[userPath.hiitSeries];
+    const rotationSet = new Set(series.rotation);
+    const done = completedSessions.filter(s => !s.adhoc && rotationSet.has(s.day)).length;
+    return series.rotation[done % series.rotation.length];
+  }
   if(isLibraryProgramme(programme)){
     const lib = getLibraryProgramme(programme);
     if(!lib) return null;
@@ -15811,13 +16142,18 @@ function getNextPathDay(programme) {
     const done = completedSessions.filter(s => !s.adhoc && dayNameSet.has(s.day)).length;
     return dayNames[done % dayNames.length];
   }
-  return null; // HIIT handled via openAddOnSelector
+  return null; // Freestyle HIIT still handled via openAddOnSelector
 }
 
 function getExercisesForPathDay(programme, dayName) {
   if(!dayName) return [];
   if(programme === 'ULF') return getULFDay(dayName) || [];
   if(programme === 'PPL') return PPL[dayName] || [];
+  // HIIT series — dayName is the workout name; look up the HIIT entry.
+  if(programme === 'HIIT' && typeof HIIT_SERIES_NAMES !== 'undefined' && HIIT_SERIES_NAMES.has(dayName)){
+    const idx = getHIITIndexByName(dayName);
+    return idx >= 0 ? (HIIT[idx].exercises || []) : [];
+  }
   if(isLibraryProgramme(programme)){
     const lib = getLibraryProgramme(programme);
     if(!lib) return [];
@@ -15831,7 +16167,16 @@ function startPathSession(programme, dayName) {
   window._currentSessionIsAdhoc = false;
   if(programme === 'ULF') startSessionULF(dayName);
   else if(programme === 'PPL') startSession(dayName, PPL);
-  else if(programme === 'HIIT') openAddOnSelector('HIIT');
+  else if(programme === 'HIIT' && dayName && typeof HIIT_SERIES_NAMES !== 'undefined' && HIIT_SERIES_NAMES.has(dayName)){
+    // HIIT series Path — bridge name → HIIT array index, then hand off to
+    // the HIIT engine directly. If the lookup ever fails (e.g. workout
+    // renamed in code but localStorage still references the old name),
+    // fall back to the freestyle add-on selector so the user isn't stuck.
+    const idx = getHIITIndexByName(dayName);
+    if(idx >= 0) startHIIT(idx);
+    else openAddOnSelector('HIIT');
+  }
+  else if(programme === 'HIIT') openAddOnSelector('HIIT'); // freestyle (unchanged)
   else if(isLibraryProgramme(programme)){
     const lib = getLibraryProgramme(programme);
     if(!lib) return;
@@ -16491,6 +16836,13 @@ function _renderPathTabActive() {
   } else if(userPath.programme === 'PPL'){
     _coreWorkoutCycle = _pplCycle;
     _baseCoreSessionsDone = completedSessions.filter(s => !s.adhoc && Object.keys(PPL).includes(s.day)).length;
+  } else if(typeof isHIITSeriesPath === 'function' && isHIITSeriesPath()){
+    // HIIT series — the rotation IS the day cycle. Each scheduled day in
+    // the week-ahead schedule maps to the next workout in the rotation.
+    const _series = HIIT_SERIES[userPath.hiitSeries];
+    _coreWorkoutCycle = _series.rotation.slice();
+    const _seriesNames = new Set(_coreWorkoutCycle);
+    _baseCoreSessionsDone = completedSessions.filter(s => !s.adhoc && _seriesNames.has(s.day)).length;
   } else if(isLibraryProgramme(userPath.programme)){
     const _lib = getLibraryProgramme(userPath.programme);
     if(_lib){
@@ -16501,7 +16853,11 @@ function _renderPathTabActive() {
   }
   // Friendly programme label (used as fallback in schedule rows)
   const _libCurrent = isLibraryProgramme(userPath.programme) ? getLibraryProgramme(userPath.programme) : null;
-  const _progDisplay = _libCurrent ? _libCurrent.short : userPath.programme;
+  const _seriesCurrent = (typeof isHIITSeriesPath === 'function' && isHIITSeriesPath())
+    ? HIIT_SERIES[userPath.hiitSeries] : null;
+  const _progDisplay = _libCurrent ? _libCurrent.short
+                     : _seriesCurrent ? _seriesCurrent.name
+                     : userPath.programme;
   // ── HIIT add-on recommendation via muscle imbalance ──
   // Pull HIIT workouts done in the last 14 days so the path doesn't recommend
   // something the user just completed — that's a major source of week-to-week
@@ -16811,7 +17167,15 @@ function openPathWizard() {
     variant: userPath ? userPath.coreSchedule.variant : 'standard',
     daysPerWeek: userPath ? userPath.coreSchedule.daysPerWeek : 3,
     coreDays: userPath ? [...userPath.coreSchedule.preferredDays] : [],
-    addOns: userPath ? userPath.addOns.map(a => ({...a, days: [...a.preferredDays]})) : []
+    addOns: userPath ? userPath.addOns.map(a => ({...a, days: [...a.preferredDays]})) : [],
+    // HIIT-only — which HIIT variant the user chose. null = freestyle (current
+    // behaviour: pick any HIIT workout on the day). 'summer-series' etc. = a
+    // fixed rotation routed through the HIIT engine.
+    hiitSeries: userPath ? (userPath.hiitSeries || null) : null,
+    // Default training environment for the Path. Drives the Summer Series
+    // homeSwap/gymSwap resolution at session start. Per-session override
+    // lives on window._pendingSessionTier (Today card chip).
+    equipmentDefault: userPath ? (userPath.equipmentDefault || 'home') : 'home'
   };
   // Show only step 1, hide the rest
   for(let i = 1; i <= 5; i++){
@@ -16867,6 +17231,14 @@ function confirmStartPath() {
       preferredDays: _pathWizard.coreDays,
       variant: _pathWizard.variant
     },
+    // HIIT series id when this is a series Path. Stored only when set so
+    // older payloads round-trip cleanly without the field appearing.
+    ...( _pathWizard.hiitSeries ? { hiitSeries: _pathWizard.hiitSeries } : {} ),
+    // Equipment default — only persisted for HIIT paths (the only place it
+    // currently affects behaviour). Falls back to 'home' if missing on load.
+    ...( _pathWizard.programme === 'HIIT'
+         ? { equipmentDefault: _pathWizard.equipmentDefault || 'home' }
+         : {} ),
     addOns: _pathWizard.addOns.map(a => ({
       type: a.type,
       frequency: a.frequency,
@@ -16884,7 +17256,11 @@ function confirmStartPath() {
   renderToday();
   setTimeout(() => {
     const _lib = isLibraryProgramme(userPath.programme) ? getLibraryProgramme(userPath.programme) : null;
-    const _name = _lib ? _lib.name : userPath.programme;
+    let _name = _lib ? _lib.name : userPath.programme;
+    // Replace generic 'HIIT' with the series name when this is a series Path.
+    if(userPath.hiitSeries && HIIT_SERIES[userPath.hiitSeries]){
+      _name = HIIT_SERIES[userPath.hiitSeries].name;
+    }
     showToast('🎯 Path started! ' + _name + ' · ' + userPath.duration + ' weeks. Let\'s go! 💪');
   }, 400);
 }
@@ -17079,6 +17455,46 @@ function renderPathStep1() {
   ];
   // If currently selected programme is a library one, show its name in the library tile
   const libSelected = isLibraryProgramme(_pathWizard.programme) ? getLibraryProgramme(_pathWizard.programme) : null;
+
+  // HIIT sub-choice — only rendered when HIIT is the active selection.
+  // The user picks Summer Series (fixed rotation, routes via HIIT engine)
+  // or Freestyle (current behaviour: pick a workout on the day). Default
+  // is Freestyle so existing flows are preserved.
+  let hiitSubChoiceHtml = '';
+  if(_pathWizard.programme === 'HIIT'){
+    const isSeries = !!_pathWizard.hiitSeries;
+    const series = HIIT_SERIES['summer-series'];
+    hiitSubChoiceHtml = `
+      <div style="margin:6px 0 14px;padding:14px;background:var(--surface2);border:1px solid rgba(255,140,66,0.25);border-radius:14px;">
+        <div style="font-size:11px;font-weight:800;color:var(--orange);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;">⚡ HIIT Variant</div>
+        <div class="path-prog-card ${isSeries ? 'selected' : ''}"
+             onclick="selectHIITSeries('summer-series')"
+             style="margin-bottom:8px;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div style="font-size:28px;">🌴</div>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:15px;font-weight:800;color:var(--text);">${series.name}
+                <span style="font-size:11px;color:var(--orange);font-weight:700;margin-left:4px;">${series.subtitle}</span>
+              </div>
+              <div style="font-size:12px;color:var(--text2);margin-top:3px;line-height:1.35;">${series.blurb}</div>
+            </div>
+            <div style="font-size:18px;color:var(--accent);flex-shrink:0;">${isSeries ? '✓' : ''}</div>
+          </div>
+        </div>
+        <div class="path-prog-card ${!isSeries ? 'selected' : ''}"
+             onclick="selectHIITSeries(null)">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div style="font-size:28px;">🎯</div>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:15px;font-weight:800;color:var(--text);">Freestyle HIIT</div>
+              <div style="font-size:12px;color:var(--text2);margin-top:3px;line-height:1.35;">Pick any HIIT workout on the day — Garry's, AMRAP, EMOM, Tabata, classics.</div>
+            </div>
+            <div style="font-size:18px;color:var(--accent);flex-shrink:0;">${!isSeries ? '✓' : ''}</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
   document.getElementById('pathStep1').innerHTML = `
     <div style="font-size:22px;font-weight:900;margin-bottom:6px;">Choose Your Path</div>
     <div style="font-size:14px;color:var(--text2);margin-bottom:20px;">
@@ -17098,6 +17514,7 @@ function renderPathStep1() {
           <div style="font-size:18px;color:var(--accent);">${_pathWizard.programme === p.id ? '✓' : ''}</div>
         </div>
       </div>
+      ${p.id === 'HIIT' ? hiitSubChoiceHtml : ''}
     `).join('')}
     <!-- Programme Library entry -->
     <div class="path-prog-card ${libSelected ? 'selected' : ''}" onclick="openLibraryBrowse()"
@@ -17128,6 +17545,31 @@ function renderPathStep1() {
   `;
 }
 
+// Set the Path's default equipment tier from the wizard review screen.
+// Validated against the EQUIP_TIERS registry; ignores unknown ids.
+function selectWizardEquipDefault(tier){
+  if(!EQUIP_TIERS.some(t => t.id === tier)) return;
+  _pathWizard.equipmentDefault = tier;
+  renderPathStep5();
+}
+
+// Toggle the HIIT variant choice. Passing 'summer-series' (or any registered
+// series id) sets Summer Series — and applies its recommended defaults so the
+// later wizard steps land on sensible values. Passing null reverts to
+// Freestyle. No-op if the current programme isn't HIIT.
+function selectHIITSeries(seriesId){
+  if(_pathWizard.programme !== 'HIIT') return;
+  if(seriesId && !HIIT_SERIES[seriesId]) return;
+  _pathWizard.hiitSeries = seriesId || null;
+  if(seriesId){
+    const s = HIIT_SERIES[seriesId];
+    // Seed sensible defaults — user can still change in later steps.
+    if(s.defaultDaysPerWeek) _pathWizard.daysPerWeek = s.defaultDaysPerWeek;
+    if(s.defaultDuration)    _pathWizard.duration    = s.defaultDuration;
+  }
+  renderPathStep1();
+}
+
 function skipPathWizard() {
   localStorage.setItem('maxgainz_path_skipped', '1');
   _pathWizardAutoOpened = false;
@@ -17137,10 +17579,12 @@ function skipPathWizard() {
 
 function selectPathProgramme(prog) {
   _pathWizard.programme = prog;
-  // Picking a built-in clears any library-specific state
-  if(prog === 'ULF')  { _pathWizard.daysPerWeek = 3; _pathWizard.variant = 'standard'; _pathWizard.coreDays = []; _pathWizard.addOns = []; }
-  if(prog === 'PPL')  { _pathWizard.daysPerWeek = 3; _pathWizard.variant = '3day';    _pathWizard.coreDays = []; _pathWizard.addOns = []; }
-  if(prog === 'HIIT') { _pathWizard.daysPerWeek = 3; _pathWizard.variant = 'standard'; _pathWizard.coreDays = []; _pathWizard.addOns = []; }
+  // Picking a built-in clears any library-specific state. Picking anything
+  // other than HIIT also clears the series sub-choice so we don't carry
+  // a stale value between switches.
+  if(prog === 'ULF')  { _pathWizard.daysPerWeek = 3; _pathWizard.variant = 'standard'; _pathWizard.coreDays = []; _pathWizard.addOns = []; _pathWizard.hiitSeries = null; }
+  if(prog === 'PPL')  { _pathWizard.daysPerWeek = 3; _pathWizard.variant = '3day';    _pathWizard.coreDays = []; _pathWizard.addOns = []; _pathWizard.hiitSeries = null; }
+  if(prog === 'HIIT') { _pathWizard.daysPerWeek = 3; _pathWizard.variant = 'standard'; _pathWizard.coreDays = []; _pathWizard.addOns = []; /* hiitSeries kept — preserves prior choice when reselecting HIIT; defaults to null on first pick */ }
   renderPathStep1();
 }
 
@@ -17366,15 +17810,43 @@ function renderPathStep5() {
   const totalPerWeek = _pathWizard.daysPerWeek +
     _pathWizard.addOns.reduce((s, a) => s + a.frequency, 0);
 
-  // Display name: library programmes show their full name, built-ins show their short code
+  // Display name: library programmes show their full name, built-ins show their short code.
+  // Series Paths show the series name (e.g. "Summer Series") instead of "HIIT".
   const lib = isLibraryProgramme(_pathWizard.programme) ? getLibraryProgramme(_pathWizard.programme) : null;
-  const displayName = lib ? lib.name : _pathWizard.programme;
+  const wizardSeries = (_pathWizard.programme === 'HIIT' && _pathWizard.hiitSeries && HIIT_SERIES[_pathWizard.hiitSeries])
+    ? HIIT_SERIES[_pathWizard.hiitSeries] : null;
+  const displayName = lib ? lib.name : wizardSeries ? wizardSeries.name : _pathWizard.programme;
+
+  // Equipment default — only surfaced on HIIT paths today, since that's
+  // where the homeSwap/gymSwap resolution applies. ULF/PPL/library paths
+  // don't need it. Defaults to 'home'.
+  let equipBlockHtml = '';
+  if(_pathWizard.programme === 'HIIT'){
+    const _active = _pathWizard.equipmentDefault || 'home';
+    equipBlockHtml = `
+      <div style="margin-bottom:20px;padding:14px;background:var(--surface2);border:1px solid rgba(255,140,66,0.25);border-radius:14px;">
+        <div style="font-size:11px;font-weight:800;color:var(--orange);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:4px;">Where will you mostly train?</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.4;">We'll tailor exercises to your kit. You can change this any session via the chip on the Today card.</div>
+        <div style="display:flex;gap:6px;">
+          ${EQUIP_TIERS.map(t => `
+            <button onclick="selectWizardEquipDefault('${t.id}')"
+              style="flex:1;background:${_active===t.id?'rgba(255,140,66,0.18)':'var(--surface3)'};border:1px solid ${_active===t.id?'var(--orange)':'var(--border)'};border-radius:10px;padding:10px 6px;font-size:11px;font-weight:700;color:${_active===t.id?'var(--orange)':'var(--text2)'};cursor:pointer;text-align:center;">
+              <div style="font-size:18px;line-height:1;">${t.icon}</div>
+              <div style="margin-top:4px;">${t.label}</div>
+              <div style="font-size:9px;font-weight:500;opacity:0.7;margin-top:2px;line-height:1.2;">${t.desc}</div>
+            </button>
+          `).join('')}
+        </div>
+      </div>`;
+  }
+
   document.getElementById('pathStep5').innerHTML = `
     <div style="text-align:center;margin-bottom:24px;">
       <div style="font-size:48px;margin-bottom:10px;">🎯</div>
       <div style="font-size:24px;font-weight:900;color:var(--text);">Your Path</div>
       <div style="font-size:14px;color:var(--text2);margin-top:6px;">Ready to commit?</div>
     </div>
+    ${equipBlockHtml}
     <div style="background:var(--surface2);border:1px solid var(--border);border-radius:16px;padding:18px;margin-bottom:20px;">
       <div style="display:flex;flex-direction:column;gap:12px;">
         <div style="display:flex;justify-content:space-between;">
