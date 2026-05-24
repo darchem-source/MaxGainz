@@ -1208,11 +1208,11 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
   <div class="modal" style="max-height:92vh;overflow-y:auto;padding:20px;">
     <div class="modal-handle"></div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-      <div style="font-size:22px;font-weight:900;">📚 Programme Library</div>
+      <div style="font-size:22px;font-weight:900;">🏋️ Strength</div>
       <button onclick="closeLibraryBrowse()" style="background:transparent;border:none;color:var(--text2);font-size:22px;cursor:pointer;padding:4px 8px;line-height:1;">✕</button>
     </div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:14px;">
-      Browse curated, well-known programmes from the strength community.
+      ULF and PPL built-ins plus curated, well-known programmes from the strength community.
     </div>
     <!-- Filter chips -->
     <div id="libFilterChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;"></div>
@@ -9794,7 +9794,7 @@ const HIIT=[
     {name:"Russian Twists",sets:4,reps:"40s",weight:8}
   ]},
 
-  // ── SUMMER SERIES ── (Hot Girl Athletic Club — non-cardio, core-focused toning)
+  // ── SUMMER SERIES ── (Hot Girl Summer — non-cardio, core-focused toning)
   // Each exercise's base shape is the "minimal" (bodyweight) variant.
   // Optional `homeSwap` / `gymSwap` fields are partial overrides applied by
   // _resolveSummerSeriesExercise() when the session starts. A swap can
@@ -9920,7 +9920,7 @@ const HIIT_SERIES = {
   'summer-series': {
     id: 'summer-series',
     name: 'Summer Series',
-    subtitle: 'Hot Girl Athletic Club',
+    subtitle: 'Hot Girl Summer',
     blurb: 'Non-cardio, core-focused toning — built to run alongside your other training.',
     description: '7 floor/strength-paced workouts on rotation: core foundations, obliques, lower-body toning, upper-body sculpt, and a longer full-floor burn. No cardio — designed to stack with classes, pilates, runs etc.',
     defaultDuration: 8,
@@ -17331,6 +17331,26 @@ function _libGoalMatches(progGoal){
   return true;
 }
 
+// Built-in strength programmes (ULF, PPL) live at the top of the Strength
+// picker so they appear alongside curated library programmes — the user
+// shouldn't have to know they're implemented differently.
+const _BUILTIN_STRENGTH = [
+  { id:'ULF', icon:'🏋️', name:'ULF', tag:'Upper · Lower · Full Body',
+    blurb:'3 days/week · Strength & balance · Best for beginners to intermediate',
+    level:'Beginner', goal:'Strength', daysPerWeek:3, equipment:'Barbell or DB' },
+  { id:'PPL', icon:'💪', name:'PPL', tag:'Push · Pull · Legs',
+    blurb:'3 or 6 days/week · Higher volume · Best for intermediate to advanced',
+    level:'Intermediate', goal:'Hypertrophy', daysPerWeek:6, equipment:'Barbell or DB' }
+];
+
+// Tapping a built-in tile in the Strength picker selects that programme and
+// dismisses the modal — same end state as if the user had picked it from a
+// hypothetical "ULF / PPL" tile at the top of Step 1 before this redesign.
+function selectBuiltInStrength(prog){
+  selectPathProgramme(prog);
+  closeLibraryBrowse();
+}
+
 function renderLibraryCards(){
   const matches = LIBRARY_PROGRAMMES.filter(p => {
     if(!_libGoalMatches(p.goal)) return false;
@@ -17338,12 +17358,49 @@ function renderLibraryCards(){
     if(_libFilters.days !== 'all' && p.daysPerWeek !== _libFilters.days) return false;
     return true;
   });
+  // Built-ins also respect the filter chips. ULF/PPL show only when their
+  // level/goal/days values match the active filters — keeps the picker
+  // consistent so "Advanced strength 6×" doesn't surface a beginner tile.
+  const builtIns = _BUILTIN_STRENGTH.filter(p => {
+    if(!_libGoalMatches(p.goal)) return false;
+    if(_libFilters.level !== 'all' && !p.level.startsWith(_libFilters.level)) return false;
+    if(_libFilters.days !== 'all' && p.daysPerWeek !== _libFilters.days) return false;
+    return true;
+  });
   const el = document.getElementById('libCards');
-  if(!matches.length){
+  if(!matches.length && !builtIns.length){
     el.innerHTML = `<div style="text-align:center;padding:30px 16px;color:var(--text2);font-size:13px;">No programmes match those filters. <a onclick="setLibFilter('goal','all');setLibFilter('level','all');setLibFilter('days','all')" style="color:var(--accent);cursor:pointer;font-weight:700;">Clear all</a></div>`;
     return;
   }
-  el.innerHTML = matches.map(p => `
+
+  const builtInHtml = builtIns.length ? `
+    <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin:2px 4px 8px;">Built-in</div>
+    ${builtIns.map(p => `
+      <div onclick="selectBuiltInStrength('${p.id}')"
+        style="background:var(--surface2);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:10px;cursor:pointer;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px;">
+          <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">
+            <div style="font-size:24px;">${p.icon}</div>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:16px;font-weight:800;color:var(--text);">${p.name}
+                <span style="font-size:11px;color:var(--accent);font-weight:700;margin-left:4px;">${p.tag}</span>
+              </div>
+              <div style="font-size:11px;color:var(--text2);margin-top:2px;">${p.blurb}</div>
+            </div>
+          </div>
+          <div style="font-size:18px;color:var(--text2);flex-shrink:0;">›</div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:5px;">
+          <span style="background:rgba(200,255,0,0.10);color:var(--accent);font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;">${p.level}</span>
+          <span style="background:var(--surface3);color:var(--text2);font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;">${p.goal}</span>
+          <span style="background:var(--surface3);color:var(--text2);font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;">${p.daysPerWeek}× / week</span>
+        </div>
+      </div>
+    `).join('')}
+    ${matches.length ? `<div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin:14px 4px 8px;">Curated classics</div>` : ''}
+  ` : '';
+
+  el.innerHTML = builtInHtml + matches.map(p => `
     <div onclick="openLibraryPreview('${p.id}')"
       style="background:var(--surface2);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:10px;cursor:pointer;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px;">
@@ -17445,16 +17502,38 @@ function adoptLibraryProgramme(id){
 
 // ── Step 1: Choose Programme ──
 function renderPathStep1() {
+  // Top-level shows two tracks: HIIT (with its own sub-choice when picked)
+  // and Strength (a meta-tile that opens the picker containing ULF, PPL,
+  // and curated library programmes). ULF and PPL are no longer surfaced
+  // as primary tiles — they live one tap deeper inside Strength.
   const programmes = [
-    { id:'ULF', icon:'🏋️', name:'ULF', subtitle:'Upper · Lower · Full Body',
-      desc:'3 days/week · Strength & balance · Best for beginners to intermediate', colour:'var(--accent)' },
-    { id:'PPL', icon:'💪', name:'PPL', subtitle:'Push · Pull · Legs',
-      desc:'3 or 6 days/week · Higher volume · Best for intermediate to advanced', colour:'var(--purple)' },
     { id:'HIIT', icon:'⚡', name:'HIIT', subtitle:'Guided cardio + strength',
       desc:'2–5 days/week · Burn & tone · Best for cardio lovers', colour:'var(--orange)' }
   ];
-  // If currently selected programme is a library one, show its name in the library tile
-  const libSelected = isLibraryProgramme(_pathWizard.programme) ? getLibraryProgramme(_pathWizard.programme) : null;
+
+  // "Strength" tile selected state — any of ULF / PPL / library programme.
+  // Display follows whichever is picked, falling back to the generic
+  // "pick a strength programme" copy when nothing is set.
+  const _strengthSelected = ['ULF','PPL'].includes(_pathWizard.programme)
+    || isLibraryProgramme(_pathWizard.programme);
+  const lib = isLibraryProgramme(_pathWizard.programme) ? getLibraryProgramme(_pathWizard.programme) : null;
+  let _strengthTitle, _strengthDesc;
+  if(lib){
+    _strengthTitle = lib.name;
+    _strengthDesc  = lib.blurb;
+  } else if(_pathWizard.programme === 'ULF'){
+    _strengthTitle = 'Strength · ULF';
+    _strengthDesc  = 'Upper · Lower · Full Body · 3 days/week';
+  } else if(_pathWizard.programme === 'PPL'){
+    _strengthTitle = 'Strength · PPL';
+    _strengthDesc  = 'Push · Pull · Legs · 3 or 6 days/week';
+  } else {
+    _strengthTitle = 'Strength';
+    _strengthDesc  = 'ULF · PPL · 5/3/1 · StrongLifts · PHUL · PHAT · Arnold · Bro Split & more';
+  }
+  // Keep `libSelected` alive for the existing flag-style check used below
+  // — we only use it to control the ✓ glyph on the meta-tile.
+  const libSelected = _strengthSelected;
 
   // HIIT sub-choice — only rendered when HIIT is the active selection.
   // The user picks Summer Series (fixed rotation, routes via HIIT engine)
@@ -17516,21 +17595,19 @@ function renderPathStep1() {
       </div>
       ${p.id === 'HIIT' ? hiitSubChoiceHtml : ''}
     `).join('')}
-    <!-- Programme Library entry -->
-    <div class="path-prog-card ${libSelected ? 'selected' : ''}" onclick="openLibraryBrowse()"
-      style="background:linear-gradient(135deg,rgba(200,255,0,0.06),rgba(123,77,255,0.06));border-color:${libSelected?'var(--accent)':'rgba(200,255,0,0.3)'};">
+    <!-- Strength meta-tile — opens the Strength picker (ULF + PPL + library) -->
+    <div class="path-prog-card ${_strengthSelected ? 'selected' : ''}" onclick="openLibraryBrowse()"
+      style="background:linear-gradient(135deg,rgba(200,255,0,0.06),rgba(123,77,255,0.06));border-color:${_strengthSelected?'var(--accent)':'rgba(200,255,0,0.3)'};">
       <div style="display:flex;align-items:center;gap:12px;">
-        <div style="font-size:32px;">📚</div>
-        <div style="flex:1;">
+        <div style="font-size:32px;">🏋️</div>
+        <div style="flex:1;min-width:0;">
           <div style="font-size:16px;font-weight:800;color:var(--text);">
-            ${libSelected ? libSelected.name : 'Programme Library'}
-            <span style="font-size:12px;color:var(--accent);font-weight:700;margin-left:6px;">${libSelected ? '✓ Selected' : 'Browse classics'}</span>
+            ${_strengthTitle}
+            ${_strengthSelected ? '<span style="font-size:12px;color:var(--accent);font-weight:700;margin-left:6px;">✓ Selected</span>' : ''}
           </div>
-          <div style="font-size:12px;color:var(--text2);margin-top:3px;">
-            ${libSelected ? libSelected.blurb : '5/3/1 · StrongLifts · PHUL · PHAT · Arnold · Bro Split & more'}
-          </div>
+          <div style="font-size:12px;color:var(--text2);margin-top:3px;">${_strengthDesc}</div>
         </div>
-        <div style="font-size:18px;color:var(--accent);">${libSelected ? '✓' : '›'}</div>
+        <div style="font-size:18px;color:var(--accent);flex-shrink:0;">${_strengthSelected ? '✓' : '›'}</div>
       </div>
     </div>
     <button class="btn-p" style="width:100%;margin-top:8px;"
