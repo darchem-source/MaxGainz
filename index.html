@@ -2428,6 +2428,25 @@ const EXDB=[
   {name:'Bear Crawl Reverse',cat:'hiit',type:'hiit',muscles:['core','shoulders','legs'],muscleGroup:'fullbody',diff:2,equip:'Bodyweight',sets:'3',reps:'10–15m',bw:true,benefits:'Backwards bear crawl — adds coordination challenge and quad emphasis to the standard pattern',cues:['Knees hover off ground','Move in reverse','Hips stay low','Smooth coordination'],joints:['shoulder','hip','knee'],alts:['Bear Crawl','Inchworm','Mountain Climbers'],intensity:'mod',impact:'low',space:'medium'},
   {name:'Spider Lunge',cat:'hiit',type:'hiit',muscles:['legs','core','hips'],muscleGroup:'fullbody',diff:1,equip:'Bodyweight',sets:'3',reps:'8–12 each side',bw:true,benefits:'Deep hip mobility plus core engagement — perfect HIIT warm-up movement',cues:['Step foot outside same hand','Lower hips to open up','Keep back leg long','Alternate sides'],joints:['hip','knee','spine'],alts:['Inchworm','Bear Crawl','Reverse Lunge with Knee Drive'],intensity:'low',impact:'low',space:'small'},
   {name:'Reverse Lunge with Knee Drive',cat:'legs',type:'hiit',muscles:['legs','glutes','core'],muscleGroup:'legs',diff:2,equip:'Bodyweight',sets:'3',reps:'10–12 each side',bw:true,benefits:'Single-leg balance plus knee drive — develops unilateral strength and stability without jumping',cues:['Step back into lunge','Drive back knee up to chest','Stay tall throughout','Don\'t touch floor between reps'],joints:['hip','knee','ankle'],alts:['Step-Ups','Jump Lunges','Single-Leg Hops'],intensity:'mod',impact:'low',space:'small'},
+  // ── Summer Series core/toning additions ──
+  // Added to support the "Summer Series" HIIT Path. These are non-cardio,
+  // floor-paced moves that also surface in the swap modal (filtered by
+  // muscle group) and in the exercise browser.
+  {name:'Side Plank Dips',cat:'core',type:'hiit',muscles:['core','obliques'],muscleGroup:'core',diff:2,equip:'Bodyweight',sets:'3',reps:'10–15 each side',bw:true,benefits:'Dynamic oblique work — adds movement to the static side plank for extra waist sculpting',cues:['Stack feet','Drop hip just below the line','Press back up to a tall side plank','Slow controlled tempo'],joints:['shoulder','spine','hip'],alts:['Side Plank','Russian Twists','Bicycle Crunch'],intensity:'low',impact:'low',space:'small'},
+  {name:'Woodchoppers',cat:'core',type:'hiit',muscles:['core','obliques','shoulders'],muscleGroup:'core',diff:2,equip:'Bodyweight, dumbbell or cable',sets:'3',reps:'10–12 each side',bw:true,benefits:'Diagonal rotation under load — trains the core in the chop pattern that real life actually demands',cues:['Pivot back foot as you rotate','Drive from the hip not the arms','Eyes follow the load','Smooth controlled return'],joints:['shoulder','spine','hip'],alts:['Russian Twists','Side Plank','Pallof Press'],intensity:'mod',impact:'low',space:'small'},
+  {name:'Heel Taps',cat:'core',type:'hiit',muscles:['core','obliques'],muscleGroup:'core',diff:1,equip:'Bodyweight',sets:'3',reps:'30–45s',bw:true,benefits:'Side-to-side oblique reach — short range, high reps, big finisher pump',cues:['Shoulders just off the floor','Reach hand toward heel','Squeeze the side that\'s working','Steady rhythm'],joints:['spine'],alts:['Russian Twists','Bicycle Crunch','Side Plank'],intensity:'low',impact:'low',space:'small'},
+  {name:'Plank Shoulder Taps',cat:'core',type:'hiit',muscles:['core','shoulders'],muscleGroup:'core',diff:2,equip:'Bodyweight',sets:'3',reps:'20–30 reps',bw:true,benefits:'Anti-rotation core work — every tap forces stabilisers to fire to keep the hips square',cues:['Wide stance feet for stability','Tap opposite shoulder','Don\'t let hips rock','Slow over fast'],joints:['shoulder','spine'],alts:['Plank','Renegade Rows','Side Plank'],intensity:'low',impact:'low',space:'small'},
+  {name:'Pike Push-Ups',cat:'push',type:'hiit',muscles:['shoulders','triceps','core'],muscleGroup:'push',diff:3,equip:'Bodyweight',sets:'3',reps:'8–12',bw:true,benefits:'Bodyweight overhead press pattern — builds shoulder strength without dumbbells',cues:['Hips high — inverted V shape','Lower head between hands','Press straight up','Elbows track forward not flared'],joints:['shoulder','elbow'],alts:['Push-Ups','Dumbbell Curl-to-Press','Handstand Push-Up Negatives'],intensity:'mod',impact:'low',space:'small'},
+  {name:'Dumbbell Curl-to-Press',cat:'push',type:'hiit',muscles:['shoulders','biceps'],muscleGroup:'push',diff:1,equip:'Dumbbells',sets:'3',reps:'10–12',benefits:'Two-for-one — biceps on the way up, shoulders to finish. Combo move for fast arm pumps',cues:['Curl with control','Rotate palms forward at the top','Press straight overhead','Reverse the path on the way down'],joints:['elbow','shoulder'],alts:['Dumbbell Shoulder Press','Pike Push-Ups','Push Press'],intensity:'mod',impact:'low',space:'small'},
+  {name:'Squat Hold',cat:'legs',type:'hiit',muscles:['legs','glutes','core'],muscleGroup:'legs',diff:1,equip:'Bodyweight',sets:'3',reps:'30–45s',bw:true,benefits:'Isometric quad and glute burn — no impact, no weight, instant lower-body work',cues:['Sink to parallel','Chest tall','Knees track over toes','Breathe through the burn'],joints:['knee','hip','ankle'],alts:['Goblet Squat Hold','Wall Sit','Reverse Lunge Hold'],intensity:'low',impact:'low',space:'small'},
+  {name:'Goblet Squat Hold',cat:'legs',type:'hiit',muscles:['legs','glutes','core'],muscleGroup:'legs',diff:2,equip:'Dumbbell or kettlebell',sets:'3',reps:'30–45s',benefits:'Weighted squat hold — adds upper-back and core demand on top of the iso leg burn',cues:['Bell at chest','Elbows tucked','Sink low and stay tall','Drive knees out'],joints:['knee','hip','shoulder'],alts:['Squat Hold','Wall Sit','Reverse Lunge Hold'],intensity:'mod',impact:'low',space:'small'},
+  {name:'Single-Leg Glute Bridge',cat:'legs',type:'hiit',muscles:['glutes','core'],muscleGroup:'legs',diff:2,equip:'Bodyweight',sets:'3',reps:'10–15 each side',bw:true,benefits:'Unilateral glute work — exposes side-to-side weakness the two-leg bridge hides',cues:['Other leg extended straight','Drive heel into floor','Squeeze glute hard at top','Hips stay level — no sag'],joints:['hip','knee'],alts:['Glute Bridge','Donkey Kicks','Hip Thrust'],intensity:'low',impact:'low',space:'small'},
+  {name:'Wall Sit',cat:'legs',type:'hiit',muscles:['legs','glutes'],muscleGroup:'legs',diff:1,equip:'Wall',sets:'3',reps:'30–60s',bw:true,benefits:'Pure isometric quad burn — easy on the joints, brutal on the legs',cues:['Back flat against wall','Knees at 90°','Heels under knees','Hold the breath fight'],joints:['knee','hip'],alts:['Squat Hold','Goblet Squat Hold','Reverse Lunge Hold'],intensity:'low',impact:'low',space:'small'},
+  {name:'Donkey Kicks',cat:'legs',type:'hiit',muscles:['glutes','core'],muscleGroup:'legs',diff:1,equip:'Bodyweight',sets:'3',reps:'15–20 each side',bw:true,benefits:'Quadruped glute isolation — direct glute med/max work with no equipment',cues:['Knee stays bent at 90°','Drive heel toward ceiling','Squeeze at the top','Don\'t arch the lower back'],joints:['hip','knee'],alts:['Glute Bridge','Single-Leg Glute Bridge','Bird Dog'],intensity:'low',impact:'low',space:'small'},
+  {name:'Reverse Lunge Hold',cat:'legs',type:'hiit',muscles:['legs','glutes','core'],muscleGroup:'legs',diff:1,equip:'Bodyweight',sets:'3',reps:'30–45s each side',bw:true,benefits:'Static split squat — single-leg quad and glute burn without the unilateral coordination demand',cues:['Step back into lunge','Drop back knee toward floor','Front shin vertical','Hold tall and breathe'],joints:['knee','hip','ankle'],alts:['Wall Sit','Squat Hold','Bulgarian Split Squat'],intensity:'low',impact:'low',space:'small'},
+  {name:'Arm Circles',cat:'push',type:'hiit',muscles:['shoulders'],muscleGroup:'push',diff:1,equip:'Bodyweight',sets:'3',reps:'30s',bw:true,benefits:'Shoulder warm-up that turns into a burner past 20 seconds — perfect AMRAP filler',cues:['Arms straight out to the sides','Small fast circles','Switch direction halfway','Don\'t shrug — let arms hang from shoulders'],joints:['shoulder'],alts:['Dumbbell Lateral Raises','Push-Ups','Pike Push-Ups'],intensity:'low',impact:'low',space:'small'},
+  {name:'Plank Rows',cat:'pull',type:'hiit',muscles:['back','core','shoulders'],muscleGroup:'pull',diff:2,equip:'Bodyweight or dumbbells',sets:'3',reps:'12–16',benefits:'Plank-position row — anti-rotation core demand on top of every rep',cues:['Wide foot stance','Row one arm at a time','Hips stay square — don\'t rotate','Slow control on the way down'],joints:['shoulder','spine','hip'],alts:['Renegade Rows','Plank Shoulder Taps','Dumbbell Row'],intensity:'mod',impact:'low',space:'small'},
+  {name:'Plank Up-Downs',cat:'core',type:'hiit',muscles:['core','shoulders','triceps'],muscleGroup:'core',diff:2,equip:'Bodyweight',sets:'3',reps:'30–45s',bw:true,benefits:'Forearm-to-high-plank transitions — combo core + tricep finisher',cues:['Lead with the same arm each rep','Switch lead halfway','Hips stay still','Smooth not crashing'],joints:['shoulder','elbow','spine'],alts:['Plank','Push-Ups','Plank Shoulder Taps'],intensity:'mod',impact:'low',space:'small'},
 ];
 
 // ── SUPABASE CONFIG ──
@@ -9773,6 +9792,87 @@ const HIIT=[
     {name:"Dead Bug",sets:4,reps:"40s",weight:0,bw:true},
     {name:"Hollow Body Hold",sets:4,reps:"30s",weight:0,bw:true},
     {name:"Russian Twists",sets:4,reps:"40s",weight:8}
+  ]},
+
+  // ── SUMMER SERIES ── (Hot Girl Athletic Club — non-cardio, core-focused toning)
+  // Each exercise's base shape is the "minimal" (bodyweight) variant.
+  // Optional `homeSwap` / `gymSwap` fields are partial overrides applied by
+  // _resolveSummerSeriesExercise() when the session starts. A swap can
+  // change just the weight (still the same move) or fully replace the move
+  // (different name + reps). The swap fields are stripped from the
+  // resolved object so they never reach the engine or session log.
+  {name:"Summer Series · Core Ignite",duration:18,diff:2,format:"Core/Timed",
+   series:"summer-series",
+   desc:"Pure abs foundation. 3 rounds, ~15s rest between exercises.",exercises:[
+    {name:"Plank",sets:3,reps:"45s",weight:0,bw:true},
+    {name:"Dead Bug",sets:3,reps:"40s",weight:0,bw:true},
+    {name:"Hollow Body Hold",sets:3,reps:"30s",weight:0,bw:true},
+    {name:"Bicycle Crunches",sets:3,reps:"40s",weight:0,bw:true},
+    {name:"Leg Raises",sets:3,reps:"40s",weight:0,bw:true},
+    {name:"Russian Twists",sets:3,reps:"40s",weight:0,bw:true,homeSwap:{weight:5},gymSwap:{weight:10}}
+  ]},
+  {name:"Summer Series · Oblique Cut",duration:16,diff:2,format:"Core/Timed",
+   series:"summer-series",
+   desc:"Rotational and lateral core. 3 rounds.",exercises:[
+    {name:"Side Plank (Left)",sets:3,reps:"30s",weight:0,bw:true},
+    {name:"Side Plank (Right)",sets:3,reps:"30s",weight:0,bw:true},
+    {name:"Side Plank Dips (Left)",sets:3,reps:"30s",weight:0,bw:true},
+    {name:"Side Plank Dips (Right)",sets:3,reps:"30s",weight:0,bw:true},
+    {name:"Woodchoppers",sets:3,reps:"40s",weight:0,bw:true,homeSwap:{weight:6},gymSwap:{name:"Cable Woodchoppers",weight:15}},
+    {name:"Heel Taps",sets:3,reps:"40s",weight:0,bw:true}
+  ]},
+  {name:"Summer Series · Tight & Toned",duration:18,diff:2,format:"AMRAP",amrapMinutes:18,
+   series:"summer-series",
+   desc:"Core + glutes + light arm tone. Loop the circuit for the duration.",exercises:[
+    {name:"Glute Bridge",sets:1,reps:"15 reps",weight:0,bw:true,homeSwap:{weight:10},gymSwap:{weight:15}},
+    {name:"Plank Shoulder Taps",sets:1,reps:"20 reps",weight:0,bw:true},
+    {name:"Pike Push-Ups",sets:1,reps:"10 reps",weight:0,bw:true,homeSwap:{name:"Dumbbell Curl-to-Press",reps:"12 reps",weight:8},gymSwap:{name:"Dumbbell Curl-to-Press",reps:"12 reps",weight:10}},
+    {name:"Dead Bug",sets:1,reps:"12 reps",weight:0,bw:true},
+    {name:"Squat Hold",sets:1,reps:"30s",weight:0,bw:true,homeSwap:{name:"Goblet Squat Hold",weight:10},gymSwap:{name:"Goblet Squat Hold",weight:15}}
+  ]},
+  {name:"Summer Series · Lower & Core",duration:20,diff:2,format:"Core/Timed",
+   series:"summer-series",
+   desc:"Glutes and legs anchored by core. 3 rounds.",exercises:[
+    {name:"Glute Bridge",sets:3,reps:"45s",weight:0,bw:true,homeSwap:{weight:10},gymSwap:{weight:15}},
+    {name:"Single-Leg Glute Bridge (Left)",sets:3,reps:"30s",weight:0,bw:true},
+    {name:"Single-Leg Glute Bridge (Right)",sets:3,reps:"30s",weight:0,bw:true},
+    {name:"Wall Sit",sets:3,reps:"45s",weight:0,bw:true,homeSwap:{name:"Goblet Squat Hold",weight:10},gymSwap:{name:"Goblet Squat Hold",weight:15}},
+    {name:"Bird Dog",sets:3,reps:"40s",weight:0,bw:true},
+    {name:"Donkey Kicks",sets:3,reps:"40s",weight:0,bw:true},
+    {name:"Reverse Lunge Hold",sets:3,reps:"40s",weight:0,bw:true}
+  ]},
+  {name:"Summer Series · Upper & Core Sculpt",duration:18,diff:3,format:"AMRAP",amrapMinutes:18,
+   series:"summer-series",
+   desc:"Light shoulders/arms + core. Knee or incline Push-Ups are fine.",exercises:[
+    {name:"Push-Ups",sets:1,reps:"12 reps",weight:0,bw:true},
+    {name:"Arm Circles",sets:1,reps:"30s",weight:0,bw:true,homeSwap:{name:"Dumbbell Lateral Raises",reps:"15 reps",weight:4},gymSwap:{name:"Dumbbell Lateral Raises",reps:"15 reps",weight:5}},
+    {name:"Plank Rows",sets:1,reps:"16 reps",weight:0,bw:true,homeSwap:{name:"Renegade Rows",weight:8},gymSwap:{name:"Renegade Rows",weight:10}},
+    {name:"Superman Hold",sets:1,reps:"30s",weight:0,bw:true},
+    {name:"Tricep Dips",sets:1,reps:"12 reps",weight:0,bw:true,gymSwap:{name:"Bench Tricep Dips",reps:"12 reps"}}
+  ]},
+  {name:"Summer Series · Full Floor Burn",duration:22,diff:3,format:"EMOM",emomMinutes:22,
+   series:"summer-series",
+   desc:"Longer full-body floor circuit, core-heavy. One exercise per minute, 2 rounds through 11 exercises.",exercises:[
+    {name:"Plank",sets:2,reps:"45s",weight:0,bw:true,emomNote:"Minutes 1, 12"},
+    {name:"Glute Bridge",sets:2,reps:"20 reps",weight:0,bw:true,emomNote:"Minutes 2, 13",homeSwap:{weight:10},gymSwap:{weight:15}},
+    {name:"Russian Twists",sets:2,reps:"30 reps",weight:0,bw:true,emomNote:"Minutes 3, 14"},
+    {name:"Bird Dog",sets:2,reps:"40s",weight:0,bw:true,emomNote:"Minutes 4, 15"},
+    {name:"Dead Bug",sets:2,reps:"40s",weight:0,bw:true,emomNote:"Minutes 5, 16"},
+    {name:"Push-Ups",sets:2,reps:"12 reps",weight:0,bw:true,emomNote:"Minutes 6, 17"},
+    {name:"Side Plank",sets:2,reps:"30s each",weight:0,bw:true,emomNote:"Minutes 7, 18"},
+    {name:"Hollow Body Hold",sets:2,reps:"30s",weight:0,bw:true,emomNote:"Minutes 8, 19"},
+    {name:"Superman Hold",sets:2,reps:"30s",weight:0,bw:true,emomNote:"Minutes 9, 20"},
+    {name:"Plank Up-Downs",sets:2,reps:"30s",weight:0,bw:true,emomNote:"Minutes 10, 21"},
+    {name:"Reverse Lunge Hold",sets:2,reps:"30s each",weight:0,bw:true,emomNote:"Minutes 11, 22"}
+  ]},
+  {name:"Summer Series · Express Core",duration:12,diff:1,format:"Core/Timed",
+   series:"summer-series",
+   desc:"Short option for busy days — stacks well after a class. 2 rounds.",exercises:[
+    {name:"Plank",sets:2,reps:"40s",weight:0,bw:true},
+    {name:"Dead Bug",sets:2,reps:"40s",weight:0,bw:true},
+    {name:"Russian Twists",sets:2,reps:"40s",weight:0,bw:true},
+    {name:"Hollow Body Hold",sets:2,reps:"30s",weight:0,bw:true},
+    {name:"Bicycle Crunches",sets:2,reps:"40s",weight:0,bw:true}
   ]}
 ];
 
@@ -9798,7 +9898,56 @@ const HIIT_MUSCLE_FOCUS = {
   "Core Blaster – 24 min":            ['core'],
   "Abs & Obliques – 15 min":          ['core'],
   "Core & Lower Back – 25 min":       ['core','legs'],
+  // ── Summer Series ──
+  "Summer Series · Core Ignite":          ['core'],
+  "Summer Series · Oblique Cut":          ['core'],
+  "Summer Series · Tight & Toned":        ['core','legs'],
+  "Summer Series · Lower & Core":         ['legs','core'],
+  "Summer Series · Upper & Core Sculpt":  ['push','core'],
+  "Summer Series · Full Floor Burn":      ['push','pull','legs','core'],
+  "Summer Series · Express Core":         ['core'],
 };
+
+// ── HIIT SERIES ──
+// Ordered HIIT rotations that can run as a Path. When `userPath.hiitSeries`
+// matches a series id, getNextPathDay/startPathSession look up the next
+// workout here and feed it to startHIIT() via the HIIT engine — instead of
+// the freestyle add-on selector.
+//
+// Rotation order is interleaved on purpose so consecutive sessions vary in
+// focus (core → toning → obliques → lower → upper → full body → express).
+const HIIT_SERIES = {
+  'summer-series': {
+    id: 'summer-series',
+    name: 'Summer Series',
+    subtitle: 'Hot Girl Athletic Club',
+    blurb: 'Non-cardio, core-focused toning — built to run alongside your other training.',
+    description: '7 floor/strength-paced workouts on rotation: core foundations, obliques, lower-body toning, upper-body sculpt, and a longer full-floor burn. No cardio — designed to stack with classes, pilates, runs etc.',
+    defaultDuration: 8,
+    defaultDaysPerWeek: 3,
+    rotation: [
+      'Summer Series · Core Ignite',
+      'Summer Series · Tight & Toned',
+      'Summer Series · Oblique Cut',
+      'Summer Series · Lower & Core',
+      'Summer Series · Upper & Core Sculpt',
+      'Summer Series · Full Floor Burn',
+      'Summer Series · Express Core'
+    ]
+  }
+};
+
+// Convenience: list of all workout names that belong to ANY HIIT series.
+// Used to detect series-path sessions in stats / catch-up / etc.
+const HIIT_SERIES_NAMES = new Set(
+  Object.values(HIIT_SERIES).flatMap(s => s.rotation)
+);
+
+// Look up a HIIT array index by workout name. Returns -1 if not found.
+// Used by startPathSession to bridge series rotation (names) to startHIIT (index).
+function getHIITIndexByName(name){
+  return HIIT.findIndex(w => w.name === name);
+}
 
 const HIIT_FORMAT_COLORS={
   'Tabata':'var(--accent)',
