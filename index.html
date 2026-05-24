@@ -9493,7 +9493,13 @@ function finishSession(){
   const reward = calcSessionReward();
   const xpBefore = getTotalXP();
   // console.log('finishSession: step 6 - push session. sessDay=', sessDay);
-  const newSess={date:new Date(),day:sessDay,exercises:sessExs.length,durationMin:dMin,volume:Math.round(volume),topLifts,setLog,progressions:[],adhoc:window._currentSessionIsAdhoc||false};
+  // For HIIT series sessions, capture the equipment tier used so future
+  // analytics / achievements can attribute by tier (travel sessions vs.
+  // gym sessions etc.). Stays undefined for non-series sessions so the
+  // payload doesn't grow for everyone else.
+  const _seriesTier = window._activeSessionEquipTier || null;
+  window._activeSessionEquipTier = null;
+  const newSess={date:new Date(),day:sessDay,exercises:sessExs.length,durationMin:dMin,volume:Math.round(volume),topLifts,setLog,progressions:[],adhoc:window._currentSessionIsAdhoc||false,...( _seriesTier ? { equipTier:_seriesTier } : {} )};
   window._currentSessionIsAdhoc = false; // reset for next session
   completedSessions.push(newSess);
   sessExs.forEach(ex=>{if(ex.weight>0)customWeights[ex.name]=ex.weight;});
@@ -10099,11 +10105,15 @@ function startHIIT(idx){
   // else 'home'. After resolution, clear the per-session override so the
   // chip falls back to the default on the next Today render — picking
   // 'gym' for one session shouldn't silently stick across days.
+  // Also stash the resolved tier on window._activeSessionEquipTier so
+  // finishSession can persist it on the session log for analytics.
   let _sessionTier = null;
+  window._activeSessionEquipTier = null;
   if(w.series && typeof HIIT_SERIES !== 'undefined' && HIIT_SERIES[w.series]){
     _sessionTier = _getEffectiveEquipTier();
     exercises = _resolveSummerSeriesExercises(exercises, _sessionTier);
     window._pendingSessionTier = null;
+    window._activeSessionEquipTier = _sessionTier;
   }
 
   stopRest(); window._restStoppedManually=false; // clean slate before new session
@@ -15206,6 +15216,60 @@ function getPathWeeksCompleted(){
   if(!isPathActive()) return 0;
   return Math.max(0, getPathCurrentWeek()-1);
 }
+
+// ── HIIT / SUMMER SERIES HELPERS (used by HIIT achievements below) ──
+function _hiitSessionCount(sessions){
+  return sessions.filter(s => !s.manualActivity && HIIT.some(h => h.name === s.day)).length;
+}
+// Count of distinct HIIT formats the user has actually completed. Used by
+// the "Format Polyglot" achievement. Buckets are picked to match the
+// existing format detection logic in the session engine.
+function _hiitFormatsExplored(sessions){
+  const formats = new Set();
+  sessions.filter(s => !s.manualActivity).forEach(s => {
+    const w = HIIT.find(h => h.name === s.day);
+    if(!w) return;
+    if(w.amrapMinutes)            formats.add('AMRAP');
+    else if(w.emomMinutes)        formats.add('EMOM');
+    else if(w.format === 'Tabata')        formats.add('Tabata');
+    else if(w.format === 'Core/Timed')    formats.add('Core/Timed');
+    else if(w.format === "Garry's Style") formats.add('Garrys');
+    else if(w.format === 'Complex')       formats.add('Complex');
+  });
+  return formats.size;
+}
+// True if any single calendar day had 2+ HIIT sessions logged.
+function _hiitDoubleDay(sessions){
+  const byDay = {};
+  sessions.filter(s => !s.manualActivity && HIIT.some(h => h.name === s.day)).forEach(s => {
+    const d = s.date instanceof Date ? s.date : new Date(s.date);
+    const key = d.toDateString();
+    byDay[key] = (byDay[key] || 0) + 1;
+  });
+  return Object.values(byDay).some(c => c >= 2);
+}
+// Summer Series — uses HIIT_SERIES_NAMES / HIIT_SERIES.rotation if loaded.
+// Guarded so achievement checks can't crash on partial JS loads.
+function _summerSeriesCount(sessions){
+  if(typeof HIIT_SERIES_NAMES === 'undefined') return 0;
+  return sessions.filter(s => !s.manualActivity && HIIT_SERIES_NAMES.has(s.day)).length;
+}
+function _summerSeriesUniqueDone(sessions){
+  if(typeof HIIT_SERIES === 'undefined' || !HIIT_SERIES['summer-series']) return 0;
+  const rotation = HIIT_SERIES['summer-series'].rotation;
+  const done = new Set();
+  sessions.filter(s => !s.manualActivity).forEach(s => {
+    if(rotation.includes(s.day)) done.add(s.day);
+  });
+  return done.size;
+}
+// "Did the user complete a Summer Series Path?" — keyed off userPath.status.
+// Mirrors the existing path_halfway pattern (transient: reflects the active
+// userPath only — the achievement system already accepts this trade-off for
+// path-state achievements).
+function _summerSeriesPathDone(){
+  return !!(userPath && userPath.hiitSeries === 'summer-series' && userPath.status === 'completed');
+}
 function getPRsFromSessions(sessions){
   // Count how many exercises have a setLog entry that beats anything before it
   const prs=new Set();
@@ -15273,6 +15337,19 @@ const ACHIEVEMENTS=[
   {id:'path_workouts_25',cat:'Path',name:'Path Devotee',desc:'Complete 25 path workouts',emoji:'🛤️',xp:300,check:s=>getPathCoreSessions(s).length>=25},
   {id:'hybrid_trainer',cat:'Path',name:'Hybrid Trainer',desc:'Complete 5 add-on sessions alongside your Path',emoji:'⚡',xp:150,check:s=>{const addon=s.filter(x=>x.adhoc&&!x.manualActivity);return addon.length>=5;}},
   {id:'all_programmes',cat:'Path',name:'Jack of All Trades',desc:'Train with ULF, PPL and HIIT programmes',emoji:'🃏',xp:200,check:s=>getUniqueProgrammes(s)>=3},
+
+  // ── HIIT — broad progression (any HIIT workout, all formats count) ──
+  {id:'hiit_first',           cat:'HIIT',name:'HIIT the Ground Running',desc:'Complete your first HIIT session',                  emoji:'⚡', xp:50,  check:s=>_hiitSessionCount(s)>=1},
+  {id:'hiit_10',              cat:'HIIT',name:'Burn Builder',          desc:'Complete 10 HIIT sessions',                          emoji:'🔥', xp:200, check:s=>_hiitSessionCount(s)>=10},
+  {id:'hiit_50',              cat:'HIIT',name:'Conditioning Pro',      desc:'Complete 50 HIIT sessions',                          emoji:'🏆', xp:750, check:s=>_hiitSessionCount(s)>=50},
+  {id:'hiit_format_explorer', cat:'HIIT',name:'Format Polyglot',       desc:'Try 5 different HIIT formats (AMRAP, EMOM, Tabata, Core/Timed, Garry\'s, Complex)',emoji:'🎛️', xp:250, check:s=>_hiitFormatsExplored(s)>=5},
+  {id:'hiit_double_day',      cat:'HIIT',name:'Double Dose',           desc:'Complete 2 HIIT sessions in one day',                emoji:'🥵', xp:100, check:s=>_hiitDoubleDay(s)},
+
+  // ── HIIT — Summer Series specific (Hot Girl Summer rotation) ──
+  {id:'ss_first',          cat:'HIIT',name:'Hot Girl Summer Begins',desc:'Complete your first Summer Series workout',emoji:'🌴', xp:75,  check:s=>_summerSeriesCount(s)>=1},
+  {id:'ss_full_rotation',  cat:'HIIT',name:'Full Rotation',        desc:'Complete each of the 7 Summer Series workouts at least once',emoji:'🎡', xp:250, check:s=>_summerSeriesUniqueDone(s)>=7},
+  {id:'ss_25',             cat:'HIIT',name:'Toned',                desc:'Complete 25 Summer Series workouts',       emoji:'💃', xp:400, check:s=>_summerSeriesCount(s)>=25},
+  {id:'ss_path_complete',  cat:'HIIT',name:'Hot Girl Summer',      desc:'Finish a Summer Series Path',              emoji:'🏖️', xp:500, check:()=>_summerSeriesPathDone()},
 
   // ── VARIETY & EXPLORATION ─────────────────────────────────────────────
   {id:'exercise_30',cat:'Exploration',name:'Exercise Explorer',desc:'Do 30 different exercises',emoji:'🗺️',xp:200,check:s=>getUniqueExerciseCount(s)>=30},
