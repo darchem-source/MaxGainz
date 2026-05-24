@@ -1238,10 +1238,22 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
     <div id="adhocModSub" style="font-size:13px;color:var(--text2);margin-bottom:10px;">Pick any workout from the full library. Won't affect your Path progress.</div>
     <input id="adhocSearch" type="text" placeholder="Search workouts…" oninput="setAdhocSearch(this.value)"
       style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:10px 14px;font-size:14px;color:var(--text);margin-bottom:8px;box-sizing:border-box;flex-shrink:0;">
-    <div id="adhocFilter" style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:2px;flex-shrink:0;">
+    <div id="adhocFilter" style="display:flex;gap:6px;margin-bottom:8px;overflow-x:auto;padding-bottom:2px;flex-shrink:0;">
       <div class="chip active" onclick="setAdhocFilter('all',this)">All</div>
       <div class="chip" onclick="setAdhocFilter('strength',this)">🏋️ Strength</div>
       <div class="chip" onclick="setAdhocFilter('hiit',this)">⚡ HIIT</div>
+    </div>
+    <!-- HIIT format sub-filter — visible only when "All" or "⚡ HIIT" is active.
+         Picking a specific format narrows the list to that format AND hides
+         strength sections (you wanted a Tabata, you don't also want lifts). -->
+    <div id="adhocHiitFormatFilter" style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:2px;flex-shrink:0;">
+      <div class="chip active" onclick="setAdhocHiitFormat('all',this)">All HIIT</div>
+      <div class="chip" onclick="setAdhocHiitFormat('AMRAP',this)">⏱ AMRAP</div>
+      <div class="chip" onclick="setAdhocHiitFormat('EMOM',this)">⏱ EMOM</div>
+      <div class="chip" onclick="setAdhocHiitFormat('Tabata',this)">⏱ Tabata</div>
+      <div class="chip" onclick="setAdhocHiitFormat('Core',this)">🧘 Core</div>
+      <div class="chip" onclick="setAdhocHiitFormat('Garrys',this)">🏃 Garry's</div>
+      <div class="chip" onclick="setAdhocHiitFormat('series',this)">🌴 Summer Series</div>
     </div>
     <div id="adhocContent" style="overflow-y:auto;flex:1;"></div>
     <button onclick="document.getElementById('adhocMod').classList.remove('open')"
@@ -9555,7 +9567,18 @@ function finishSession(){
       ${items}${buttons}
     </div>`;
   }
-  document.getElementById('finSummary').innerHTML=sessDay+' Day · '+sessExs.length+' exercises'+progNote;
+  // Series sessions get an extra tier badge inline with the summary so the
+  // user has a clear record of how they hit today's workout (handy when
+  // travelling — "did I do this at the hotel or at home?").
+  const _TIER_DISPLAY = {minimal:{emoji:'🪶',label:'Bodyweight'},home:{emoji:'🏠',label:'Home'},gym:{emoji:'🏋️',label:'Full Gym'}};
+  const _finTier = _seriesTier && _TIER_DISPLAY[_seriesTier];
+  const _isSeries = typeof HIIT_SERIES_NAMES !== 'undefined' && HIIT_SERIES_NAMES.has(sessDay);
+  const _tierBadge = _finTier
+    ? `<span style="display:inline-flex;align-items:center;gap:4px;background:rgba(255,140,66,0.10);border:0.5px solid rgba(255,140,66,0.35);border-radius:12px;padding:2px 8px;margin-left:6px;font-size:11px;font-weight:700;color:var(--orange);">${_finTier.emoji} ${_finTier.label}</span>`
+    : '';
+  // For series sessions skip the " Day" suffix — "Summer Series · Core Ignite Day" reads weirdly.
+  const _summaryHead = sessDay + (_isSeries ? '' : ' Day') + ' · ' + sessExs.length + ' exercises' + _tierBadge;
+  document.getElementById('finSummary').innerHTML=_summaryHead+progNote;
   // console.log('finishSession: step 9b - populate XP panel');
   try{
     const earnedXP = reward.xp; // XP delta from this session
@@ -12135,7 +12158,37 @@ function generateShareCard(){
   }
   let y = 480;
   lines.forEach(line => { ctx.fillText(line, W/2, y); y += 50; });
-  
+
+  // Tier badge — pulled from the just-pushed session's equipTier so
+  // Summer Series share cards carry "🏠 Home" / "🏋️ Full Gym" / "🪶 Bodyweight".
+  // Skipped silently for non-series sessions (no equipTier field).
+  const _lastSess = (typeof completedSessions !== 'undefined' && completedSessions.length)
+    ? completedSessions[completedSessions.length - 1] : null;
+  const _shareTier = _lastSess && _lastSess.equipTier;
+  const _shareTierMap = {minimal:{emoji:'🪶',label:'Bodyweight'},home:{emoji:'🏠',label:'Home'},gym:{emoji:'🏋️',label:'Full Gym'}};
+  const _shareTierInfo = _shareTier && _shareTierMap[_shareTier];
+  if(_shareTierInfo){
+    const pillText = _shareTierInfo.emoji + '  ' + _shareTierInfo.label;
+    ctx.font = '500 30px -apple-system, system-ui, sans-serif';
+    const textW = ctx.measureText(pillText).width;
+    const pillPadX = 28, pillH = 56;
+    const pillW = textW + pillPadX * 2;
+    const pillX = (W - pillW) / 2;
+    const pillY = y + 6;
+    // Pill background — soft orange to echo the Path branding
+    ctx.fillStyle = 'rgba(255,140,66,0.16)';
+    roundRect(ctx, pillX, pillY, pillW, pillH, pillH/2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,140,66,0.45)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // Pill text
+    ctx.fillStyle = '#ff8c42';
+    ctx.textAlign = 'center';
+    ctx.fillText(pillText, W/2, pillY + 38);
+    y += pillH + 12; // advance Y so any downstream content (if added later) stacks below
+  }
+
   // Stats panel — three boxes
   const boxY = 600, boxH = 200, boxGap = 24, boxW = (W - 140 - boxGap*2) / 3;
   const stats = [
@@ -15702,6 +15755,29 @@ function renderTodayWithPath() {
   let html = '';
 
   // ── PATH HEADER — sticky below the greeting ──
+  // Summer Series rotation pill: shows unique-workouts-done since the Path
+  // started, against the rotation length. Counted strictly within this
+  // Path's window (>= userPath.startDate) so older series sessions from a
+  // previous Path don't inflate the count.
+  let _seriesPillHtml = '';
+  if(typeof isHIITSeriesPath === 'function' && isHIITSeriesPath()){
+    const _seriesRotation = HIIT_SERIES[userPath.hiitSeries].rotation;
+    const _seriesStart = new Date(userPath.startDate + 'T00:00:00').getTime();
+    const _seriesDone = new Set();
+    completedSessions.forEach(s => {
+      if(s.manualActivity) return;
+      const sd = s.date instanceof Date ? s.date : new Date(s.date);
+      if(sd.getTime() < _seriesStart) return;
+      if(_seriesRotation.includes(s.day)) _seriesDone.add(s.day);
+    });
+    const _doneCount = _seriesDone.size;
+    const _totalCount = _seriesRotation.length;
+    const _isFull = _doneCount >= _totalCount;
+    _seriesPillHtml = `
+      <div style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,140,66,0.10);border:0.5px solid rgba(255,140,66,0.35);border-radius:14px;padding:4px 10px;margin-top:6px;font-size:11px;font-weight:700;color:var(--orange);">
+        🌴 <span>${_doneCount} of ${_totalCount}${_isFull ? ' ✓ full rotation' : ' done this rotation'}</span>
+      </div>`;
+  }
   html += `
     <div style="padding:16px 16px 0;position:sticky;top:0;z-index:49;background:#0a0a0f;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
@@ -15711,6 +15787,7 @@ function renderTodayWithPath() {
         <div style="font-size:11px;color:var(--text2);">${adherence.completed}/${adherence.planned} this week</div>
       </div>
       <div style="font-size:13px;color:var(--text2);">${dateStr}</div>
+      ${_seriesPillHtml}
       <!-- Week progress bar -->
       <div style="margin-top:8px;background:var(--surface3);border-radius:4px;height:4px;overflow:hidden;">
         <div style="width:${Math.round((week/userPath.duration)*100)}%;height:100%;background:var(--accent);border-radius:4px;transition:width 0.5s;"></div>
@@ -16336,7 +16413,22 @@ function startPathSession(programme, dayName) {
 // ── Ad-hoc session modal ──
 // Search/filter state for the Add Extra Session picker — reset on each open.
 let _adhocSearch = '';
-let _adhocFilter = 'all';   // 'all' | 'strength' | 'hiit'
+let _adhocFilter = 'all';        // 'all' | 'strength' | 'hiit'
+let _adhocHiitFormat = 'all';    // 'all' | 'AMRAP' | 'EMOM' | 'Tabata' | 'Core' | 'Garrys' | 'series'
+
+// Maps the adhoc HIIT format chip to the actual HIIT entry it should match.
+// Returns true when the workout (or HIIT_TEMPLATE) belongs to that bucket.
+// 'all' passes everything through.
+function _adhocHiitMatchesFormat(w, filter){
+  if(!filter || filter === 'all') return true;
+  if(filter === 'series') return w.series === 'summer-series';
+  if(filter === 'AMRAP')  return !!w.amrapMinutes || w.format === 'AMRAP';
+  if(filter === 'EMOM')   return !!w.emomMinutes  || w.format === 'EMOM';
+  if(filter === 'Tabata') return w.format === 'Tabata';
+  if(filter === 'Core')   return w.format === 'Core/Timed';
+  if(filter === 'Garrys') return w.format === "Garry's Style";
+  return true;
+}
 let _adhocExpanded = {};    // { sectionKey: true } — tracks expanded library/custom programmes
 
 function openAdhocModal() {
@@ -16350,10 +16442,13 @@ function openAdhocModal() {
   // Reset filters every open so users always start at the broadest view.
   _adhocSearch = '';
   _adhocFilter = 'all';
+  _adhocHiitFormat = 'all';
   _adhocExpanded = {};
   const searchInput = document.getElementById('adhocSearch');
   if(searchInput) searchInput.value = '';
   document.querySelectorAll('#adhocFilter .chip').forEach((c, i) => c.classList.toggle('active', i === 0));
+  document.querySelectorAll('#adhocHiitFormatFilter .chip').forEach((c, i) => c.classList.toggle('active', i === 0));
+  _syncAdhocFormatRowVisibility();
 
   _renderAdhocList();
   document.getElementById('adhocMod').classList.add('open');
@@ -16368,7 +16463,37 @@ function setAdhocFilter(val, el){
   _adhocFilter = val;
   document.querySelectorAll('#adhocFilter .chip').forEach(c => c.classList.remove('active'));
   if(el) el.classList.add('active');
+  // Picking "Strength" clears any HIIT-format narrowing — the format row is
+  // meaningless when strength is the active top-level filter.
+  if(val === 'strength'){
+    _adhocHiitFormat = 'all';
+    document.querySelectorAll('#adhocHiitFormatFilter .chip').forEach((c, i) => c.classList.toggle('active', i === 0));
+  }
+  _syncAdhocFormatRowVisibility();
   _renderAdhocList();
+}
+
+// New: HIIT format sub-chip handler. Picking a specific format also flips
+// the top-level chip to "⚡ HIIT" (so strength sections collapse) — the
+// alternative was to keep "All" active and silently hide strength, which
+// would have looked like a bug.
+function setAdhocHiitFormat(val, el){
+  _adhocHiitFormat = val;
+  document.querySelectorAll('#adhocHiitFormatFilter .chip').forEach(c => c.classList.remove('active'));
+  if(el) el.classList.add('active');
+  if(val !== 'all' && _adhocFilter !== 'hiit'){
+    _adhocFilter = 'hiit';
+    document.querySelectorAll('#adhocFilter .chip').forEach((c, i) => c.classList.toggle('active', i === 2));
+  }
+  _renderAdhocList();
+}
+
+// Hide the HIIT format chip row entirely when strength is the active top
+// filter — it would only add noise (no formats apply to ULF/PPL/library).
+function _syncAdhocFormatRowVisibility(){
+  const row = document.getElementById('adhocHiitFormatFilter');
+  if(!row) return;
+  row.style.display = (_adhocFilter === 'strength') ? 'none' : 'flex';
 }
 
 function _toggleAdhocSection(key){
@@ -16500,7 +16625,8 @@ function _renderAdhocList(){
   // ── 📚 HIIT Templates ─────────────────────────────────────────────
   if(showHiit && typeof HIIT_TEMPLATES !== 'undefined'){
     const tMatches = HIIT_TEMPLATES.filter(t =>
-      matches(t.name) || matches(t.format) || matches(t.tagline)
+      _adhocHiitMatchesFormat(t, _adhocHiitFormat) &&
+      (matches(t.name) || matches(t.format) || matches(t.tagline))
     );
     if(tMatches.length){
       html += sectionLabel('📚 HIIT Templates');
@@ -16520,10 +16646,14 @@ function _renderAdhocList(){
     const hMatches = HIIT.filter(w => {
       if(seen.has(w.name)) return false;
       seen.add(w.name);
+      if(!_adhocHiitMatchesFormat(w, _adhocHiitFormat)) return false;
       return matches(w.name) || matches(w.format) || matches(w.desc);
     }).slice().sort((a, b) => (a.duration || 99) - (b.duration || 99));
     if(hMatches.length){
-      html += sectionLabel('⚡ HIIT Workouts');
+      // Heading reflects the active format filter so the list isn't just a
+      // wall of cards under a generic "HIIT Workouts" label.
+      const _fmtLabels = {AMRAP:'⏱ AMRAP',EMOM:'⏱ EMOM',Tabata:'⏱ Tabata',Core:'🧘 Core',Garrys:"🏃 Garry's",series:'🌴 Summer Series'};
+      html += sectionLabel(_fmtLabels[_adhocHiitFormat] || '⚡ HIIT Workouts');
       hMatches.forEach(w => {
         const fc = (typeof HIIT_FORMAT_COLORS !== 'undefined' && HIIT_FORMAT_COLORS[w.format]) || 'var(--orange)';
         const icon = (typeof _hiitIconFor === 'function') ? _hiitIconFor(w) : '⚡';
