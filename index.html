@@ -10228,7 +10228,11 @@ function renderProgrammeFeed(){
 function _renderActivePathSection(){
   if(!isPathActive() || !userPath) return '';
   const lib = isLibraryProgramme(userPath.programme) ? getLibraryProgramme(userPath.programme) : null;
-  const name = lib ? lib.name : userPath.programme;
+  // Series Paths (Summer Series etc.) show the series name instead of the
+  // generic 'HIIT' programme id.
+  const series = (typeof isHIITSeriesPath === 'function' && isHIITSeriesPath())
+    ? HIIT_SERIES[userPath.hiitSeries] : null;
+  const name = lib ? lib.name : series ? series.name : userPath.programme;
   const week = getPathCurrentWeek();
   const nextDay = getNextPathDay(userPath.programme);
   const exs = nextDay ? getExercisesForPathDay(userPath.programme, nextDay) : [];
@@ -16714,6 +16718,13 @@ function _renderPathTabActive() {
   } else if(userPath.programme === 'PPL'){
     _coreWorkoutCycle = _pplCycle;
     _baseCoreSessionsDone = completedSessions.filter(s => !s.adhoc && Object.keys(PPL).includes(s.day)).length;
+  } else if(typeof isHIITSeriesPath === 'function' && isHIITSeriesPath()){
+    // HIIT series — the rotation IS the day cycle. Each scheduled day in
+    // the week-ahead schedule maps to the next workout in the rotation.
+    const _series = HIIT_SERIES[userPath.hiitSeries];
+    _coreWorkoutCycle = _series.rotation.slice();
+    const _seriesNames = new Set(_coreWorkoutCycle);
+    _baseCoreSessionsDone = completedSessions.filter(s => !s.adhoc && _seriesNames.has(s.day)).length;
   } else if(isLibraryProgramme(userPath.programme)){
     const _lib = getLibraryProgramme(userPath.programme);
     if(_lib){
@@ -16724,7 +16735,11 @@ function _renderPathTabActive() {
   }
   // Friendly programme label (used as fallback in schedule rows)
   const _libCurrent = isLibraryProgramme(userPath.programme) ? getLibraryProgramme(userPath.programme) : null;
-  const _progDisplay = _libCurrent ? _libCurrent.short : userPath.programme;
+  const _seriesCurrent = (typeof isHIITSeriesPath === 'function' && isHIITSeriesPath())
+    ? HIIT_SERIES[userPath.hiitSeries] : null;
+  const _progDisplay = _libCurrent ? _libCurrent.short
+                     : _seriesCurrent ? _seriesCurrent.name
+                     : userPath.programme;
   // ── HIIT add-on recommendation via muscle imbalance ──
   // Pull HIIT workouts done in the last 14 days so the path doesn't recommend
   // something the user just completed — that's a major source of week-to-week
@@ -17034,7 +17049,11 @@ function openPathWizard() {
     variant: userPath ? userPath.coreSchedule.variant : 'standard',
     daysPerWeek: userPath ? userPath.coreSchedule.daysPerWeek : 3,
     coreDays: userPath ? [...userPath.coreSchedule.preferredDays] : [],
-    addOns: userPath ? userPath.addOns.map(a => ({...a, days: [...a.preferredDays]})) : []
+    addOns: userPath ? userPath.addOns.map(a => ({...a, days: [...a.preferredDays]})) : [],
+    // HIIT-only — which HIIT variant the user chose. null = freestyle (current
+    // behaviour: pick any HIIT workout on the day). 'summer-series' etc. = a
+    // fixed rotation routed through the HIIT engine.
+    hiitSeries: userPath ? (userPath.hiitSeries || null) : null
   };
   // Show only step 1, hide the rest
   for(let i = 1; i <= 5; i++){
@@ -17090,6 +17109,9 @@ function confirmStartPath() {
       preferredDays: _pathWizard.coreDays,
       variant: _pathWizard.variant
     },
+    // HIIT series id when this is a series Path. Stored only when set so
+    // older payloads round-trip cleanly without the field appearing.
+    ...( _pathWizard.hiitSeries ? { hiitSeries: _pathWizard.hiitSeries } : {} ),
     addOns: _pathWizard.addOns.map(a => ({
       type: a.type,
       frequency: a.frequency,
@@ -17107,7 +17129,11 @@ function confirmStartPath() {
   renderToday();
   setTimeout(() => {
     const _lib = isLibraryProgramme(userPath.programme) ? getLibraryProgramme(userPath.programme) : null;
-    const _name = _lib ? _lib.name : userPath.programme;
+    let _name = _lib ? _lib.name : userPath.programme;
+    // Replace generic 'HIIT' with the series name when this is a series Path.
+    if(userPath.hiitSeries && HIIT_SERIES[userPath.hiitSeries]){
+      _name = HIIT_SERIES[userPath.hiitSeries].name;
+    }
     showToast('🎯 Path started! ' + _name + ' · ' + userPath.duration + ' weeks. Let\'s go! 💪');
   }, 400);
 }
@@ -17302,6 +17328,46 @@ function renderPathStep1() {
   ];
   // If currently selected programme is a library one, show its name in the library tile
   const libSelected = isLibraryProgramme(_pathWizard.programme) ? getLibraryProgramme(_pathWizard.programme) : null;
+
+  // HIIT sub-choice — only rendered when HIIT is the active selection.
+  // The user picks Summer Series (fixed rotation, routes via HIIT engine)
+  // or Freestyle (current behaviour: pick a workout on the day). Default
+  // is Freestyle so existing flows are preserved.
+  let hiitSubChoiceHtml = '';
+  if(_pathWizard.programme === 'HIIT'){
+    const isSeries = !!_pathWizard.hiitSeries;
+    const series = HIIT_SERIES['summer-series'];
+    hiitSubChoiceHtml = `
+      <div style="margin:6px 0 14px;padding:14px;background:var(--surface2);border:1px solid rgba(255,140,66,0.25);border-radius:14px;">
+        <div style="font-size:11px;font-weight:800;color:var(--orange);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;">⚡ HIIT Variant</div>
+        <div class="path-prog-card ${isSeries ? 'selected' : ''}"
+             onclick="selectHIITSeries('summer-series')"
+             style="margin-bottom:8px;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div style="font-size:28px;">🌴</div>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:15px;font-weight:800;color:var(--text);">${series.name}
+                <span style="font-size:11px;color:var(--orange);font-weight:700;margin-left:4px;">${series.subtitle}</span>
+              </div>
+              <div style="font-size:12px;color:var(--text2);margin-top:3px;line-height:1.35;">${series.blurb}</div>
+            </div>
+            <div style="font-size:18px;color:var(--accent);flex-shrink:0;">${isSeries ? '✓' : ''}</div>
+          </div>
+        </div>
+        <div class="path-prog-card ${!isSeries ? 'selected' : ''}"
+             onclick="selectHIITSeries(null)">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div style="font-size:28px;">🎯</div>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:15px;font-weight:800;color:var(--text);">Freestyle HIIT</div>
+              <div style="font-size:12px;color:var(--text2);margin-top:3px;line-height:1.35;">Pick any HIIT workout on the day — Garry's, AMRAP, EMOM, Tabata, classics.</div>
+            </div>
+            <div style="font-size:18px;color:var(--accent);flex-shrink:0;">${!isSeries ? '✓' : ''}</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
   document.getElementById('pathStep1').innerHTML = `
     <div style="font-size:22px;font-weight:900;margin-bottom:6px;">Choose Your Path</div>
     <div style="font-size:14px;color:var(--text2);margin-bottom:20px;">
@@ -17321,6 +17387,7 @@ function renderPathStep1() {
           <div style="font-size:18px;color:var(--accent);">${_pathWizard.programme === p.id ? '✓' : ''}</div>
         </div>
       </div>
+      ${p.id === 'HIIT' ? hiitSubChoiceHtml : ''}
     `).join('')}
     <!-- Programme Library entry -->
     <div class="path-prog-card ${libSelected ? 'selected' : ''}" onclick="openLibraryBrowse()"
@@ -17351,6 +17418,23 @@ function renderPathStep1() {
   `;
 }
 
+// Toggle the HIIT variant choice. Passing 'summer-series' (or any registered
+// series id) sets Summer Series — and applies its recommended defaults so the
+// later wizard steps land on sensible values. Passing null reverts to
+// Freestyle. No-op if the current programme isn't HIIT.
+function selectHIITSeries(seriesId){
+  if(_pathWizard.programme !== 'HIIT') return;
+  if(seriesId && !HIIT_SERIES[seriesId]) return;
+  _pathWizard.hiitSeries = seriesId || null;
+  if(seriesId){
+    const s = HIIT_SERIES[seriesId];
+    // Seed sensible defaults — user can still change in later steps.
+    if(s.defaultDaysPerWeek) _pathWizard.daysPerWeek = s.defaultDaysPerWeek;
+    if(s.defaultDuration)    _pathWizard.duration    = s.defaultDuration;
+  }
+  renderPathStep1();
+}
+
 function skipPathWizard() {
   localStorage.setItem('maxgainz_path_skipped', '1');
   _pathWizardAutoOpened = false;
@@ -17360,10 +17444,12 @@ function skipPathWizard() {
 
 function selectPathProgramme(prog) {
   _pathWizard.programme = prog;
-  // Picking a built-in clears any library-specific state
-  if(prog === 'ULF')  { _pathWizard.daysPerWeek = 3; _pathWizard.variant = 'standard'; _pathWizard.coreDays = []; _pathWizard.addOns = []; }
-  if(prog === 'PPL')  { _pathWizard.daysPerWeek = 3; _pathWizard.variant = '3day';    _pathWizard.coreDays = []; _pathWizard.addOns = []; }
-  if(prog === 'HIIT') { _pathWizard.daysPerWeek = 3; _pathWizard.variant = 'standard'; _pathWizard.coreDays = []; _pathWizard.addOns = []; }
+  // Picking a built-in clears any library-specific state. Picking anything
+  // other than HIIT also clears the series sub-choice so we don't carry
+  // a stale value between switches.
+  if(prog === 'ULF')  { _pathWizard.daysPerWeek = 3; _pathWizard.variant = 'standard'; _pathWizard.coreDays = []; _pathWizard.addOns = []; _pathWizard.hiitSeries = null; }
+  if(prog === 'PPL')  { _pathWizard.daysPerWeek = 3; _pathWizard.variant = '3day';    _pathWizard.coreDays = []; _pathWizard.addOns = []; _pathWizard.hiitSeries = null; }
+  if(prog === 'HIIT') { _pathWizard.daysPerWeek = 3; _pathWizard.variant = 'standard'; _pathWizard.coreDays = []; _pathWizard.addOns = []; /* hiitSeries kept — preserves prior choice when reselecting HIIT; defaults to null on first pick */ }
   renderPathStep1();
 }
 
