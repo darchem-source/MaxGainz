@@ -16007,16 +16007,47 @@ function _getPathCatchUpSuggestion(){
 
   // How many of the user's preferred core days have STRICTLY passed (ended
   // before today)? Only those count toward "missed" — today's slot is still
-  // live, and future days haven't happened yet.
+  // live, and future days haven't happened yet. Also require the day to be
+  // on or after the path's start date: the path doesn't owe the user
+  // anything for Mondays that happened before they started the path. Without
+  // this guard, someone who starts on Sunday immediately sees "3 missed"
+  // for Mon/Wed/Fri of the same calendar week.
   const preferredDays = (userPath.coreSchedule && userPath.coreSchedule.preferredDays) || [];
   const dowNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   const todayMonIdx = (now.getDay() + 6) % 7; // 0=Mon..6=Sun
-  const passedScheduledCount = preferredDays.filter(name => {
+
+  // Parse the path's start date (stored as YYYY-MM-DD) into a midnight Date.
+  let pathStartDate = null;
+  if(userPath.startDate){
+    const ps = new Date(userPath.startDate + 'T00:00:00');
+    if(!isNaN(ps)) pathStartDate = ps;
+  }
+
+  // Returns the date object for `dowName` within the current Mon-start week.
+  const dateForDow = (dowName) => {
+    const i = dowNames.indexOf(dowName);
+    if(i < 0) return null;
+    const monIdx = (i + 6) % 7;
+    const d = new Date(wStart);
+    d.setDate(wStart.getDate() + monIdx);
+    return d;
+  };
+
+  // A preferred day counts as "passed" iff:
+  //   (a) its Mon-start index is strictly less than today's, AND
+  //   (b) its date is on or after the path's start date.
+  const passedPreferredDays = preferredDays.filter(name => {
     const i = dowNames.indexOf(name);
     if(i < 0) return false;
     const monIdx = (i + 6) % 7;
-    return monIdx < todayMonIdx; // strictly before today
-  }).length;
+    if(monIdx >= todayMonIdx) return false;
+    if(pathStartDate){
+      const d = dateForDow(name);
+      if(d && d < pathStartDate) return false;
+    }
+    return true;
+  });
+  const passedScheduledCount = passedPreferredDays.length;
 
   let missed;
   if(typeof isHIITSeriesPath === 'function' && isHIITSeriesPath()){
@@ -16025,15 +16056,9 @@ function _getPathCatchUpSuggestion(){
     // (manual activity OR Series workout) was logged on a scheduled day,
     // that day counts as satisfied. Missed = passed preferred days with
     // literally nothing logged.
-    const passedDayIndices = preferredDays
-      .map(name => dowNames.indexOf(name))
-      .filter(i => i >= 0 && ((i + 6) % 7) < todayMonIdx);
-
-    missed = passedDayIndices.filter(dowIdx => {
-      // Compute the date of this weekday in the current week.
-      const dayMonIdx = (dowIdx + 6) % 7;
-      const dayStart = new Date(wStart);
-      dayStart.setDate(wStart.getDate() + dayMonIdx);
+    missed = passedPreferredDays.filter(dowName => {
+      const dayStart = dateForDow(dowName);
+      if(!dayStart) return false;
       const dayEnd = new Date(dayStart);
       dayEnd.setDate(dayStart.getDate() + 1);
       // Was anything (manual OR core) logged on that day?
