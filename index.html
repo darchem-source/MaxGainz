@@ -9949,6 +9949,73 @@ function getHIITIndexByName(name){
   return HIIT.findIndex(w => w.name === name);
 }
 
+// ── EQUIPMENT TIERING ──
+// Three tiers describe the kit the user has on the day:
+//   'minimal' — bodyweight only (hotel, travel)
+//   'home'    — dumbbells + mat (default for the target user)
+//   'gym'     — full gym (cables, benches, full DB rack)
+//
+// Summer Series exercises declare a base (= minimal) shape with optional
+// `homeSwap` / `gymSwap` partial overrides. Resolution rules:
+//   minimal → base as-is
+//   home    → base merged with homeSwap if present, else base
+//   gym     → base merged with gymSwap if present, else homeSwap, else base
+//
+// A swap can change just the weight (still the same move, e.g. weighted
+// Russian Twists) or fully replace the exercise (different name + reps,
+// e.g. Wall Sit → Goblet Squat Hold). The homeSwap/gymSwap fields are
+// stripped from the resolved object so they never reach the session log.
+const EQUIP_TIERS = [
+  { id:'minimal', label:'Bodyweight', desc:'Hotel / travel · mat at most', icon:'🪶' },
+  { id:'home',    label:'Home',       desc:'Dumbbells + mat',              icon:'🏠' },
+  { id:'gym',     label:'Full Gym',   desc:'Cables, benches, full rack',   icon:'🏋️' }
+];
+
+function _getEffectiveEquipTier(){
+  // Per-session override (set when the user taps a chip on the Today card)
+  // takes precedence over the Path default. Falls back to 'home' for any
+  // userPath that predates the equipment system.
+  if(window._pendingSessionTier) return window._pendingSessionTier;
+  if(userPath && userPath.equipmentDefault) return userPath.equipmentDefault;
+  return 'home';
+}
+
+// Chip handler — updates the pending tier for the next-to-start session.
+// Tapping re-renders Today so chip highlight + exercise preview both refresh
+// (the preview substitutes homeSwap/gymSwap variants in place).
+function selectPendingTier(tier){
+  if(!EQUIP_TIERS.some(t => t.id === tier)) return;
+  window._pendingSessionTier = tier;
+  if(typeof renderToday === 'function') renderToday();
+}
+
+function _resolveSummerSeriesExercise(ex, tier){
+  let swap = null;
+  if(tier === 'home')      swap = ex.homeSwap;
+  else if(tier === 'gym')  swap = ex.gymSwap || ex.homeSwap;
+  // minimal (or any unknown tier) → use the base shape unchanged.
+  if(!swap) {
+    const out = {...ex};
+    delete out.homeSwap; delete out.gymSwap;
+    return out;
+  }
+  const resolved = {...ex, ...swap};
+  // Adding weight to a previously bodyweight move flips the bw flag, so
+  // analytics / display logic don't misclassify it.
+  if(swap.weight && swap.weight > 0) resolved.bw = false;
+  delete resolved.homeSwap;
+  delete resolved.gymSwap;
+  return resolved;
+}
+
+// Apply the resolver across an array of HIIT exercises. Safe to call on
+// non-series workouts — exercises without homeSwap/gymSwap are returned
+// untouched.
+function _resolveSummerSeriesExercises(exs, tier){
+  if(!Array.isArray(exs)) return exs;
+  return exs.map(ex => _resolveSummerSeriesExercise(ex, tier));
+}
+
 const HIIT_FORMAT_COLORS={
   'Tabata':'var(--accent)',
   "Garry's Style":'var(--red)',
@@ -10024,7 +10091,21 @@ function startHIIT(idx){
     // Old format
     exercises = w.exercises;
   }
-  
+
+  // Series equipment resolution — when this workout belongs to a HIIT
+  // series (Summer Series etc.), swap each exercise to the variant that
+  // matches the effective equipment tier. Tier comes from the per-session
+  // override (Today card chip) if set, else userPath.equipmentDefault,
+  // else 'home'. After resolution, clear the per-session override so the
+  // chip falls back to the default on the next Today render — picking
+  // 'gym' for one session shouldn't silently stick across days.
+  let _sessionTier = null;
+  if(w.series && typeof HIIT_SERIES !== 'undefined' && HIIT_SERIES[w.series]){
+    _sessionTier = _getEffectiveEquipTier();
+    exercises = _resolveSummerSeriesExercises(exercises, _sessionTier);
+    window._pendingSessionTier = null;
+  }
+
   stopRest(); window._restStoppedManually=false; // clean slate before new session
   sessExs=exercises.map(ex=>{
     const dbEx = EXDB.find(e => e.name === ex.name);
@@ -15736,12 +15817,48 @@ function renderTodayWithPath() {
       } else {
         // ── Not done yet: show start session button ──
         const dayName = getNextPathDay(prog);
-        const exs = dayName ? getExercisesForPathDay(prog, dayName) : [];
+        let exs = dayName ? getExercisesForPathDay(prog, dayName) : [];
+        // For series workouts, resolve the exercises through the active tier
+        // so the preview chips match what's actually about to launch.
+        const _isSeriesCard = (prog === 'HIIT')
+          && (typeof HIIT_SERIES_NAMES !== 'undefined')
+          && dayName && HIIT_SERIES_NAMES.has(dayName);
+        if(_isSeriesCard && typeof _resolveSummerSeriesExercises === 'function'){
+          const _previewTier = window._pendingSessionTier
+            || (userPath && userPath.equipmentDefault)
+            || 'home';
+          exs = _resolveSummerSeriesExercises(exs, _previewTier);
+        }
         const estMin = Math.max(20, exs.length * 9);
         // Library programmes use their .short label as the badge (e.g. 'PHUL', 'SL 5×5')
         const lib = isLibraryProgramme(prog) ? getLibraryProgramme(prog) : null;
         const badgeLabel = lib ? lib.short : prog;
         const titleLabel = dayName || (lib ? lib.name : prog);
+        // Equipment chip selector — only for HIIT series workouts. The chip
+        // selection lives on window._pendingSessionTier (per-session override).
+        // Tapping a chip re-renders Today so the active state updates AND
+        // the exercise preview reflects the chosen tier's swaps. Path default
+        // is untouched — picking 'gym' once doesn't permanently change the
+        // userPath.equipmentDefault.
+        let _equipChipsHtml = '';
+        if(_isSeriesCard){
+          const _activeTier = window._pendingSessionTier
+            || userPath.equipmentDefault
+            || 'home';
+          _equipChipsHtml = `
+              <div style="margin-bottom:14px;">
+                <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Equipment today</div>
+                <div style="display:flex;gap:6px;">
+                  ${EQUIP_TIERS.map(t => `
+                    <button onclick="selectPendingTier('${t.id}')"
+                      style="flex:1;background:${_activeTier===t.id?'rgba(255,140,66,0.12)':'var(--surface3)'};border:1px solid ${_activeTier===t.id?'var(--orange)':'var(--border)'};border-radius:10px;padding:8px 6px;font-size:11px;font-weight:700;color:${_activeTier===t.id?'var(--orange)':'var(--text2)'};cursor:pointer;text-align:center;">
+                      <div style="font-size:16px;line-height:1;">${t.icon}</div>
+                      <div style="margin-top:3px;">${t.label}</div>
+                    </button>
+                  `).join('')}
+                </div>
+              </div>`;
+        }
         html += `
           <div style="margin:16px 16px 0;">
             <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">TODAY'S PATH WORKOUT</div>
@@ -15753,6 +15870,7 @@ function renderTodayWithPath() {
                   <div style="font-size:12px;color:var(--text2);">${exs.length} exercises · ~${estMin} min</div>
                 </div>
               </div>
+              ${_equipChipsHtml}
               <!-- Exercise preview -->
               <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px;">
                 ${exs.slice(0,4).map(e =>
@@ -17053,7 +17171,11 @@ function openPathWizard() {
     // HIIT-only — which HIIT variant the user chose. null = freestyle (current
     // behaviour: pick any HIIT workout on the day). 'summer-series' etc. = a
     // fixed rotation routed through the HIIT engine.
-    hiitSeries: userPath ? (userPath.hiitSeries || null) : null
+    hiitSeries: userPath ? (userPath.hiitSeries || null) : null,
+    // Default training environment for the Path. Drives the Summer Series
+    // homeSwap/gymSwap resolution at session start. Per-session override
+    // lives on window._pendingSessionTier (Today card chip).
+    equipmentDefault: userPath ? (userPath.equipmentDefault || 'home') : 'home'
   };
   // Show only step 1, hide the rest
   for(let i = 1; i <= 5; i++){
@@ -17112,6 +17234,11 @@ function confirmStartPath() {
     // HIIT series id when this is a series Path. Stored only when set so
     // older payloads round-trip cleanly without the field appearing.
     ...( _pathWizard.hiitSeries ? { hiitSeries: _pathWizard.hiitSeries } : {} ),
+    // Equipment default — only persisted for HIIT paths (the only place it
+    // currently affects behaviour). Falls back to 'home' if missing on load.
+    ...( _pathWizard.programme === 'HIIT'
+         ? { equipmentDefault: _pathWizard.equipmentDefault || 'home' }
+         : {} ),
     addOns: _pathWizard.addOns.map(a => ({
       type: a.type,
       frequency: a.frequency,
@@ -17418,6 +17545,14 @@ function renderPathStep1() {
   `;
 }
 
+// Set the Path's default equipment tier from the wizard review screen.
+// Validated against the EQUIP_TIERS registry; ignores unknown ids.
+function selectWizardEquipDefault(tier){
+  if(!EQUIP_TIERS.some(t => t.id === tier)) return;
+  _pathWizard.equipmentDefault = tier;
+  renderPathStep5();
+}
+
 // Toggle the HIIT variant choice. Passing 'summer-series' (or any registered
 // series id) sets Summer Series — and applies its recommended defaults so the
 // later wizard steps land on sensible values. Passing null reverts to
@@ -17675,15 +17810,43 @@ function renderPathStep5() {
   const totalPerWeek = _pathWizard.daysPerWeek +
     _pathWizard.addOns.reduce((s, a) => s + a.frequency, 0);
 
-  // Display name: library programmes show their full name, built-ins show their short code
+  // Display name: library programmes show their full name, built-ins show their short code.
+  // Series Paths show the series name (e.g. "Summer Series") instead of "HIIT".
   const lib = isLibraryProgramme(_pathWizard.programme) ? getLibraryProgramme(_pathWizard.programme) : null;
-  const displayName = lib ? lib.name : _pathWizard.programme;
+  const wizardSeries = (_pathWizard.programme === 'HIIT' && _pathWizard.hiitSeries && HIIT_SERIES[_pathWizard.hiitSeries])
+    ? HIIT_SERIES[_pathWizard.hiitSeries] : null;
+  const displayName = lib ? lib.name : wizardSeries ? wizardSeries.name : _pathWizard.programme;
+
+  // Equipment default — only surfaced on HIIT paths today, since that's
+  // where the homeSwap/gymSwap resolution applies. ULF/PPL/library paths
+  // don't need it. Defaults to 'home'.
+  let equipBlockHtml = '';
+  if(_pathWizard.programme === 'HIIT'){
+    const _active = _pathWizard.equipmentDefault || 'home';
+    equipBlockHtml = `
+      <div style="margin-bottom:20px;padding:14px;background:var(--surface2);border:1px solid rgba(255,140,66,0.25);border-radius:14px;">
+        <div style="font-size:11px;font-weight:800;color:var(--orange);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:4px;">Where will you mostly train?</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.4;">We'll tailor exercises to your kit. You can change this any session via the chip on the Today card.</div>
+        <div style="display:flex;gap:6px;">
+          ${EQUIP_TIERS.map(t => `
+            <button onclick="selectWizardEquipDefault('${t.id}')"
+              style="flex:1;background:${_active===t.id?'rgba(255,140,66,0.18)':'var(--surface3)'};border:1px solid ${_active===t.id?'var(--orange)':'var(--border)'};border-radius:10px;padding:10px 6px;font-size:11px;font-weight:700;color:${_active===t.id?'var(--orange)':'var(--text2)'};cursor:pointer;text-align:center;">
+              <div style="font-size:18px;line-height:1;">${t.icon}</div>
+              <div style="margin-top:4px;">${t.label}</div>
+              <div style="font-size:9px;font-weight:500;opacity:0.7;margin-top:2px;line-height:1.2;">${t.desc}</div>
+            </button>
+          `).join('')}
+        </div>
+      </div>`;
+  }
+
   document.getElementById('pathStep5').innerHTML = `
     <div style="text-align:center;margin-bottom:24px;">
       <div style="font-size:48px;margin-bottom:10px;">🎯</div>
       <div style="font-size:24px;font-weight:900;color:var(--text);">Your Path</div>
       <div style="font-size:14px;color:var(--text2);margin-top:6px;">Ready to commit?</div>
     </div>
+    ${equipBlockHtml}
     <div style="background:var(--surface2);border:1px solid var(--border);border-radius:16px;padding:18px;margin-bottom:20px;">
       <div style="display:flex;flex-direction:column;gap:12px;">
         <div style="display:flex;justify-content:space-between;">
