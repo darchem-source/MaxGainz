@@ -7602,7 +7602,12 @@ function confirmReps(){
   // PR check — celebrate every new in-session high (allows multiple PBs per exercise per session)
   if(sw > 0 && sessExs[curIdx] && !sessExs[curIdx].bw){
     const _prExName = sessExs[curIdx].name;
-    const _prevPB = getPB(_prExName);
+    // Use the exact-name lookup (getPBForLabel → getLiftHistoryByName), the
+    // same source the "LAST TIME" panel and PB cards use. getPB() only knows
+    // the 6 aliased compound lifts (bench/squat/deadlift/ohp/pushpress/row),
+    // so for any other exercise it returned null and every set falsely fired
+    // a "first time" PR even when the user had lifted heavier before.
+    const _prevPB = getPBForLabel(_prExName);
     if(!window._prShownThisSession) window._prShownThisSession = new Map();
     const _sessionBest = window._prShownThisSession.has(_prExName) ? window._prShownThisSession.get(_prExName) : null;
     // Threshold = highest weight already celebrated (session or all-time)
