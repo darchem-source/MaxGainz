@@ -684,6 +684,8 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
       <div data-prog-tab="week" class="active">
         <div class="section-label">THIS WEEK</div>
         <div id="weekKpiCard" style="margin:0 16px 4px;display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;"></div>
+        <!-- Path-completed-this-week banner (populated by renderProgress) -->
+        <div id="weekPathComplete" style="margin-top:14px;"></div>
         <div class="section-label" style="padding-top:18px;">INSIGHTS</div>
         <div id="weekInsights" style="margin:0 16px 24px;"></div>
       </div>
@@ -1494,6 +1496,21 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
   </div>
 </div>
 
+<!-- PATH COMPLETE CELEBRATION -->
+<div class="modal-ov" id="pathCompleteMod" style="z-index:420;" onclick="if(event.target===this)closePathCompleteModal()">
+  <div class="modal" style="text-align:center;">
+    <div class="modal-handle"></div>
+    <div style="font-size:60px;margin-bottom:6px;line-height:1;">🏆</div>
+    <div style="font-size:12px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:2.5px;margin-bottom:6px;">Path Complete</div>
+    <div id="pathCompleteName" style="font-size:24px;font-weight:900;color:var(--text);margin-bottom:6px;">—</div>
+    <div id="pathCompleteSub" style="font-size:13px;color:var(--text2);margin-bottom:20px;">—</div>
+    <div id="pathCompleteStats" style="display:flex;gap:8px;margin-bottom:20px;"></div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:18px;line-height:1.5;">Huge effort — you saw it through to the end. 💪 Ready for the next one?</div>
+    <button class="btn-p" style="width:100%;margin-bottom:8px;" onclick="startNewPathFromCompletion()">🚀 Start a new Path</button>
+    <button style="width:100%;background:transparent;border:none;color:var(--text2);font-size:13px;padding:10px;cursor:pointer;" onclick="closePathCompleteModal()">Maybe later</button>
+  </div>
+</div>
+
 <!-- MANUAL ACTIVITY MODAL -->
 <div class="modal-ov" id="activityMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal">
@@ -1777,10 +1794,14 @@ function dismissSplash() {
         updateProfileButton();
         // Check if first-time user needs onboarding
         if(typeof checkOnboarding === 'function') checkOnboarding();
-        // Advance path week / mark completed if needed
+        // Advance path week / mark completed if needed (also archives)
         checkPathWeekProgression();
-        // Auto-open path wizard if user has no active path, hasn't skipped, and onboarding isn't blocking
-        if(!isPathActive() && isAuthenticated()
+        // Celebrate a just-completed path before anything else path-related.
+        const _celebratedPath = maybeCelebratePathCompletion();
+        // Auto-open path wizard if user has no active path, hasn't skipped,
+        // onboarding isn't blocking, and we're not about to celebrate a
+        // completed path (let them dismiss that first).
+        if(!_celebratedPath && !isPathActive() && isAuthenticated()
           && !localStorage.getItem('maxgainz_path_skipped')
           && !document.getElementById('onboardMod').classList.contains('open')){
           _pathWizardAutoOpened = true;
@@ -3322,6 +3343,7 @@ async function cloudSaveProfile() {
     customWorkouts,
     customHIITs: cHIITs,
     userPath,
+    pathHistory: Array.isArray(pathHistory) ? pathHistory : [],
     bodyWeightLog,
     onboarded: !!localStorage.getItem('maxgainz_onboarded'),
     prefs: {
@@ -3445,6 +3467,21 @@ async function cloudLoadAll() {
             // Cloud has no path — ensure local state matches
             userPath = null;
             localStorage.removeItem('maxgainz_path');
+          }
+          // Merge completed-path history by id (don't blindly overwrite: a
+          // path archived offline must survive a cloud load of an older blob).
+          // If either side has celebrated=true, keep it true.
+          if (Array.isArray(blob.pathHistory)) {
+            const byId = {};
+            blob.pathHistory.forEach(p => { if(p && p.id) byId[p.id] = {...p}; });
+            (Array.isArray(pathHistory) ? pathHistory : []).forEach(p => {
+              if(!p || !p.id) return;
+              if(!byId[p.id]) byId[p.id] = {...p};
+              else if(p.celebrated) byId[p.id].celebrated = true;
+            });
+            pathHistory = Object.values(byId)
+              .sort((a, b) => (b.completedDate || '').localeCompare(a.completedDate || ''));
+            localStorage.setItem('maxgainz_pathHistory', JSON.stringify(pathHistory));
           }
           // Restore onboarded flag from cloud so it survives new devices/browsers
           if (blob.onboarded) {
@@ -3711,6 +3748,7 @@ function _buildExportPayload(){
     // Profile + path
     userProfile:    userProfile || {},
     userPath:       lsRead('maxgainz_path', null),
+    pathHistory:    lsRead('maxgainz_pathHistory', []),
     // Body weight history
     bodyWeightLog:  bodyWeightLog || [],
     // Preferences
@@ -3813,6 +3851,11 @@ function applyImportPayload(payload){
   } else {
     userPath = null;
     localStorage.removeItem('maxgainz_path');
+  }
+
+  if(Array.isArray(payload.pathHistory)){
+    pathHistory = payload.pathHistory;
+    localStorage.setItem('maxgainz_pathHistory', JSON.stringify(pathHistory));
   }
 
   // Body weight log
@@ -3941,6 +3984,13 @@ const completedSessions = stored
   : [];
 _normalizeSessionWeights(completedSessions); // repair amended-weight sessions on load
 const customWeights = stored ? (stored.weights || {}) : {};
+
+// Completed-path history — array of summary records, newest first. Persisted
+// to its own localStorage key and synced in the cloud profile blob. See
+// _buildPathSummary / _archiveCompletedPathIfNeeded.
+let pathHistory = [];
+try { pathHistory = JSON.parse(localStorage.getItem('maxgainz_pathHistory') || '[]') || []; }
+catch(e) { pathHistory = []; }
 
 // Body weight log — array of {date: ISO string, weight: number, unit: 'kg'|'lbs'}
 let bodyWeightLog = stored ? (stored.bodyWeightLog || []) : [];
@@ -13617,6 +13667,10 @@ function renderBWChart() {
 
 function renderProgress(){
   renderWeekKpi();
+  // Path-completed-this-week banner (empty string when none completed)
+  const _wpc = document.getElementById('weekPathComplete');
+  if(_wpc) _wpc.innerHTML = (typeof _renderPathCompletedThisWeekCard === 'function')
+    ? _renderPathCompletedThisWeekCard() : '';
   renderWeekInsights();
   renderPBCards();
   renderCalendar();
@@ -15656,6 +15710,193 @@ function isPathActive() {
   return userPath !== null && userPath.status === 'active';
 }
 
+// ── COMPLETED-PATH HISTORY ──────────────────────────────────────────────
+// Human-readable name for a path object (library name / HIIT series name /
+// raw programme id). Mirrors the pattern used in confirmStartPath's toast.
+function getPathDisplayName(path){
+  if(!path) return 'Path';
+  if(typeof isLibraryProgramme === 'function' && isLibraryProgramme(path.programme)){
+    const lib = getLibraryProgramme(path.programme);
+    if(lib) return lib.name;
+  }
+  if(path.hiitSeries && typeof HIIT_SERIES !== 'undefined' && HIIT_SERIES[path.hiitSeries]){
+    return HIIT_SERIES[path.hiitSeries].name;
+  }
+  return path.programme;
+}
+
+// Build a summary record for a (completed) path from the sessions logged
+// within its [startDate, endDate] window.
+function _buildPathSummary(path){
+  const start = new Date(path.startDate + 'T00:00:00').getTime();
+  const end   = new Date(path.endDate   + 'T23:59:59').getTime();
+  let sessions = 0, adhoc = 0, volume = 0, minutes = 0;
+  completedSessions.forEach(s => {
+    if(s.manualActivity) return;
+    const t = (s.date instanceof Date ? s.date : new Date(s.date)).getTime();
+    if(t < start || t > end) return;
+    if(s.adhoc) adhoc++; else sessions++;
+    volume  += (s.volume || 0);
+    minutes += (s.durationMin || 0);
+  });
+  const sessPerWeek = (path.coreSchedule?.daysPerWeek || 0)
+    + (path.addOns || []).reduce((a, x) => a + (x.frequency || 0), 0);
+  const planned = sessPerWeek * (path.duration || 0);
+  const adherencePct = planned > 0 ? Math.min(100, Math.round((sessions / planned) * 100)) : null;
+  return {
+    id: path.id,
+    programme: path.programme,
+    name: getPathDisplayName(path),
+    hiitSeries: path.hiitSeries || null,
+    startDate: path.startDate,
+    endDate: path.endDate,
+    duration: path.duration,
+    completedDate: new Date().toISOString().slice(0, 10),
+    sessions, adhocSessions: adhoc,
+    volume: Math.round(volume), minutes,
+    plannedSessions: planned, adherencePct,
+    celebrated: false
+  };
+}
+
+function savePathHistory(){
+  try { localStorage.setItem('maxgainz_pathHistory', JSON.stringify(pathHistory)); } catch(e){}
+  if(typeof cloudSaveProfile === 'function') cloudSaveProfile();
+}
+
+// Archive the active path's completed state to history. Idempotent — deduped
+// by path id — so it safely catches BOTH a fresh active→completed transition
+// AND paths that older builds silently completed before history existed.
+// Returns the new record, or null if nothing was archived.
+function _archiveCompletedPathIfNeeded(){
+  if(!userPath || userPath.status !== 'completed') return null;
+  if(!Array.isArray(pathHistory)) pathHistory = [];
+  if(pathHistory.some(p => p.id === userPath.id)) return null; // already archived
+  const rec = _buildPathSummary(userPath);
+  pathHistory.unshift(rec); // newest first
+  savePathHistory();
+  return rec;
+}
+
+// Called on app open: if a completed path hasn't been celebrated yet, show
+// the celebration modal (once). Returns true if a celebration was queued, so
+// boot can suppress the auto-open path wizard for this launch.
+function maybeCelebratePathCompletion(){
+  if(!Array.isArray(pathHistory)) return false;
+  const rec = pathHistory.find(p => !p.celebrated);
+  if(!rec) return false;
+  setTimeout(() => showPathCompleteModal(rec), 700);
+  return true;
+}
+
+function showPathCompleteModal(rec){
+  if(!rec) return;
+  const nameEl = document.getElementById('pathCompleteName');
+  const subEl  = document.getElementById('pathCompleteSub');
+  const statsEl= document.getElementById('pathCompleteStats');
+  if(!nameEl || !subEl || !statsEl) return;
+  nameEl.textContent = rec.name;
+  const startStr = new Date(rec.startDate + 'T12:00:00').toLocaleDateString('en-GB', {day:'numeric', month:'short'});
+  const endStr   = new Date(rec.endDate   + 'T12:00:00').toLocaleDateString('en-GB', {day:'numeric', month:'short', year:'numeric'});
+  subEl.textContent = `${rec.duration}-week path · ${startStr} – ${endStr}`;
+  const volStr = rec.volume >= 1000 ? (Math.round(rec.volume/100)/10) + 'k' : rec.volume;
+  const stat = (v, l) => `<div style="flex:1;background:var(--surface2);border-radius:12px;padding:13px 8px;"><div style="font-size:20px;font-weight:900;color:var(--accent);">${v}</div><div style="font-size:10px;color:var(--text2);margin-top:2px;">${l}</div></div>`;
+  statsEl.innerHTML = [
+    stat(rec.sessions, 'Sessions'),
+    stat(volStr + 'kg', 'Volume'),
+    rec.adherencePct != null ? stat(rec.adherencePct + '%', 'Adherence') : stat(rec.duration + 'w', 'Weeks')
+  ].join('');
+  document.getElementById('pathCompleteMod').classList.add('open');
+  // Mark celebrated the moment it's shown so it never re-fires.
+  rec.celebrated = true;
+  savePathHistory();
+  if(typeof haptic === 'function') haptic([80, 60, 80, 60, 200]);
+}
+
+function closePathCompleteModal(){
+  document.getElementById('pathCompleteMod').classList.remove('open');
+}
+
+function startNewPathFromCompletion(){
+  closePathCompleteModal();
+  _pathWizardAutoOpened = false;
+  if(typeof openPathWizard === 'function') openPathWizard();
+}
+
+// Records completed within the current (Mon-start) week — for the Progress
+// "This Week" card.
+function _pathsCompletedThisWeek(){
+  if(!Array.isArray(pathHistory) || !pathHistory.length) return [];
+  const now = new Date();
+  const wStart = new Date(now);
+  wStart.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  wStart.setHours(0, 0, 0, 0);
+  return pathHistory.filter(p => {
+    if(!p.completedDate) return false;
+    return new Date(p.completedDate + 'T12:00:00') >= wStart;
+  });
+}
+
+// Progress > This Week card (empty string when no path completed this week).
+function _renderPathCompletedThisWeekCard(){
+  const recs = _pathsCompletedThisWeek();
+  if(!recs.length) return '';
+  return recs.map(rec => {
+    const volStr = rec.volume >= 1000 ? (Math.round(rec.volume/100)/10) + 'k kg' : rec.volume + ' kg';
+    const chips = [
+      `${rec.duration} weeks`,
+      `${rec.sessions} sessions`,
+      volStr,
+      rec.adherencePct != null ? `${rec.adherencePct}% adherence` : null
+    ].filter(Boolean).map(c =>
+      `<span style="background:var(--surface3);border-radius:8px;padding:3px 8px;font-size:11px;font-weight:700;color:var(--text2);">${c}</span>`
+    ).join('');
+    return `
+      <div style="margin:0 16px 10px;background:linear-gradient(135deg,rgba(200,255,0,0.10),rgba(123,77,255,0.08));border:1px solid rgba(200,255,0,0.35);border-radius:16px;padding:16px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+          <div style="font-size:30px;">🏆</div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:10px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:1.5px;">Path Complete</div>
+            <div style="font-size:17px;font-weight:900;color:var(--text);">${rec.name}</div>
+          </div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;">${chips}</div>
+      </div>`;
+  }).join('');
+}
+
+// Path tab "Paths Completed" tracker (empty string when no history).
+function _renderCompletedPathsSection(){
+  if(!Array.isArray(pathHistory) || !pathHistory.length) return '';
+  const rows = pathHistory.map(rec => {
+    const startStr = new Date(rec.startDate + 'T12:00:00').toLocaleDateString('en-GB', {day:'numeric', month:'short'});
+    const endStr   = new Date(rec.endDate   + 'T12:00:00').toLocaleDateString('en-GB', {day:'numeric', month:'short', year:'numeric'});
+    const volStr = rec.volume >= 1000 ? (Math.round(rec.volume/100)/10) + 'k kg' : rec.volume + ' kg';
+    const meta = [
+      `${rec.sessions} sessions`,
+      volStr,
+      rec.adherencePct != null ? `${rec.adherencePct}% adherence` : null
+    ].filter(Boolean).join(' · ');
+    return `
+      <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;margin-bottom:8px;">
+        <div style="font-size:22px;flex-shrink:0;">🏅</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:800;color:var(--text);">${rec.name}</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px;">${rec.duration} weeks · ${startStr} – ${endStr}</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px;">${meta}</div>
+        </div>
+      </div>`;
+  }).join('');
+  return `
+    <div style="margin:24px 16px 0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div style="font-size:11px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;">🏆 Paths Completed</div>
+        <div style="font-size:13px;font-weight:900;color:var(--accent);">${pathHistory.length}</div>
+      </div>
+      ${rows}
+    </div>`;
+}
+
 function getPathCurrentWeek() {
   if (!userPath) return 1;
   const start = new Date(userPath.startDate);
@@ -15701,17 +15942,24 @@ function getPathAdherenceThisWeek() {
 }
 
 function checkPathWeekProgression() {
-  if (!userPath || userPath.status !== 'active') return;
-  const newWeek = getPathCurrentWeek();
-  if (newWeek !== userPath.currentWeek) {
-    userPath.currentWeek = newWeek;
-    savePathLocal();
+  if (!userPath) return;
+  if (userPath.status === 'active') {
+    const newWeek = getPathCurrentWeek();
+    if (newWeek !== userPath.currentWeek) {
+      userPath.currentWeek = newWeek;
+      savePathLocal();
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    if (today >= userPath.endDate) {
+      userPath.status = 'completed';
+      savePathLocal();
+    }
   }
-  const today = new Date().toISOString().slice(0, 10);
-  if (today >= userPath.endDate) {
-    userPath.status = 'completed';
-    savePathLocal();
-  }
+  // Archive any completed-but-unarchived path (covers the fresh transition
+  // above AND paths silently completed by older builds before history
+  // existed). Idempotent — deduped by id. The celebration itself fires
+  // separately on app open via maybeCelebratePathCompletion().
+  _archiveCompletedPathIfNeeded();
 }
 
 // ─────────────────────────────────────────────
@@ -17138,7 +17386,8 @@ function _renderPathTabEmpty() {
       <div style="font-size:12px;color:var(--text2);margin-top:8px;">
         You're training without a structured path. Tap <strong>Start a Path</strong> whenever you're ready.
       </div>`}
-    </div>`;
+    </div>
+    ${_renderCompletedPathsSection()}`;
 }
 
 function _renderPathTabActive() {
@@ -17467,6 +17716,7 @@ function _renderPathTabActive() {
         ✕ Cancel Path
       </button>
     </div>
+    ${_renderCompletedPathsSection()}
   `;
 }
 
@@ -17558,6 +17808,9 @@ function updatePathWizardDots(activeStep) {
 }
 
 function confirmStartPath() {
+  // Archive any completed path before it's overwritten by the new one, so a
+  // finished path is never silently discarded (idempotent — deduped by id).
+  _archiveCompletedPathIfNeeded();
   const today = new Date().toISOString().slice(0, 10);
   userPath = {
     id: crypto.randomUUID(),
@@ -19149,9 +19402,10 @@ async function authSignup(){
       }
       updateProfileButton();
       checkPathWeekProgression();
+      const _celebratedPath = maybeCelebratePathCompletion();
       // Show onboarding for brand-new users BEFORE path wizard
       if(typeof checkOnboarding === 'function') checkOnboarding();
-      if(!isPathActive() && !localStorage.getItem('maxgainz_path_skipped')
+      if(!_celebratedPath && !isPathActive() && !localStorage.getItem('maxgainz_path_skipped')
         && !document.getElementById('onboardMod').classList.contains('open')){
         _pathWizardAutoOpened = true;
         setTimeout(() => openPathWizard(), 800);
@@ -19246,9 +19500,10 @@ async function authLogin(){
       // Refresh after cloud sync picks up any updated profile image
       updateProfileButton();
       checkPathWeekProgression();
+      const _celebratedPath = maybeCelebratePathCompletion();
       // Show onboarding for first-time users BEFORE path wizard
       if(typeof checkOnboarding === 'function') checkOnboarding();
-      if(!isPathActive() && isAuthenticated() && !localStorage.getItem('maxgainz_path_skipped')
+      if(!_celebratedPath && !isPathActive() && isAuthenticated() && !localStorage.getItem('maxgainz_path_skipped')
         && !document.getElementById('onboardMod').classList.contains('open')){
         _pathWizardAutoOpened = true;
         setTimeout(() => openPathWizard(), 800);
