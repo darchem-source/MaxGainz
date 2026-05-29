@@ -3396,6 +3396,7 @@ async function cloudLoadAll() {
       intensity: r.intensity,
       xpAwarded: r.xp_awarded
     }));
+    _normalizeSessionWeights(completedSessions); // repair amended-weight sessions from cloud
   }
 
   // Load weights + profile blob
@@ -3490,6 +3491,43 @@ const STORAGE_KEY = 'maxgainz_v1';
 function loadLocalCache() {
   try { const raw = localStorage.getItem(STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e) {}
   return null;
+}
+
+// One-time-per-load data repair for the "amended weight" bug. When a user
+// amended a lift's weight while logging (e.g. dropped a planned 90kg bench to
+// 80kg per set), older builds stored the PLANNED weight in setLog[name].weight
+// and topLifts — while the ACTUAL lifted weights were always stored correctly
+// in setLog[name].setWeights. That mis-stored the session weight (summary
+// showed 90kg) and created false PBs (a 90kg best that never happened).
+//
+// This recomputes each exercise's representative weight from its logged sets
+// (heaviest set) and rebuilds topLifts to match. Idempotent: sessions never
+// amended are unchanged (max of setWeights already equals the stored weight),
+// so it's safe to run on every load.
+function _normalizeSessionWeights(sessions){
+  if(!Array.isArray(sessions)) return;
+  sessions.forEach(s => {
+    if(!s || s.manualActivity || !s.setLog || typeof s.setLog !== 'object') return;
+    Object.values(s.setLog).forEach(e => {
+      if(!e || e.bw) return;
+      const sw = Array.isArray(e.setWeights)
+        ? e.setWeights.filter(w => typeof w === 'number' && isFinite(w) && w > 0)
+        : [];
+      if(sw.length){
+        const top = Math.max(...sw);
+        if(e.weight !== top) e.weight = top;
+      }
+    });
+    // Rebuild topLifts from the corrected setLog (heaviest 2 non-bodyweight
+    // lifts). Only when setLog has usable entries — never wipe topLifts for
+    // legacy sessions that lack a setLog.
+    const lifts = Object.entries(s.setLog)
+      .filter(([, e]) => e && !e.bw && e.weight > 0)
+      .map(([name, e]) => ({ name, weight: e.weight }))
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, 2);
+    if(lifts.length) s.topLifts = lifts;
+  });
 }
 
 // Write local cache — always reflects current in-memory state
@@ -3748,6 +3786,7 @@ function applyImportPayload(payload){
   // Replace in-memory state
   completedSessions.length = 0;
   (payload.sessions || []).forEach(s => completedSessions.push({...s, date: new Date(s.date)}));
+  _normalizeSessionWeights(completedSessions); // repair amended-weight sessions from imported data
 
   Object.keys(customWeights).forEach(k => delete customWeights[k]);
   Object.assign(customWeights, payload.customWeights || {});
@@ -3900,6 +3939,7 @@ const stored = loadLocalCache();
 const completedSessions = stored
   ? stored.sessions.map(s => ({...s, date: new Date(s.date)}))
   : [];
+_normalizeSessionWeights(completedSessions); // repair amended-weight sessions on load
 const customWeights = stored ? (stored.weights || {}) : {};
 
 // Body weight log — array of {date: ISO string, weight: number, unit: 'kg'|'lbs'}
@@ -9473,10 +9513,10 @@ function finishSession(){
       }
     }
   });
-  // console.log('finishSession: step 3 - topLifts. volume=', volume);
-  const topLifts=[...sessExs].filter(e=>e.weight>0).sort((a,b)=>b.weight-a.weight).slice(0,2).map(e=>({name:e.name,weight:e.weight}));
-  window._shareTopLifts = topLifts;
   // console.log('finishSession: step 4 - setLog');
+  // topLifts is computed AFTER setLog (below) so it uses each exercise's
+  // actual logged top-set weight, not sessExs[i].weight (the planned value,
+  // which is stale once the user amends weight per-set during logging).
   const setLog={};
   sessExs.forEach((ex,i)=>{
     const done=(setsDone[i]||[]).length;
@@ -9497,11 +9537,30 @@ function finishSession(){
       // definitions sometimes set weight to objects ({kg:"12-15"}) or strings
       // ("bodyweight") — storing those would NaN-poison muscle balance.
       // Also sanitize each entry in setWeights (per-set logged weights).
-      const _exW = (typeof ex.weight === 'number' && isFinite(ex.weight) && ex.weight >= 0) ? ex.weight : 0;
+      const _exWPlanned = (typeof ex.weight === 'number' && isFinite(ex.weight) && ex.weight >= 0) ? ex.weight : 0;
       const _swArr = Object.values(sw).map(v => (typeof v === 'number' && isFinite(v) && v >= 0) ? v : 0);
+      // Representative weight for this exercise this session = the heaviest
+      // set ACTUALLY logged. Weight amendments made while logging (e.g. the
+      // user drops a planned 90kg bench to 80kg per set) live only in
+      // setWeights — ex.weight keeps the planned value forever. Recording
+      // ex.weight here mis-stored the session weight (summary showed 90kg
+      // while the sets were logged at 80kg) AND created false PBs (a 90kg
+      // "personal best" that never happened). Derive from the logged sets;
+      // fall back to the planned weight only when no per-set weight was
+      // captured. Bodyweight moves stay 0.
+      const _loggedW = _swArr.filter(w => w > 0);
+      const _exW = _loggedW.length ? Math.max(..._loggedW) : _exWPlanned;
       setLog[ex.name]={sets:done,reps:Object.values(rl),weight:_exW,bw:!!ex.bw,setWeights:_swArr,equipOverride:equipOverride[i]||null,note:_exerciseNotes[ex.name]||null,restSecs:restSecs.length?restSecs:undefined};
     }
   });
+  // Top lifts for the summary header / share card — derived from the
+  // corrected setLog (actual logged top-set weights), excluding bodyweight.
+  const topLifts = Object.entries(setLog)
+    .filter(([, e]) => !e.bw && e.weight > 0)
+    .map(([name, e]) => ({ name, weight: e.weight }))
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, 2);
+  window._shareTopLifts = topLifts;
   // console.log('finishSession: step 5 - progressions');
   const progressions=computeProgressionSuggestions();
   // Don't auto-apply — store as pending suggestions for user to confirm
