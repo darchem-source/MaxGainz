@@ -9651,29 +9651,48 @@ function finishSession(){
       reps:     { icon:'🔁', label:'Push reps',    color:'var(--accent2)',  bg:'rgba(0,212,255,0.08)',   border:'rgba(0,212,255,0.30)' },
       deload:   { icon:'⬇', label:'Deload',       color:'#ff8c42',         bg:'rgba(255,140,66,0.08)',  border:'rgba(255,140,66,0.30)' },
     };
-    // Are there any actual weight changes to apply?
-    const hasIncrease = sorted.some(p => p.action === 'increase' || p.action === 'deload');
+    // Weight-change suggestions are the only selectable/appliable rows
+    // ('hold' / 'reps' are coaching notes with no weight change). Each is
+    // selected by default so "Apply all" stays one tap, but the user can
+    // tap any row to include/exclude its change before applying.
+    const weightChanges = sorted.filter(p => p.suggested != null && p.suggested !== p.current);
+    const hasIncrease = weightChanges.length > 0;
+    window._progWeightChanges = weightChanges;
+    window._progSelected = new Set(weightChanges.map((_, i) => i));
     const items = sorted.map((p, idx) => {
       const meta = ACTION_META[p.action] || ACTION_META.hold;
       const arrow = p.suggested === p.current
         ? `<span style="color:var(--text2);">${p.current}kg</span>`
         : `<span>${p.current}kg → <strong style="color:${meta.color};">${p.suggested}kg</strong></span>`;
       const conf = p.confidence === 'high' ? '· strong' : p.confidence === 'low' ? '· tentative' : '';
-      return `<div style="padding:10px 0;${idx>0?'border-top:0.5px solid rgba(255,255,255,0.06);':''}">
+      const wIdx = weightChanges.indexOf(p); // >= 0 → selectable weight change
+      const selectable = wIdx >= 0;
+      // Checkbox indicator (selected by default). Tapping the row toggles it.
+      const checkbox = selectable
+        ? `<span id="progCheck-${wIdx}" style="flex-shrink:0;width:20px;height:20px;border-radius:6px;border:1.5px solid var(--accent);background:var(--accent);color:#000;font-size:12px;font-weight:900;display:flex;align-items:center;justify-content:center;line-height:1;">✓</span>`
+        : '';
+      const rowAttrs = selectable
+        ? ` id="progRow-${wIdx}" onclick="toggleProgressionSelect(${wIdx})" style="padding:10px 0;cursor:pointer;${idx>0?'border-top:0.5px solid rgba(255,255,255,0.06);':''}"`
+        : ` style="padding:10px 0;${idx>0?'border-top:0.5px solid rgba(255,255,255,0.06);':''}"`;
+      return `<div${rowAttrs}>
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:4px;">
           <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0;">
             <span style="font-size:14px;flex-shrink:0;">${meta.icon}</span>
             <div style="font-size:13px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.name}</div>
           </div>
-          <div style="font-size:12px;font-weight:700;flex-shrink:0;">${arrow}</div>
+          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+            <span style="font-size:12px;font-weight:700;">${arrow}</span>
+            ${checkbox}
+          </div>
         </div>
         <div style="font-size:11px;color:var(--text2);line-height:1.45;padding-left:20px;">${meta.label} ${conf} — ${p.reason}</div>
       </div>`;
     }).join('');
     const buttons = hasIncrease ? `
-      <div style="display:flex;gap:8px;margin-top:12px;">
-        <button onclick="applyProgressions(true)" style="flex:1;background:var(--accent);color:#000;border:none;border-radius:8px;padding:10px;font-size:12px;font-weight:800;cursor:pointer;">✓ Apply weight changes</button>
-        <button onclick="applyProgressions(false)" style="flex:1;background:transparent;border:0.5px solid var(--border);color:var(--text2);border-radius:8px;padding:10px;font-size:12px;font-weight:700;cursor:pointer;">Skip</button>
+      ${weightChanges.length > 1 ? '<div style="font-size:10px;color:var(--text2);text-align:center;margin-top:10px;">Tap a row to include or exclude its change</div>' : ''}
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button id="progApplyBtn" onclick="applyProgressions(true)" style="flex:1;background:var(--accent);color:#000;border:none;border-radius:8px;padding:10px;font-size:12px;font-weight:800;cursor:pointer;">✓ Apply all (${weightChanges.length})</button>
+        <button onclick="applyProgressions(false)" style="flex:1;background:transparent;border:0.5px solid var(--border);color:var(--text2);border-radius:8px;padding:10px;font-size:12px;font-weight:700;cursor:pointer;">Skip all</button>
       </div>` : `
       <div style="margin-top:10px;font-size:11px;color:var(--text2);text-align:center;">Notes only — no weight changes to apply</div>`;
     progNote = `<div style="margin-top:12px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:12px;">
@@ -12457,11 +12476,51 @@ function openFormGuide(){
 // ── EXERCISE NOTES ──
 let _exerciseNotes = {}; // keyed by exercise name during current session
 
+// Toggle whether a single weight-change suggestion is included when applying.
+// wIdx indexes window._progWeightChanges (the selectable rows).
+function toggleProgressionSelect(wIdx){
+  if(!window._progSelected) return;
+  if(window._progSelected.has(wIdx)) window._progSelected.delete(wIdx);
+  else window._progSelected.add(wIdx);
+  _updateProgCheckUI(wIdx);
+  _updateProgApplyBtn();
+}
+
+function _updateProgCheckUI(wIdx){
+  const sel = window._progSelected && window._progSelected.has(wIdx);
+  const chk = document.getElementById('progCheck-' + wIdx);
+  const row = document.getElementById('progRow-' + wIdx);
+  if(chk){
+    chk.style.background  = sel ? 'var(--accent)' : 'transparent';
+    chk.style.color       = sel ? '#000' : 'transparent';
+    chk.style.borderColor = sel ? 'var(--accent)' : 'var(--border)';
+  }
+  if(row) row.style.opacity = sel ? '1' : '0.45';
+}
+
+function _updateProgApplyBtn(){
+  const btn = document.getElementById('progApplyBtn');
+  if(!btn) return;
+  const n = window._progSelected ? window._progSelected.size : 0;
+  const total = Array.isArray(window._progWeightChanges) ? window._progWeightChanges.length : 0;
+  if(n === 0)            btn.textContent = '✓ Apply';
+  else if(n === total)   btn.textContent = '✓ Apply all (' + n + ')';
+  else                   btn.textContent = '✓ Apply ' + n + ' of ' + total;
+  btn.style.opacity = n === 0 ? '0.5' : '1';
+}
+
 function applyProgressions(apply){
   const progs = window._pendingProgressions || [];
-  // Only the suggestions that actually change weight should mutate state.
-  // 'hold' / 'reps' suggestions are coaching notes, no weight change.
-  const weightChanges = progs.filter(p => p.suggested && p.suggested !== p.current);
+  // Selectable weight changes captured when the panel was built. Fall back to
+  // recomputing from progs if the panel state is somehow missing.
+  const allWeightChanges = Array.isArray(window._progWeightChanges)
+    ? window._progWeightChanges
+    : progs.filter(p => p.suggested && p.suggested !== p.current);
+  // Apply only the rows the user left selected (all by default).
+  const sel = window._progSelected;
+  const weightChanges = sel
+    ? allWeightChanges.filter((_, i) => sel.has(i))
+    : allWeightChanges;
   if(apply && weightChanges.length){
     weightChanges.forEach(p => {
       customWeights[p.name] = p.suggested;
@@ -12477,6 +12536,8 @@ function applyProgressions(apply){
     weightChanges.forEach(p => cloudSaveWeight(p.name, p.suggested));
   }
   window._pendingProgressions = null;
+  window._progSelected = null;
+  window._progWeightChanges = null;
   // Hide the suggestion panel
   const finSummary = document.getElementById('finSummary');
   if(finSummary){
