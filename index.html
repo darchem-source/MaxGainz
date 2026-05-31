@@ -1516,7 +1516,13 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
   <div class="modal">
     <div class="modal-handle"></div>
     <div style="font-size:19px;font-weight:800;margin-bottom:4px;">Log Activity</div>
-    <div style="font-size:13px;color:var(--text2);margin-bottom:16px;">What did you do today?</div>
+    <div id="actModSub" style="font-size:13px;color:var(--text2);margin-bottom:16px;">What did you do today?</div>
+    <!-- When (date) — defaults to today, can backdate to any past day -->
+    <div style="margin-bottom:16px;">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">When?</div>
+      <input id="actDate" type="date" onchange="onActDateChange(this.value)"
+        style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:14px;color:var(--text);box-sizing:border-box;" />
+    </div>
     <!-- Activity type grid -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;" id="activityGrid"></div>
     <!-- Duration -->
@@ -13469,18 +13475,24 @@ function renderCalendar(){
       cellStyle += `background:${data.color};color:#000;font-weight:800;cursor:pointer;`;
       cellContent = `<div style="font-size:14px;line-height:1;margin-bottom:1px;">${data.emoji}</div><div style="font-size:10px;">${d}</div>`;
     } else if(isToday){
-      cellStyle += 'background:var(--surface2);border:2px solid var(--accent);color:var(--accent);font-weight:800;';
+      // Empty today — tappable to log an activity for today
+      cellStyle += 'background:var(--surface2);border:2px solid var(--accent);color:var(--accent);font-weight:800;cursor:pointer;';
       cellContent = `<div style="font-size:13px;">${d}</div><div style="font-size:8px;color:var(--accent);font-weight:700;">TODAY</div>`;
     } else if(isFuture){
       cellStyle += 'color:var(--text2);opacity:0.4;';
       cellContent = `<div>${d}</div>`;
     } else {
-      // Past rest day
-      cellStyle += 'background:var(--surface3);color:var(--text2);';
-      cellContent = `<div>${d}</div>`;
+      // Empty past day — tappable to backdate a "different activity". The
+      // faint ＋ signals it can be logged into.
+      cellStyle += 'background:var(--surface3);color:var(--text2);cursor:pointer;';
+      cellContent = `<div>${d}</div><div style="font-size:9px;line-height:1;margin-top:1px;opacity:0.4;">＋</div>`;
     }
-    
-    const clickable = data ? `onclick="showCalDayDetail('${cellDate.toISOString()}')"` : '';
+
+    // Days with a workout open the detail view; empty past/today days open
+    // the activity logger backdated to that day; future days aren't loggable.
+    let clickable = '';
+    if(data) clickable = `onclick="showCalDayDetail('${cellDate.toISOString()}')"`;
+    else if(!isFuture) clickable = `onclick="openActivityLogForDate('${cellDate.toISOString()}')"`;
     html += `<div style="${cellStyle}" ${clickable}>${cellContent}</div>`;
   }
   
@@ -18856,12 +18868,33 @@ const ACTIVITY_TYPES=[
 let selectedActivity=ACTIVITY_TYPES[0];
 let activityDur=30;
 let activityIntensity='moderate';
+let activityDate=new Date(); // the date the activity is logged against (defaults to now)
 const intensityXpMulti={easy:0.7,moderate:1.0,hard:1.4};
 
-function openActivityLog(){
+// Local YYYY-MM-DD (NOT toISOString, which is UTC and can be off by a day).
+function _localYMD(d){
+  const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+
+// Open the activity logger. Optional prefillISO backdates it to a past day
+// (used by tappable empty calendar cells). No arg → defaults to today/now.
+function openActivityLog(prefillISO){
   selectedActivity=ACTIVITY_TYPES[0];
   activityDur=30;
   activityIntensity='moderate';
+  // Resolve the target date. For a backdated day, anchor to noon local so
+  // timezone/midnight edges can't bump it to the wrong calendar day.
+  const now=new Date();
+  let d=now;
+  if(prefillISO){
+    const pd=new Date(prefillISO);
+    if(!isNaN(pd)) d=new Date(pd.getFullYear(), pd.getMonth(), pd.getDate(), 12, 0, 0);
+  }
+  activityDate=d;
+  const dateInput=document.getElementById('actDate');
+  if(dateInput){ dateInput.value=_localYMD(d); dateInput.max=_localYMD(now); }
+  _updateActDateSubtitle();
   document.getElementById('activityGrid').innerHTML=ACTIVITY_TYPES.map(a=>`
     <div onclick="selectActivity('${a.id}')" id="act-${a.id}" style="background:var(--surface2);border:1.5px solid ${a.id===selectedActivity.id?'var(--accent)':'var(--border)'};border-radius:12px;padding:12px;text-align:center;cursor:pointer;transition:all 0.15s;">
       <div style="font-size:24px;">${a.emoji}</div>
@@ -18878,6 +18911,32 @@ function openActivityLog(){
   const customNameEl=document.getElementById('actCustomName');
   if(customNameEl) customNameEl.value='';
   document.getElementById('activityMod').classList.add('open');
+}
+
+// Calendar entry point — open the logger backdated to a tapped empty day.
+function openActivityLogForDate(iso){ openActivityLog(iso); }
+
+// Date picker changed. Snap to now() when the user picks today (so the
+// timestamp reflects when they logged it), else noon of the chosen day.
+function onActDateChange(val){
+  const now=new Date();
+  if(!val){ activityDate=now; }
+  else if(val === _localYMD(now)){ activityDate=now; }
+  else {
+    const [y,m,d]=val.split('-').map(Number);
+    activityDate=new Date(y, (m||1)-1, d||1, 12, 0, 0);
+  }
+  _updateActDateSubtitle();
+}
+
+function _updateActDateSubtitle(){
+  const sub=document.getElementById('actModSub');
+  if(!sub) return;
+  if(_localYMD(activityDate) === _localYMD(new Date())){
+    sub.textContent='What did you do today?';
+  } else {
+    sub.textContent='Logging for ' + activityDate.toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long'});
+  }
 }
 
 function selectActivity(id){
@@ -18911,8 +18970,11 @@ function saveActivity(){
   }
   const notes = (document.getElementById('actNotes')?.value || '').trim();
   const xp = Math.round(selectedActivity.xp * intensityXpMulti[activityIntensity] * (activityDur / 30));
+  // Use the chosen date (defaults to now; noon-local for backdated days).
+  const when = (activityDate instanceof Date && !isNaN(activityDate)) ? activityDate : new Date();
+  const isBackdated = _localYMD(when) !== _localYMD(new Date());
   const sess={
-    date:new Date(),
+    date:when,
     day:label,
     exercises:0,
     durationMin:activityDur,
@@ -18928,13 +18990,17 @@ function saveActivity(){
     xpAwarded:xp
   };
   completedSessions.push(sess);
+  // Keep the log chronologically ordered so backdated entries land in the
+  // right place (some views assume the array is roughly date-sorted).
+  completedSessions.sort((a,b) => new Date(a.date) - new Date(b.date));
   awardXP('activity',{xp});
   saveStore(sess, null);
   document.getElementById('activityMod').classList.remove('open');
   renderToday();
   renderProgress();
   if(typeof renderPathTab === 'function' && document.getElementById('s-path')?.classList.contains('active')) renderPathTab();
-  showToast(`${selectedActivity.emoji} ${label} logged · +${xp} XP`, 3000);
+  const whenLabel = isBackdated ? ' on ' + when.toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : '';
+  showToast(`${selectedActivity.emoji} ${label} logged${whenLabel} · +${xp} XP`, 3000);
 }
 
 // Delete a previously-logged manual activity (run, yoga, tennis, etc.).
