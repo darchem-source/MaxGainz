@@ -7316,6 +7316,15 @@ function updNextBtn(){
 }
 
 function renderBubbles(ex){
+  // Dispatch to the circuit renderer for core-circuit exercises (Abdominal
+  // Work). Without this guard, every call site that re-renders bubbles —
+  // markSet, skipRest, dismissRestAlert, addSett, removeSett — wipes the
+  // round bubbles out and replaces them with regular per-set bubbles wired
+  // to openRepInput, so tapping a round opens the wrong logger.
+  if(isCoreCircuit(ex)){
+    renderCoreCircuit(ex);
+    return;
+  }
   const done=setsDone[curIdx]||[], reps=repsLogged[curIdx]||{}, sw=setWeights[curIdx]||{};
   document.getElementById('setsRow').innerHTML=Array.from({length:ex.sets},(_,i)=>{
     const isDone=done.includes(i), isCur=!isDone&&i===done.length, lr=reps[i], sw_=sw[i];
@@ -7334,6 +7343,13 @@ function quickLogSet(setIdx){
   if(hiitState) return;
   const ex=sessExs[curIdx];
   if(!ex) return;
+  // Core circuits don't have a single-rep quick-log — they need the round
+  // logger (Done/Partial/Failed per exercise). Open it instead of silently
+  // logging a placeholder rep count.
+  if(isCoreCircuit(ex)){
+    openCoreRoundLog(setIdx);
+    return;
+  }
   // Same default-rep logic as openRepInput
   const parts=(ex.reps||'').split('–');
   const lo=parseInt(parts[0])||5, hi=parseInt(parts[1])||lo||12;
@@ -7666,7 +7682,15 @@ function openRepInput(setIdx){
   if(hiitState){
     return; // Exit early for HIIT workouts
   }
-  
+  // Core-circuit exercises log per ROUND (Done/Partial/Failed per exercise
+  // in the circuit), not per rep. Hard guard in case a stale "SET" bubble
+  // somehow survived a render race — redirect to the round logger so the
+  // user never sees the wrong modal for Abdominal Work.
+  if(isCoreCircuit(sessExs[curIdx])){
+    openCoreRoundLog(setIdx);
+    return;
+  }
+
   pendingRepSetIdx=setIdx;
   const ex=sessExs[curIdx];
   const isDone=(setsDone[curIdx]||[]).includes(setIdx);
