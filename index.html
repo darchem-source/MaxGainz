@@ -1699,6 +1699,13 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
     <div style="font-size:13px;color:var(--text2);margin-bottom:12px;">Select the lift to track</div>
     <input id="pbSearch" type="text" placeholder="Search exercises…" oninput="filterPBList(this.value)"
       style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:10px 14px;font-size:14px;color:var(--text);margin-bottom:12px;">
+    <!-- Remove button — only shown when editing an existing tile (not when adding). -->
+    <div id="pbPickerRemoveRow" style="display:none;margin-bottom:12px;">
+      <button onclick="removeCurrentPBTile()"
+        style="width:100%;background:rgba(255,77,106,0.08);border:0.5px solid rgba(255,77,106,0.35);border-radius:10px;padding:10px;font-size:13px;font-weight:700;color:var(--red);cursor:pointer;">
+        🗑 Remove this tile
+      </button>
+    </div>
     <div id="pbPickerList" style="max-height:50vh;overflow-y:auto;"></div>
   </div>
 </div>
@@ -3352,6 +3359,7 @@ async function cloudSaveProfile() {
     pathHistory: Array.isArray(pathHistory) ? pathHistory : [],
     bodyWeightLog,
     onboarded: !!localStorage.getItem('maxgainz_onboarded'),
+    pbLifts: Array.isArray(pbLifts) ? pbLifts : [],
     prefs: {
       speedUnit:    localStorage.getItem('userSpeedUnit')    || 'mph',
       weightUnit:   localStorage.getItem('userWeightUnit')   || 'kg',
@@ -3496,6 +3504,11 @@ async function cloudLoadAll() {
           // Restore body weight log
           if (Array.isArray(blob.bodyWeightLog)) {
             bodyWeightLog = blob.bodyWeightLog;
+          }
+          // Restore Personal Best tile set
+          if (Array.isArray(blob.pbLifts)) {
+            pbLifts = blob.pbLifts;
+            try { localStorage.setItem('maxgainz_pbLifts', JSON.stringify(pbLifts)); } catch(e){}
           }
         } catch(e) { console.warn('Profile blob parse error:', e); }
       } else {
@@ -3868,6 +3881,12 @@ function applyImportPayload(payload){
   if(typeof bodyWeightLog !== 'undefined'){
     bodyWeightLog.length = 0;
     (payload.bodyWeightLog || []).forEach(e => bodyWeightLog.push(e));
+  }
+
+  // Personal Best tile set
+  if(typeof pbLifts !== 'undefined' && Array.isArray(payload.pbLifts)){
+    pbLifts = payload.pbLifts;
+    try { localStorage.setItem('maxgainz_pbLifts', JSON.stringify(pbLifts)); } catch(e){}
   }
 
   // Preferences
@@ -11371,12 +11390,29 @@ function startCustomWorkoutByName(name){
 
 // ── PERSONAL BESTS ──
 // 4 default tiles + up to 4 more (max 8 total)
-let pbLifts = [
+const _DEFAULT_PB_LIFTS = [
   {label:'Bench Press',   color:'var(--accent)'},
   {label:'Deadlift',      color:'var(--accent2)'},
   {label:'Squat',         color:'var(--purple)'},
   {label:'Overhead Press',color:'var(--green)'},
 ];
+// pbLifts is the user's customised set of Personal Best tiles. Persisted to
+// localStorage so add / swap / remove survives a page refresh, and folded
+// into the cloud profile blob so the same set appears across devices.
+let pbLifts = (function(){
+  try {
+    const raw = localStorage.getItem('maxgainz_pbLifts');
+    if(raw){
+      const parsed = JSON.parse(raw);
+      if(Array.isArray(parsed)) return parsed;
+    }
+  } catch(e){}
+  return _DEFAULT_PB_LIFTS.map(t => ({...t}));
+})();
+function _savePBLifts(){
+  try { localStorage.setItem('maxgainz_pbLifts', JSON.stringify(pbLifts)); } catch(e){}
+  if(typeof cloudSaveProfile === 'function') cloudSaveProfile();
+}
 let editingPBIdx = -1;
 let pbSearchData = [];
 
@@ -11477,7 +11513,10 @@ function renderPBCards(){
 function openChangePB(idx){
   editingPBIdx=idx;
   const label=pbLifts[idx]?pbLifts[idx].label:'';
-  document.getElementById('pbPickerTitle').textContent=label?'Swap: '+label:'Choose lift';
+  document.getElementById('pbPickerTitle').textContent=label?'Swap or remove: '+label:'Choose lift';
+  // Show the Remove button — we're editing an existing tile.
+  const removeRow=document.getElementById('pbPickerRemoveRow');
+  if(removeRow) removeRow.style.display='block';
   openPBPicker();
 }
 
@@ -11485,7 +11524,26 @@ function addPBTile(){
   if(pbLifts.length>=8){showToast('⚠️ Max 8 PB tiles — remove one first');return;}
   editingPBIdx=-1;
   document.getElementById('pbPickerTitle').textContent='Add a lift to track';
+  // Hide the Remove button — there's no tile to remove yet.
+  const removeRow=document.getElementById('pbPickerRemoveRow');
+  if(removeRow) removeRow.style.display='none';
   openPBPicker();
+}
+
+function removeCurrentPBTile(){
+  if(editingPBIdx<0||editingPBIdx>=pbLifts.length){
+    document.getElementById('pbPickerMod').classList.remove('open');
+    return;
+  }
+  const removed=pbLifts[editingPBIdx];
+  pbLifts.splice(editingPBIdx,1);
+  editingPBIdx=-1;
+  document.getElementById('pbPickerMod').classList.remove('open');
+  if(typeof _savePBLifts==='function') _savePBLifts();
+  renderPBCards();
+  if(typeof showToast==='function' && removed && removed.label){
+    showToast(`Removed ${removed.label}`, 1500);
+  }
 }
 
 function openPBPicker(){
@@ -11539,6 +11597,7 @@ function selectPBLift(name){
   }
   editingPBIdx=-1;
   document.getElementById('pbPickerMod').classList.remove('open');
+  if(typeof _savePBLifts==='function') _savePBLifts();
   renderPBCards();
 }
 
