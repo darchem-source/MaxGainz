@@ -4932,7 +4932,7 @@ function updateSessUI(){
       document.getElementById('currWtUnit').textContent='avg';
     } else {
       document.getElementById('currWt').textContent=avg;
-      document.getElementById('currWtUnit').textContent=(getEquipType(ex)==='dumbbell'?'kg/h':'kg')+' avg';
+      document.getElementById('currWtUnit').textContent=(getEquipType(ex)==='dumbbell'?'kg/hand':'kg')+' avg';
     }
   } else if(ex.bw){
     // Bodyweight exercises — always editable (for BW+ modifier)
@@ -4944,13 +4944,13 @@ function updateSessUI(){
     // User has applied / adjusted this weight manually — respect it and
     // do NOT recompute from editInfo (which would clobber the user's choice).
     _setWeightAdjEditable(true);
-    const unit = (getEquipType(ex)==='dumbbell'?'kg/h':'kg');
+    const unit = (getEquipType(ex)==='dumbbell'?'kg/hand':'kg');
     document.getElementById('currWt').textContent=ex.weight||'–';
     document.getElementById('currWtUnit').textContent=unit+' applied';
   } else {
     // Pre-session: apply smart editability logic based on history
     const editInfo = getWeightEditability(ex.name, parseRepTarget(ex.reps));
-    const unit = (getEquipType(ex)==='dumbbell'?'kg/h':'kg');
+    const unit = (getEquipType(ex)==='dumbbell'?'kg/hand':'kg');
     if(editInfo.status === 'normal'){
       if(editInfo.repAdjustedWeight){
         // Rep target differs from last session — suggest adjusted weight, allow editing
@@ -5433,7 +5433,7 @@ function renderLastTimeRef(ex){
   else if(daysAgo < 30) dateStr = `${Math.floor(daysAgo/7)} weeks ago`;
   else dateStr = `${Math.floor(daysAgo/30)} mo ago`;
 
-  const unit = getEquipType(ex) === 'dumbbell' ? 'kg/h' : 'kg';
+  const unit = getEquipType(ex) === 'dumbbell' ? 'kg/hand' : 'kg';
   const repsArr = (last.reps || []).map(r => parseInt(r) || 0).filter(r => r > 0);
   const wt = last.weight ? `${last.weight}${unit} × ` : '';
   // Show per-set reps when 4 or fewer (most common), avg when more
