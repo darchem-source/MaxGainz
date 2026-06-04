@@ -5465,13 +5465,23 @@ function renderLastTimeRef(ex){
     && allHistory.slice(-3).every(h => h.weight === last.weight);
 
   let cueHtml = '';
-  // Deload (long gap)
+  // Deload (long gap). For BW exercises (Ab Wheel Rollout, Plank, Pull-Ups
+  // etc.) there's no weight to deload — show a generic ease-back-in cue
+  // instead of "try nullkg". Same fallback covers any weighted exercise
+  // whose history happens to be 0 (rare but renders "0kg" if not guarded).
   if(editInfo && editInfo.status === 'deload'){
-    const pct = Math.round(editInfo.deloadPct * 100);
-    cueHtml = `<div style="margin-top:6px;font-size:12px;color:#ff8c42;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-      <span>📉 Coach: try <strong style="color:var(--text);">${editInfo.suggestedWeight}${unit}</strong> <span style="opacity:0.7;">(−${pct}% · ${editInfo.weeksAway}w gap)</span></span>
-      ${(editInfo.suggestedWeight && editInfo.suggestedWeight !== ex.weight) ? `<button onclick="applyPreSessionSuggestion(${editInfo.suggestedWeight})" style="background:rgba(255,140,66,0.15);border:0.5px solid rgba(255,140,66,0.45);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:800;color:#ff8c42;cursor:pointer;">Apply</button>` : ''}
-    </div>`;
+    const isBWish = ex.bw || !(editInfo.suggestedWeight > 0);
+    if(isBWish){
+      cueHtml = `<div style="margin-top:6px;font-size:12px;color:#ff8c42;">
+        🌱 Coach: ${editInfo.weeksAway}w gap — ease back in, focus on form before pushing volume
+      </div>`;
+    } else {
+      const pct = Math.round(editInfo.deloadPct * 100);
+      cueHtml = `<div style="margin-top:6px;font-size:12px;color:#ff8c42;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span>📉 Coach: try <strong style="color:var(--text);">${editInfo.suggestedWeight}${unit}</strong> <span style="opacity:0.7;">(−${pct}% · ${editInfo.weeksAway}w gap)</span></span>
+        ${(editInfo.suggestedWeight !== ex.weight) ? `<button onclick="applyPreSessionSuggestion(${editInfo.suggestedWeight})" style="background:rgba(255,140,66,0.15);border:0.5px solid rgba(255,140,66,0.45);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:800;color:#ff8c42;cursor:pointer;">Apply</button>` : ''}
+      </div>`;
+    }
   } else if(!ex.bw && last.weight){
     const steps = getWeightSteps(ex, equipOverride[curIdx]);
     const nextW = stepWeight(last.weight, 1, steps);
