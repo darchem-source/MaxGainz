@@ -9425,17 +9425,27 @@ function showCelebrate(){
   if(timedWrap) timedWrap.style.display = 'none';
   
   const ex=sessExs[curIdx];
-  const tot=sessExs.length;
   const ssId=supersets[curIdx];
   
   // Check if part of superset
   if(ssId){
     const group = supersetGroups.find(g => g.id === ssId);
     if(group){
-      // console.log('[CELEBRATE] Superset path. isSessionLast check:', group.exerciseIndices[group.exerciseIndices.length - 1], '>=', tot - 1);
-      // Superset completion message
-      const groupExNames = group.exerciseIndices.map(idx => sessExs[idx].name).join(' + ');
-      const isSessionLast = group.exerciseIndices[group.exerciseIndices.length - 1] >= tot - 1;
+      // Superset completion message. Optional-chain so any stale/removed
+      // index can't throw on .name.
+      const groupExNames = group.exerciseIndices.map(idx => sessExs[idx]?.name).filter(Boolean).join(' + ');
+      // "Last thing in the session" must mean "no incomplete exercise remains
+      // anywhere" — NOT "this superset's highest index sits at the end". The
+      // old positional test (group.exerciseIndices[last] >= tot-1) gave false
+      // positives once superset indices went stale (e.g. after removing an
+      // earlier exercise) — ending the workout early — and false negatives for
+      // mid-list supersets. Reuse the same exhaustive completion scan the
+      // regular-exercise path uses below so the decision is index-position
+      // independent.
+      const isSessionLast = sessExs.every((e, i) => {
+        const requiredSets = e.duration ? 1 : (parseInt(e.sets) || 1);
+        return (setsDone[i] || []).length >= requiredSets;
+      });
       
       // Smart insight when the superset is also the last thing in the session
       const ssInsight = isSessionLast ? generateSessionInsight() : null;
@@ -11323,6 +11333,30 @@ function sessRemoveExercise(){
   warmupShown=shiftDict(warmupShown);
   warmupDone=shiftDict(warmupDone);
   equipOverride=shiftDict(equipOverride);
+  setTimestamps=shiftDict(setTimestamps);
+  // Superset state is ALSO index-keyed and must shift with everything else.
+  // Previously this was skipped, so removing an exercise left the supersets
+  // map and each group.exerciseIndices pointing at the WRONG (now-shifted)
+  // exercises. The stale (inflated) indices then made showCelebrate's
+  // "is this the last thing in the session" test a false positive, ending the
+  // whole workout the moment a superset completed and skipping the exercises
+  // still left in the list.
+  supersets=shiftDict(supersets);
+  supersetGroups.forEach(g=>{
+    g.exerciseIndices = g.exerciseIndices
+      .filter(i=>i!==ri)     // drop the removed exercise if it was a member
+      .map(i=>i>ri?i-1:i);   // shift higher members down one slot
+  });
+  // A superset needs ≥2 members. If a removal dropped a group below that,
+  // dissolve it and clear the surviving member's supersets entry so it falls
+  // back to the normal (robust) single-exercise completion path.
+  supersetGroups = supersetGroups.filter(g=>{
+    if(g.exerciseIndices.length<2){
+      g.exerciseIndices.forEach(i=>{ delete supersets[i]; });
+      return false;
+    }
+    return true;
+  });
   sessExs.splice(ri,1);
   if(curIdx>=sessExs.length) curIdx=sessExs.length-1;
   updateSessUI();
