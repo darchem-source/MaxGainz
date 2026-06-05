@@ -5506,8 +5506,28 @@ function renderLastTimeRef(ex){
     const nextW = stepWeight(last.weight, 1, steps);
     const prevW = stepWeight(last.weight, -1, steps);
 
+    // Rule 0: rep-target has shifted vs last session and the weight has
+    // already been auto-adjusted. Explain that adjustment so the cue agrees
+    // with the displayed weight, rather than falling through to a rule that
+    // says "hold last weight" while the displayed weight is something else.
+    // Without this, e.g. last 90kg × 5/5/5/5 with today's 8–12 target
+    // showed a 77.5kg weight AND the cue "hold 90kg, focus on form" —
+    // contradictory.
+    const _adjW = editInfo && editInfo.repAdjustedWeight;
+    if(_adjW && _adjW !== last.weight){
+      const diff = +(_adjW - last.weight).toFixed(1);
+      const goingDown = _adjW < last.weight;
+      const arrow    = goingDown ? '📉' : '📈';
+      const colour   = goingDown ? '#ff8c42' : 'var(--accent)';
+      const reason   = goingDown
+        ? `${last.weight}${unit} × ${avgReps} avg last time is below today's ${lo}–${hi} target — ${_adjW}${unit} should give you room for ${lo}+ reps`
+        : `${last.weight}${unit} × ${avgReps} avg last time exceeded today's ${lo}–${hi} target — ${_adjW}${unit} matches the new rep range`;
+      cueHtml = `<div style="margin-top:6px;font-size:12px;color:${colour};display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span>${arrow} Coach: ${reason} <span style="opacity:0.7;">(${diff > 0 ? '+' : ''}${diff}${unit})</span></span>
+      </div>`;
+    }
     // Rule A: All sets at top of range last time → bump
-    if(allAtOrAboveTop && nextW > last.weight){
+    else if(allAtOrAboveTop && nextW > last.weight){
       const target = nextW;
       const diff = +(target - ex.weight).toFixed(1);
       const action = ex.weight < target ? 'try' : ex.weight === target ? 'on target' : 'already above';
