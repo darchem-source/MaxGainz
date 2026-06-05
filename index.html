@@ -64,6 +64,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 .screen { display: none; }
 .screen.active { display: block; animation: fadeIn var(--dur-base) var(--ease-out); }
 @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+@keyframes rankPop { 0% { transform:scale(0.2) rotate(-12deg); opacity:0; } 60% { transform:scale(1.15) rotate(4deg); opacity:1; } 100% { transform:scale(1) rotate(0); opacity:1; } }
 .page-header { padding: 16px 20px 12px; position: sticky; top: 0; z-index: 50; background: var(--bg); }
 /* Sticky wrapper for multi-element headers (session, programme) */
 .sticky-hdr { position: sticky; top: 0; z-index: 50; background: var(--bg); transition: box-shadow var(--dur-base) var(--ease-out); /* sticky is a positioned value → containing block for #sessStickyExName's position:absolute */ }
@@ -618,25 +619,32 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
         <div class="page-title">Your <span class="ac">Gainz</span></div>
         <div style="font-size:13px;color:var(--text2);margin-top:2px;">Points, ranks &amp; achievements</div>
       </div>
-      <!-- Rank card -->
-      <div style="margin:0 16px 12px;background:var(--surface);border-radius:20px;padding:18px;border:0.5px solid var(--border);">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <!-- Rank card (accent + border tinted by current tier in renderGame) -->
+      <div id="rankCard" style="margin:0 16px 12px;background:var(--surface);border-radius:20px;padding:18px;border:0.5px solid var(--border);">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
           <div>
             <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;">Current Rank</div>
             <div class="rank-badge" id="rankBadge" style="margin-top:6px;background:rgba(200,255,0,0.1);color:var(--accent);font-size:20px;padding:0;">🥉 Novice</div>
+            <div id="rankTier" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text2);margin-top:3px;"></div>
           </div>
           <div style="text-align:right;">
             <div style="font-size:36px;font-weight:900;color:var(--accent);" id="totalXP">0</div>
             <div style="font-size:11px;color:var(--text2);">Total XP</div>
           </div>
         </div>
-        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);margin-bottom:4px;">
+        <div id="rankPrestige" style="display:none;font-size:13px;font-weight:800;margin:6px 0 10px;"></div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);margin:8px 0 4px;">
           <span id="rankLabel">Progress to next rank</span>
           <span id="rankPct">0%</span>
         </div>
         <div class="xp-bar-wrap"><div class="xp-bar-fill" id="xpBarFill" style="width:0%"></div></div>
         <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text2);margin-top:4px;"><span id="rankMin">0 XP</span><span id="rankMax">500 XP</span></div>
+        <div id="rankEta" style="font-size:12px;color:var(--text2);margin-top:10px;text-align:center;"></div>
+        <button onclick="openLadderModal()" style="width:100%;margin-top:12px;background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:11px;font-size:13px;font-weight:800;color:var(--text);cursor:pointer;">🪜 View full ladder</button>
       </div>
+      <!-- Lifetime stats -->
+      <div class="section-label">LIFETIME</div>
+      <div id="lifetimeStats" style="margin:0 16px 12px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;"></div>
       <!-- Weekly challenge -->
       <div style="margin:0 16px 12px;background:var(--surface2);border-radius:16px;padding:14px 16px;border:0.5px solid var(--border);">
         <div style="font-size:11px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Weekly Challenge</div>
@@ -1511,6 +1519,51 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
   </div>
 </div>
 
+<!-- RANK-UP CELEBRATION -->
+<div class="modal-ov" id="rankUpMod" style="z-index:460;" onclick="if(event.target===this)closeRankUpModal()">
+  <div class="modal" style="text-align:center;overflow:hidden;">
+    <div class="modal-handle"></div>
+    <div id="rankUpKicker" style="font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:3px;margin-bottom:10px;color:var(--accent);">Rank Up!</div>
+    <div id="rankUpBadge" style="font-size:84px;line-height:1;margin:6px 0 14px;animation:rankPop 0.6s cubic-bezier(.2,1.3,.4,1) both;">🎖️</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:2px;">You've reached</div>
+    <div id="rankUpName" style="font-size:28px;font-weight:900;margin-bottom:4px;">Veteran</div>
+    <div id="rankUpTier" style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--text2);margin-bottom:18px;">Tempered tier</div>
+    <div id="rankUpMsg" style="font-size:13px;color:var(--text2);line-height:1.5;margin-bottom:20px;"></div>
+    <button class="btn-p" style="width:100%;" id="rankUpBtn" onclick="closeRankUpModal()">Keep going 💪</button>
+  </div>
+</div>
+
+<!-- LADDER EXPANDED (one-time migration) -->
+<div class="modal-ov" id="ladderExpandedMod" style="z-index:430;" onclick="if(event.target===this)closeLadderExpandedModal()">
+  <div class="modal" style="text-align:center;">
+    <div class="modal-handle"></div>
+    <div style="font-size:52px;margin-bottom:8px;line-height:1;">🪜</div>
+    <div style="font-size:12px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:2.5px;margin-bottom:6px;">The ranks have expanded</div>
+    <div style="font-size:14px;color:var(--text2);line-height:1.55;margin-bottom:18px;">The rank ladder got a lot taller — <strong style="color:var(--text);">16 ranks across 5 tiers</strong>, reaching years into your training. Your XP didn't change; there's just a whole journey ahead now.</div>
+    <div style="background:var(--surface2);border-radius:16px;padding:18px;margin-bottom:18px;">
+      <div style="font-size:11px;color:var(--text2);margin-bottom:6px;">You've earned</div>
+      <div id="ladderExpandedBadge" style="font-size:24px;font-weight:900;margin-bottom:4px;">🎖️ Veteran</div>
+      <div id="ladderExpandedSub" style="font-size:12px;color:var(--text2);"></div>
+    </div>
+    <button class="btn-p" style="width:100%;margin-bottom:8px;" onclick="closeLadderExpandedModal();openLadderModal();">See the full ladder</button>
+    <button style="width:100%;background:transparent;border:none;color:var(--text2);font-size:13px;padding:10px;cursor:pointer;" onclick="closeLadderExpandedModal()">Got it</button>
+  </div>
+</div>
+
+<!-- FULL RANK LADDER -->
+<div class="modal-ov" id="ladderMod" style="z-index:410;" onclick="if(event.target===this)closeLadderModal()">
+  <div class="modal" style="max-height:88vh;overflow-y:auto;">
+    <div class="modal-handle"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+      <div style="font-size:20px;font-weight:900;">Rank Ladder</div>
+      <button onclick="closeLadderModal()" style="background:transparent;border:none;color:var(--text2);font-size:22px;cursor:pointer;padding:4px 8px;line-height:1;">✕</button>
+    </div>
+    <div id="ladderModSub" style="font-size:13px;color:var(--text2);margin-bottom:14px;"></div>
+    <div id="ladderModBody"></div>
+    <button onclick="closeLadderModal()" style="width:100%;margin-top:10px;background:transparent;border:0.5px solid var(--border);border-radius:12px;padding:13px;font-size:14px;font-weight:700;color:var(--text2);cursor:pointer;">Close</button>
+  </div>
+</div>
+
 <!-- MANUAL ACTIVITY MODAL -->
 <div class="modal-ov" id="activityMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal">
@@ -1811,6 +1864,7 @@ function dismissSplash() {
         checkPathWeekProgression();
         // Celebrate a just-completed path before anything else path-related.
         const _celebratedPath = maybeCelebratePathCompletion();
+        if(!_celebratedPath) maybeShowLadderExpanded();
         // Auto-open path wizard if user has no active path, hasn't skipped,
         // onboarding isn't blocking, and we're not about to celebrate a
         // completed path (let them dismiss that first).
@@ -9853,15 +9907,22 @@ function finishSession(){
   const _summaryHead = sessDay + (_isSeries ? '' : ' Day') + ' · ' + sessExs.length + ' exercises' + _tierBadge;
   document.getElementById('finSummary').innerHTML=_summaryHead+progNote;
   // console.log('finishSession: step 9b - populate XP panel');
+  let _rankUpInfo = null; // set if this session crossed a rank threshold
   try{
-    const earnedXP = reward.xp; // XP delta from this session
     const newTotal = xpAfter;   // new total after push+award
+    // True XP delta — captures session bonuses, newly-unlocked achievements,
+    // the weekly +150 challenge, and streak growth, so the headline number
+    // never under-reports what actually landed this session.
+    const earnedXP = Math.max(reward.xp || 0, (xpAfter || 0) - (xpBefore || 0));
     const newRank = getRank(newTotal);
+    const prevRank = getRank(xpBefore);
     const nextRank = RANKS[RANKS.indexOf(newRank)+1];
     const rankPct = nextRank ? Math.min(100,Math.round(((newTotal-newRank.min)/(nextRank.min-newRank.min))*100)) : 100;
 
     document.getElementById('finXPEarned').textContent = '+' + earnedXP + ' XP';
-    document.getElementById('finXPBreakdown').textContent = reward.breakdown || '';
+    let _bd = reward.breakdown || '';
+    if(earnedXP > reward.xp) _bd += ' · 🎯 bonus +' + (earnedXP - reward.xp);
+    document.getElementById('finXPBreakdown').textContent = _bd;
     document.getElementById('finRankBadge').textContent = newRank.emoji + ' ' + newRank.name;
     document.getElementById('finRankBadge').style.color = newRank.color;
     document.getElementById('finTotalXP').textContent = newTotal.toLocaleString() + ' total XP';
@@ -9874,9 +9935,16 @@ function finishSession(){
       const aBadges = reward.newAchievements.map(a => a.emoji + ' ' + a.name).join('  ');
       document.getElementById('finXPBreakdown').textContent += ' · 🏅 ' + aBadges;
     }
+    // Rank-up? Capture it so we can celebrate AFTER finMod is shown.
+    if(RANKS.indexOf(newRank) > RANKS.indexOf(prevRank)){
+      _rankUpInfo = { from: prevRank, to: newRank, newTier: prevRank.tier !== newRank.tier };
+    }
   }catch(xe){ console.warn('XP panel error', xe); }
   // console.log('finishSession: step 10 - show finMod');
   document.getElementById('finMod').classList.add('open');
+  // Rank-up celebration sits on top of the finish summary (higher z-index);
+  // dismissing it reveals the session summary behind.
+  if(_rankUpInfo){ setTimeout(() => showRankUpModal(_rankUpInfo), 400); }
   // console.log('finishSession: COMPLETE ✅');
   }catch(e){
     console.error('finishSession crash at:', e.message, e.stack);
@@ -15608,15 +15676,41 @@ function deleteSession(idx){
 }
 
 // ── GAMIFICATION ENGINE ──
+// ── RANK LADDER (v2) ──────────────────────────────────────────────────
+// 16 ranks across 5 tiers, calibrated so a committed 4x/week lifter reaches
+// the top in ~2–2.5 years. The old 7-rank ladder topped out at 10,000 XP —
+// below the one-time achievement pool (21,740) — so it was trivially maxed
+// in a month. The new curve front-loads early rank-ups (week-1 hook) then
+// decelerates: the achievement pool alone only carries you to ~#9 (mid-
+// ladder); the back half is earned purely through sustained training.
+const RANK_TIERS = ['Foundations','Building','Tempered','Iron','Mastery'];
 const RANKS=[
-  {name:'Rookie',emoji:'🔰',min:0,max:300,color:'#8888aa'},
-  {name:'Novice',emoji:'🥉',min:300,max:800,color:'#cd7f32'},
-  {name:'Athlete',emoji:'🥈',min:800,max:1800,color:'#c0c0c0'},
-  {name:'Warrior',emoji:'🥇',min:1800,max:3500,color:'#ffd700'},
-  {name:'Champion',emoji:'🏆',min:3500,max:6000,color:'#00d4ff'},
-  {name:'Legend',emoji:'👑',min:6000,max:10000,color:'#c8ff00'},
-  {name:'Immortal',emoji:'⚡',min:10000,max:Infinity,color:'#ff4d6a'},
+  {name:'Day One',         emoji:'🌱', min:0,      max:250,     color:'#7d8a99', tier:'Foundations'},
+  {name:'First Steps',     emoji:'👟', min:250,    max:750,     color:'#9aa7b4', tier:'Foundations'},
+  {name:'Finding Rhythm',  emoji:'🧭', min:750,    max:1700,    color:'#5fb3a3', tier:'Foundations'},
+  {name:'Consistent',      emoji:'🔗', min:1700,   max:3200,    color:'#4caf78', tier:'Building'},
+  {name:'Committed',       emoji:'💪', min:3200,   max:5400,    color:'#3fa66a', tier:'Building'},
+  {name:'Driven',          emoji:'🚀', min:5400,   max:8200,    color:'#cd7f32', tier:'Building'},
+  {name:'Conditioned',     emoji:'🏃', min:8200,   max:11800,   color:'#d98a2b', tier:'Building'},
+  {name:'Hardened',        emoji:'🪨', min:11800,  max:16500,   color:'#b0763a', tier:'Tempered'},
+  {name:'Veteran',         emoji:'🎖️', min:16500,  max:23000,   color:'#c0c0c0', tier:'Tempered'},
+  {name:'Battle-Tested',   emoji:'🛡️', min:23000,  max:31000,   color:'#9fb6c4', tier:'Tempered'},
+  {name:'Iron Disciple',   emoji:'⚙️', min:31000,  max:41000,   color:'#7f8fa6', tier:'Iron'},
+  {name:'Relentless',      emoji:'🔥', min:41000,  max:53000,   color:'#ff8c42', tier:'Iron'},
+  {name:'Forged',          emoji:'🔨', min:53000,  max:68000,   color:'#ffb347', tier:'Iron'},
+  {name:'Unbreakable',     emoji:'💎', min:68000,  max:88000,   color:'#00d4ff', tier:'Mastery'},
+  {name:'Lifetime Lifter', emoji:'🏛️', min:88000,  max:115000,  color:'#c8ff00', tier:'Mastery'},
+  {name:'Iron Eternal',    emoji:'🔱', min:115000, max:Infinity,color:'#ff4d6a', tier:'Mastery'},
 ];
+
+// Prestige past the top rank: one ⭐ Eternal Star per 25,000 XP beyond the
+// Iron Eternal threshold (~7 months of committed training each). Never resets.
+const PRESTIGE_STEP = 25000;
+function getPrestigeStars(xp){
+  const top = RANKS[RANKS.length-1];
+  if(xp < top.min) return 0;
+  return Math.floor((xp - top.min) / PRESTIGE_STEP);
+}
 
 // ── Achievement helper functions ──────────────────────────────────────────
 function getMaxWeeklyVolume(sessions){
@@ -15830,7 +15924,11 @@ function getMaxWeeklySessions(sessions){
   sessions.forEach(s=>{
     const d=new Date(s.date);
     const mon=new Date(d); mon.setDate(d.getDate()-(d.getDay()+6)%7); mon.setHours(0,0,0,0);
-    const key=mon.toISOString().slice(0,10);
+    // Local date key (NOT toISOString — that shifts to UTC and, for non-UTC
+    // users, buckets a local-Monday session into the previous week. This must
+    // match _weekKey() so the weekly-challenge bonus and the week_3/5/6
+    // achievements agree on what counts as "a week".)
+    const key=mon.getFullYear()+'-'+String(mon.getMonth()+1).padStart(2,'0')+'-'+String(mon.getDate()).padStart(2,'0');
     weeks[key]=(weeks[key]||0)+1;
   });
   return Math.max(...Object.values(weeks));
@@ -15856,6 +15954,25 @@ function calcWeekStreak(sessions){
     check.setDate(check.getDate()-7);
   }
   return streak;
+}
+
+// Longest-ever run of consecutive weeks with 3+ sessions (for lifetime stats).
+function getLongestWeekStreak(sessions){
+  const weeks={};
+  sessions.forEach(s=>{
+    const d=new Date(s.date);
+    const mon=new Date(d); mon.setDate(d.getDate()-(d.getDay()+6)%7); mon.setHours(0,0,0,0);
+    weeks[mon.getTime()]=(weeks[mon.getTime()]||0)+1;
+  });
+  const qualifying=Object.keys(weeks).filter(k=>weeks[k]>=3).map(Number).sort((a,b)=>a-b);
+  if(!qualifying.length) return 0;
+  const WEEK=7*24*60*60*1000;
+  let best=1, run=1;
+  for(let i=1;i<qualifying.length;i++){
+    if(qualifying[i]-qualifying[i-1]===WEEK){ run++; best=Math.max(best,run); }
+    else run=1;
+  }
+  return best;
 }
 
 // Consecutive weeks with ≥1 logged activity (gym session OR manual activity).
@@ -15891,17 +16008,59 @@ function calcActivityStreak(sessions){
   return streak;
 }
 
+// Re-derive the FULL XP a single gym session is worth, mirroring exactly
+// what calcSessionReward() awards at finish: base + volume + sets + duration.
+// (The old getXPEvents only credited base +100 and the +50 ≥5kg bonus on
+// recompute, silently dropping the +50 elite-volume, +25 20-sets and +30
+// 60-min bonuses — so lifetime XP under-counted what users were shown.)
+function _sessionXP(s){
+  let xp = 100;
+  if(s.volume >= 5000)  xp += 50;
+  if(s.volume >= 10000) xp += 50;
+  // Total sets logged this session (sum across setLog entries).
+  let sets = 0;
+  if(s.setLog && typeof s.setLog === 'object') for(const k in s.setLog){ sets += (s.setLog[k]?.sets || 0); }
+  if(sets >= 20) xp += 25;
+  if((s.durationMin || 0) >= 60) xp += 30;
+  return xp;
+}
+
+// Mon-start ISO-ish week key (local) for grouping sessions.
+function _weekKey(d){
+  const dt = d instanceof Date ? new Date(d) : new Date(d);
+  dt.setHours(0,0,0,0);
+  dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7)); // back to Monday
+  return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
+}
+
 function getXPEvents(){
   const events=[];
+  const weekCounts = {};   // weekKey -> count of gym sessions
+  const weekFirstDate = {}; // weekKey -> earliest date in that week (for event timestamp)
   completedSessions.forEach(s=>{
     if(s.manualActivity){
       events.push({date:s.date,desc:`${s.activityEmoji||'🏅'} ${s.day} · ${s.durationMin}min · ${s.intensity}`,pts:s.xpAwarded||50,type:'activity'});
     } else {
-      events.push({date:s.date,desc:`${s.day} gym session completed`,pts:100,type:'session'});
-      if(s.volume>=5000) events.push({date:s.date,desc:`High volume session (${Math.round(s.volume/100)/10}k kg)`,pts:50,type:'volume'});
+      const xp = _sessionXP(s);
+      const bonus = xp - 100;
+      events.push({date:s.date,desc:`${s.day} session completed${bonus>0?` (+${bonus} bonus)`:''}`,pts:xp,type:'session'});
+      // Tally for the weekly challenge.
+      const wk = _weekKey(s.date);
+      weekCounts[wk] = (weekCounts[wk]||0) + 1;
+      const sd = s.date instanceof Date ? s.date : new Date(s.date);
+      if(!weekFirstDate[wk] || sd < weekFirstDate[wk]) weekFirstDate[wk] = sd;
     }
   });
-  // Week streak bonuses
+  // Weekly challenge: +150 for every week the user logged 3+ gym sessions.
+  // (Previously the Gainz tab advertised this reward but getXPEvents never
+  // emitted it — so it was shown and never granted. Now awarded retroactively
+  // and deterministically, surviving recompute/cloud-sync.)
+  Object.keys(weekCounts).forEach(wk=>{
+    if(weekCounts[wk] >= 3){
+      events.push({date:weekFirstDate[wk]||new Date(),desc:'Weekly challenge: 3+ sessions',pts:150,type:'challenge'});
+    }
+  });
+  // Week streak bonus (grows with the current streak).
   const streak=calcWeekStreak(completedSessions);
   if(streak>=2) events.push({date:new Date(),desc:`${streak}-week streak bonus`,pts:streak*50,type:'streak'});
   // Achievement XP
@@ -15973,6 +16132,148 @@ function calcSessionReward(){
 function getRank(xp){
   for(let i=RANKS.length-1;i>=0;i--) if(xp>=RANKS[i].min) return RANKS[i];
   return RANKS[0];
+}
+
+// Average XP earned per gym session over the last `n` sessions (fallback 150)
+// — powers the "next rank in ~N sessions" forecast.
+function getAvgSessionXP(n){
+  const gym = completedSessions.filter(s => !s.manualActivity);
+  const recent = gym.slice(-(n || 10));
+  if(!recent.length) return 150;
+  const sum = recent.reduce((a, s) => a + _sessionXP(s), 0);
+  return Math.round(sum / recent.length);
+}
+
+// Estimate recent training frequency (gym sessions per week) over the last
+// ~4 weeks — used to turn the session forecast into a wall-clock estimate.
+function getRecentSessionsPerWeek(){
+  const now = new Date();
+  const fourWeeksAgo = new Date(now); fourWeeksAgo.setDate(now.getDate() - 28);
+  const recent = completedSessions.filter(s => !s.manualActivity && (s.date instanceof Date ? s.date : new Date(s.date)) >= fourWeeksAgo);
+  const wk = recent.length / 4;
+  return wk > 0 ? wk : 3; // sensible default
+}
+
+// ── RANK-UP CELEBRATION ──
+let _rankUpTier = false;
+function showRankUpModal(info){
+  if(!info || !info.to) return;
+  const r = info.to;
+  document.getElementById('rankUpBadge').textContent = r.emoji;
+  document.getElementById('rankUpName').textContent = r.name;
+  document.getElementById('rankUpName').style.color = r.color;
+  document.getElementById('rankUpTier').textContent = (r.tier || '') + ' tier';
+  document.getElementById('rankUpTier').style.color = r.color;
+  const kicker = document.getElementById('rankUpKicker');
+  // Louder treatment when you break into a whole new tier.
+  if(info.newTier){
+    kicker.textContent = '✦ New Tier Unlocked ✦';
+    kicker.style.color = r.color;
+    document.getElementById('rankUpMsg').textContent = `You've entered the ${r.tier} tier — a new chapter of the climb.`;
+  } else {
+    kicker.textContent = 'Rank Up!';
+    kicker.style.color = r.color;
+    const idx = RANKS.indexOf(r), next = RANKS[idx+1];
+    document.getElementById('rankUpMsg').textContent = next
+      ? `${RANKS.length - 1 - idx} rank${RANKS.length-1-idx===1?'':'s'} to go — next up is ${next.emoji} ${next.name}.`
+      : 'You stand at the very top of the ladder. 🔱';
+  }
+  document.getElementById('rankUpBtn').style.background = r.color;
+  document.getElementById('rankUpMod').classList.add('open');
+  if(typeof haptic === 'function') haptic([90,50,90,50,90,50,220]);
+  if(typeof playCompletionDing === 'function') { try{ playCompletionDing(); }catch(e){} }
+}
+function closeRankUpModal(){ document.getElementById('rankUpMod').classList.remove('open'); }
+
+// ── FULL LADDER VIEW ──
+function openLadderModal(){ renderLadderModal(); document.getElementById('ladderMod').classList.add('open'); }
+function closeLadderModal(){ document.getElementById('ladderMod').classList.remove('open'); }
+
+function renderLadderModal(){
+  const totalXP = getTotalXP();
+  const cur = getRank(totalXP);
+  const curIdx = RANKS.indexOf(cur);
+  const sub = document.getElementById('ladderModSub');
+  if(sub) sub.textContent = `${cur.emoji} ${cur.name} · ${totalXP.toLocaleString()} XP · ${curIdx} of ${RANKS.length-1} ranks cleared`;
+
+  let html = '';
+  let lastTier = null;
+  RANKS.forEach((r, i) => {
+    if(r.tier !== lastTier){
+      lastTier = r.tier;
+      html += `<div style="font-size:10px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;padding:14px 2px 6px;">${r.tier}</div>`;
+    }
+    const done = i < curIdx;
+    const isCur = i === curIdx;
+    const next = RANKS[i+1];
+    // Per-rank progress (only meaningful for the current rank).
+    let progressBar = '';
+    if(isCur && next){
+      const pct = Math.min(100, Math.round(((totalXP - r.min) / (next.min - r.min)) * 100));
+      progressBar = `<div style="margin-top:8px;background:rgba(255,255,255,0.08);border-radius:99px;height:5px;overflow:hidden;"><div style="height:100%;width:${pct}%;background:${r.color};border-radius:99px;"></div></div>
+        <div style="font-size:10px;color:var(--text2);margin-top:3px;">${(totalXP-r.min).toLocaleString()} / ${(next.min-r.min).toLocaleString()} XP into this rank</div>`;
+    }
+    const stateIcon = done ? '✓' : isCur ? '▸' : '🔒';
+    const opacity = done ? '0.7' : isCur ? '1' : '0.5';
+    const border = isCur ? `2px solid ${r.color}` : '0.5px solid var(--border)';
+    const bg = isCur ? `${r.color}14` : 'var(--surface2)';
+    const thresholdLabel = r.min === 0 ? 'Start' : r.min.toLocaleString() + ' XP';
+    const rightInfo = isCur ? '' : `<div style="font-size:11px;color:var(--text2);flex-shrink:0;text-align:right;">${thresholdLabel}${!done ? `<div style="font-size:9px;opacity:0.7;">${r.approxTimeToReach||''}</div>`:''}</div>`;
+    html += `
+      <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:${bg};border:${border};border-radius:12px;margin-bottom:6px;opacity:${opacity};">
+        <div style="font-size:24px;flex-shrink:0;${done?'':isCur?'':'filter:grayscale(0.6);'}">${done||isCur ? r.emoji : '🔒'}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:800;color:${isCur?r.color:'var(--text)'};display:flex;align-items:center;gap:6px;">
+            ${r.name}
+            ${isCur ? '<span style="font-size:9px;background:'+r.color+'22;color:'+r.color+';font-weight:800;padding:1px 6px;border-radius:5px;letter-spacing:0.5px;">YOU</span>' : ''}
+            ${done ? '<span style="font-size:11px;color:var(--green);">✓</span>' : ''}
+          </div>
+          ${progressBar}
+        </div>
+        ${rightInfo}
+      </div>`;
+  });
+  // Prestige stars row if at the top
+  const stars = getPrestigeStars(totalXP);
+  if(stars > 0){
+    const top = RANKS[RANKS.length-1];
+    const nextStarAt = top.min + (stars+1)*PRESTIGE_STEP;
+    html += `<div style="margin-top:10px;padding:14px;background:linear-gradient(135deg,${top.color}18,rgba(0,0,0,0));border:1px solid ${top.color}55;border-radius:14px;text-align:center;">
+      <div style="font-size:22px;letter-spacing:2px;">${'⭐'.repeat(Math.min(stars,8))}</div>
+      <div style="font-size:13px;font-weight:800;margin-top:4px;">Eternal ${stars}★</div>
+      <div style="font-size:11px;color:var(--text2);margin-top:2px;">Next star at ${nextStarAt.toLocaleString()} XP</div>
+    </div>`;
+  }
+  document.getElementById('ladderModBody').innerHTML = html;
+}
+
+// ── ONE-TIME "LADDER EXPANDED" MIGRATION NOTICE ──
+function closeLadderExpandedModal(){ document.getElementById('ladderExpandedMod').classList.remove('open'); }
+function maybeShowLadderExpanded(){
+  try{
+    if(localStorage.getItem('maxgainz_ladder_v2_seen')) return false;
+    // Only existing users with real history get the notice (a brand-new user
+    // has nothing to "re-place"). Show once, then never again.
+    // Set the seen-flag up front so this can NEVER re-fire — even if anything
+    // below throws (a missing DOM node previously left the flag unset, causing
+    // an infinite retry every boot).
+    localStorage.setItem('maxgainz_ladder_v2_seen','1');
+    const total = getTotalXP();
+    const realSessions = completedSessions.filter(s => !s.manualActivity).length;
+    if(realSessions < 1) return false; // brand-new user — nothing to re-place
+    const mod = document.getElementById('ladderExpandedMod');
+    if(!mod) return false;
+    const r = getRank(total);
+    const badge = document.getElementById('ladderExpandedBadge');
+    const sub = document.getElementById('ladderExpandedSub');
+    if(badge) { badge.textContent = r.emoji + ' ' + r.name; badge.style.color = r.color; }
+    const idx = RANKS.indexOf(r), next = RANKS[idx+1];
+    if(sub) sub.textContent = next
+      ? `${total.toLocaleString()} XP · ${idx} ranks cleared · ${RANKS.length-1-idx} ahead`
+      : `${total.toLocaleString()} XP · top of the ladder`;
+    mod.classList.add('open');
+    return true;
+  }catch(e){ return false; }
 }
 
 // ─────────────────────────────────────────────
@@ -18852,15 +19153,73 @@ function renderGame(){
   const weekSess=getMaxWeeklySessions(completedSessions);
 
   document.getElementById('totalXP').textContent=totalXP.toLocaleString();
+  document.getElementById('totalXP').style.color=rank.color;
   document.getElementById('rankBadge').textContent=rank.emoji+' '+rank.name;
   document.getElementById('rankBadge').style.color=rank.color;
-  document.getElementById('rankLabel').textContent=nextRank?`Progress to ${nextRank.name}`:'Max rank achieved!';
+  const _tierEl=document.getElementById('rankTier');
+  if(_tierEl) _tierEl.textContent=(rank.tier||'')+' tier';
+  document.getElementById('rankLabel').textContent=nextRank?`Progress to ${nextRank.emoji} ${nextRank.name}`:'Top rank reached';
   document.getElementById('rankPct').textContent=pct+'%';
   document.getElementById('xpBarFill').style.width=pct+'%';
+  const _barFill=document.getElementById('xpBarFill');
+  if(_barFill) _barFill.style.background=rank.color;
   document.getElementById('rankMin').textContent=rank.min.toLocaleString()+' XP';
   document.getElementById('rankMax').textContent=(nextRank?nextRank.min:rank.min).toLocaleString()+' XP';
   document.getElementById('gameStreak').textContent=streak;
   document.getElementById('gameSessions').textContent=completedSessions.length;
+
+  // Tier-tint the rank card border + faint glow.
+  const _card=document.getElementById('rankCard');
+  if(_card){ _card.style.borderColor=rank.color+'66'; _card.style.boxShadow='0 0 0 0.5px '+rank.color+'22, 0 8px 28px '+rank.color+'14'; }
+
+  // Prestige stars (only past the top rank).
+  const _stars=getPrestigeStars(totalXP);
+  const _prestigeEl=document.getElementById('rankPrestige');
+  if(_prestigeEl){
+    if(_stars>0){
+      const nextStarAt=rank.min+(_stars+1)*PRESTIGE_STEP;
+      _prestigeEl.style.display='block';
+      _prestigeEl.style.color=rank.color;
+      _prestigeEl.innerHTML=`${'⭐'.repeat(Math.min(_stars,8))} Eternal ${_stars}★ · next star in ${(nextStarAt-totalXP).toLocaleString()} XP`;
+    } else { _prestigeEl.style.display='none'; }
+  }
+
+  // "Next rank in ~N sessions (≈M weeks at your pace)".
+  const _etaEl=document.getElementById('rankEta');
+  if(_etaEl){
+    if(nextRank){
+      const avg=getAvgSessionXP(10);
+      const need=Math.max(0, nextRank.min-totalXP);
+      const sessLeft=Math.max(1, Math.ceil(need/avg));
+      const perWk=getRecentSessionsPerWeek();
+      const wks=Math.max(1, Math.round(sessLeft/perWk));
+      _etaEl.textContent=`${nextRank.emoji} ${nextRank.name} in ~${sessLeft} session${sessLeft===1?'':'s'} (≈${wks} week${wks===1?'':'s'} at your pace)`;
+    } else {
+      _etaEl.textContent=`🔱 ${_stars>0?'Chasing your next Eternal Star':"You've reached the summit"}`;
+    }
+  }
+
+  // Lifetime stats panel.
+  const _lt=document.getElementById('lifetimeStats');
+  if(_lt){
+    const gym=completedSessions.filter(s=>!s.manualActivity);
+    const totalVol=gym.reduce((a,s)=>a+(s.volume||0),0);
+    const totalMin=completedSessions.reduce((a,s)=>a+(s.durationMin||0),0);
+    const bestStreak=(typeof getLongestWeekStreak==='function')?getLongestWeekStreak(completedSessions):streak;
+    const tonnes=totalVol>=1000?(Math.round(totalVol/100)/10).toLocaleString()+'t':totalVol.toLocaleString()+'kg';
+    const hrs=totalMin>=60?(Math.round(totalMin/6)/10).toLocaleString()+'h':totalMin+'m';
+    const unlocked=ACHIEVEMENTS.filter(a=>a.check(completedSessions)).length;
+    const _firstDate=completedSessions.length?new Date(Math.min(...completedSessions.map(s=>new Date(s.date)))):null;
+    const memberSince=_firstDate?_firstDate.toLocaleDateString('en-GB',{month:'short',year:'numeric'}):'—';
+    const cell=(v,l)=>`<div class="stat-card" style="padding:12px 8px;"><div class="stat-val" style="font-size:18px;">${v}</div><div class="stat-lbl">${l}</div></div>`;
+    _lt.innerHTML=
+      cell(tonnes,'Volume lifted')+
+      cell(hrs,'Training time')+
+      cell(gym.length,'Gym sessions')+
+      cell(bestStreak+'w','Best streak')+
+      cell(unlocked+'/'+ACHIEVEMENTS.length,'Achievements')+
+      cell(memberSince,'Member since');
+  }
 
   // Weekly challenge progress
   const di=(new Date().getDay()+6)%7;
@@ -18909,7 +19268,7 @@ function renderGame(){
 
   // XP history (most recent first)
   const events=getXPEvents().slice().reverse().slice(0,12);
-  const typeIcons={session:'💪',volume:'📊',streak:'🔥',achievement:'🏆',activity:'🏅'};
+  const typeIcons={session:'💪',volume:'📊',streak:'🔥',achievement:'🏆',activity:'🏅',challenge:'🎯'};
   document.getElementById('xpHistory').innerHTML=events.length?events.map(e=>`
     <div class="event-row">
       <div style="font-size:18px;">${typeIcons[e.type]||'⭐'}</div>
@@ -19739,6 +20098,7 @@ async function authSignup(){
       updateProfileButton();
       checkPathWeekProgression();
       const _celebratedPath = maybeCelebratePathCompletion();
+      if(!_celebratedPath) maybeShowLadderExpanded();
       // Show onboarding for brand-new users BEFORE path wizard
       if(typeof checkOnboarding === 'function') checkOnboarding();
       if(!_celebratedPath && !isPathActive() && !localStorage.getItem('maxgainz_path_skipped')
@@ -19837,6 +20197,7 @@ async function authLogin(){
       updateProfileButton();
       checkPathWeekProgression();
       const _celebratedPath = maybeCelebratePathCompletion();
+      if(!_celebratedPath) maybeShowLadderExpanded();
       // Show onboarding for first-time users BEFORE path wizard
       if(typeof checkOnboarding === 'function') checkOnboarding();
       if(!_celebratedPath && !isPathActive() && isAuthenticated() && !localStorage.getItem('maxgainz_path_skipped')
