@@ -1124,6 +1124,9 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
           <!-- Reminders -->
           <button id="notifEnableBtn" onclick="requestNotificationPermission()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;margin-bottom:2px;">🔔 Enable training reminders</button>
           <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Nudges you when a muscle group is overdue — shown when you next open the app (background push coming later).</div>
+          <!-- Effort (RPE) tracking -->
+          <button id="trackRpeBtn" onclick="toggleTrackRPE()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">📊 Track effort (RPE): Off</button>
+          <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Adds an optional effort chip when logging a set — the coach uses it to fine-tune weight suggestions.</div>
           <!-- Feedback -->
           <button onclick="openFeedbackModal()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;">📬 Send Feedback</button>
         </div>
@@ -1464,6 +1467,11 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
       </div>
     </div>
     <div class="rep-input-grid" id="repGrid"></div>
+    <!-- Optional RPE/effort capture (shown only when Settings → Track effort is on) -->
+    <div id="repRpeRow" style="display:none;margin:4px 0 12px;">
+      <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Effort (RPE) <span style="font-weight:400;text-transform:none;letter-spacing:0;opacity:0.6;">optional · 6 easy → 10 max</span></div>
+      <div id="repRpeChips" style="display:flex;gap:6px;"></div>
+    </div>
     <div class="rep-custom-row">
       <input type="number" class="rep-custom-inp" id="repCustom" placeholder="Custom #" min="1" max="100" onkeydown="if(event.key==='Enter')confirmReps()">
       <button class="btn-p" style="padding:12px 20px;" onclick="confirmReps()">Log ✓</button>
@@ -3464,7 +3472,8 @@ async function cloudSaveProfile() {
       weightUnit:   localStorage.getItem('userWeightUnit')   || 'kg',
       audioEnabled: userPreferences.audioEnabled,
       countdownStyle: userPreferences.countdownStyle || 'beeps',
-      runnerLevel:  localStorage.getItem('userRunnerLevel')  || 'intermediate'
+      runnerLevel:  localStorage.getItem('userRunnerLevel')  || 'intermediate',
+      trackRPE:     !!userPreferences.trackRPE
     }
   });
   // Try to upsert — will silently fail if notes column doesn't exist yet
@@ -3596,6 +3605,10 @@ async function cloudLoadAll() {
             if (blob.prefs.countdownStyle === 'voice' || blob.prefs.countdownStyle === 'beeps') {
               userPreferences.countdownStyle = blob.prefs.countdownStyle;
               localStorage.setItem('userCountdownStyle', userPreferences.countdownStyle);
+            }
+            if (blob.prefs.trackRPE !== undefined) {
+              userPreferences.trackRPE = !!blob.prefs.trackRPE;
+              localStorage.setItem('maxgainz_trackRPE', userPreferences.trackRPE ? '1' : '0');
             }
           }
           if (blob.userPath) {
@@ -3848,7 +3861,10 @@ function _validateSession(s){
         sl[k] = Object.assign({}, e, {
           sets: num(e.sets),
           weight: num(e.weight),
-          reps: Array.isArray(e.reps) ? e.reps : []
+          reps: Array.isArray(e.reps) ? e.reps : [],
+          ...(Array.isArray(e.rpe)
+            ? { rpe: e.rpe.map(v => (typeof v === 'number' && v >= 1 && v <= 10) ? v : null).filter(v => v != null) }
+            : {})
         });
       }
     }
@@ -3968,6 +3984,20 @@ async function requestNotificationPermission(){
   } catch(e){
     showToast('⚠️ Could not enable notifications', { tone:'warning', duration: 3000 });
   }
+}
+
+function toggleTrackRPE(){
+  userPreferences.trackRPE = !userPreferences.trackRPE;
+  localStorage.setItem('maxgainz_trackRPE', userPreferences.trackRPE ? '1' : '0');
+  _refreshTrackRPEBtn();
+  if(typeof cloudSaveProfile === 'function') cloudSaveProfile();
+  showToast(userPreferences.trackRPE ? '📊 Effort tracking on' : 'Effort tracking off', { duration: 2000 });
+}
+function _refreshTrackRPEBtn(){
+  const btn = document.getElementById('trackRpeBtn');
+  if(!btn) return;
+  btn.textContent = '📊 Track effort (RPE): ' + (userPreferences.trackRPE ? 'On' : 'Off');
+  btn.style.color = userPreferences.trackRPE ? 'var(--accent2)' : 'var(--text)';
 }
 
 function _refreshNotificationButton(){
@@ -4306,6 +4336,8 @@ let selectedDay = null;
 let curProg=0;
 let sessDay=null,sessExs=[],curIdx=0,setsDone={},repsLogged={},sessTimeSec=0,sessInterval=null,restInterval=null,restSec=0,totalSets=0;
 let pendingRepSetIdx=-1;
+let rpeLogged={};       // {exIdx: {setIdx: rpe 6-10}} — optional effort capture
+let _pendingRPE=null;   // RPE selected in the open rep modal (null = unset)
 
 function applyCustomWeights() {
   [ULF, PPL].forEach(prog => {
@@ -4929,7 +4961,7 @@ function startSessionULF(day){
   window._prShownThisSession = new Map(); clearTimeout(window._pulsePendingTimer); window._pulsePendingTimer = null; const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
   const exs=getULFDay(day);
   sessDay=day; sessExs=exs;
-  curIdx=0;setsDone={};repsLogged={};totalSets=0;sessTimeSec=0;
+  curIdx=0;setsDone={};repsLogged={};rpeLogged={};_pendingRPE=null;totalSets=0;sessTimeSec=0;
   sessStartTime=Date.now();
   supersets={}; warmupShown={}; warmupDone={}; equipOverride={}; setWeights={}; setTimestamps={};
   _exerciseNotes={};
@@ -5062,7 +5094,7 @@ function startSession(day,prog){
   stopRest(); window._restStoppedManually=false; // clean slate before new session
   window._prShownThisSession = new Map(); clearTimeout(window._pulsePendingTimer); window._pulsePendingTimer = null; const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
   sessDay=day; sessExs=prog[day].map(e=>({...e}));
-  curIdx=0; setsDone={}; repsLogged={}; totalSets=0; sessTimeSec=0;
+  curIdx=0; setsDone={}; repsLogged={}; rpeLogged={}; _pendingRPE=null; totalSets=0; sessTimeSec=0;
   sessStartTime=Date.now();
   supersets={}; warmupShown={}; warmupDone={}; equipOverride={}; setWeights={}; setTimestamps={};
   supersetGroups=[]; supersetBuilder={exercises: [], sets: 3};
@@ -5603,7 +5635,7 @@ function getLastSessionData(exName){
   const s = past[0];
   // The matching key in this session is the one that wins
   const matched = names.find(n => s.setLog[n]);
-  return {date:s.date, weight:s.setLog[matched].weight, reps:s.setLog[matched].reps||[], note:s.setLog[matched].note||null};
+  return {date:s.date, weight:s.setLog[matched].weight, reps:s.setLog[matched].reps||[], note:s.setLog[matched].note||null, rpe:s.setLog[matched].rpe||null};
 }
 
 // Epley 1RM estimate: weight × (1 + reps/30)
@@ -5874,6 +5906,31 @@ function buildLiftHistory(name){
     }
     return { date: pdMs, weight: p.weight, reps };
   });
+}
+
+// ── RPE capture helpers (feed getLiftState's effort layer) ──
+function selectRPE(n){ _pendingRPE = (_pendingRPE === n ? null : n); _renderRpeChips(); }
+function _renderRpeChips(){
+  const el = document.getElementById('repRpeChips');
+  if(!el) return;
+  el.innerHTML = [6,7,8,9,10].map(n => {
+    const sel = _pendingRPE === n;
+    return `<button onclick="selectRPE(${n})" style="flex:1;background:${sel?'var(--accent2)':'var(--surface2)'};border:1px solid ${sel?'var(--accent2)':'var(--border)'};border-radius:8px;padding:9px 0;font-size:14px;font-weight:800;color:${sel?'#000':'var(--text2)'};cursor:pointer;">${n}</button>`;
+  }).join('');
+}
+// Mean RPE of the current session's logged sets for exercise i (POST mode).
+function _sessionMeanRPE(i){
+  const o = rpeLogged[i];
+  if(!o) return null;
+  const v = Object.values(o).filter(x => typeof x === 'number' && x > 0);
+  return v.length ? v.reduce((a,b)=>a+b,0)/v.length : null;
+}
+// Mean RPE of the LAST logged session for a lift (PRE mode).
+function _preSessionRPE(name){
+  const last = (typeof getLastSessionData === 'function') ? getLastSessionData(name) : null;
+  if(!last || !Array.isArray(last.rpe) || !last.rpe.length) return null;
+  const v = last.rpe.filter(x => typeof x === 'number' && x > 0);
+  return v.length ? v.reduce((a,b)=>a+b,0)/v.length : null;
 }
 
 // Track whether the weight adjuster is currently editable
@@ -8163,6 +8220,19 @@ function openRepInput(setIdx){
   }
   document.getElementById('setWtVal').textContent=sw;
 
+  // Optional RPE chip row — only when the user has enabled effort tracking.
+  const _rpeRow=document.getElementById('repRpeRow');
+  if(_rpeRow){
+    if(userPreferences.trackRPE && !ex.bw){
+      _pendingRPE=(rpeLogged[curIdx]||{})[setIdx]||null;
+      _rpeRow.style.display='block';
+      _renderRpeChips();
+    } else {
+      _pendingRPE=null;
+      _rpeRow.style.display='none';
+    }
+  }
+
   document.getElementById('repMod').classList.add('open');
   // Ensure a freshly opened modal always starts at the top — same fix as
   // openCoreRoundLog (the modal element is reused across sets/rounds).
@@ -8204,6 +8274,10 @@ function confirmReps(){
   if(!setWeights[curIdx])setWeights[curIdx]={};
   repsLogged[curIdx][pendingRepSetIdx]=val;
   setWeights[curIdx][pendingRepSetIdx]=sw;
+  // Capture optional RPE for this set.
+  if(!rpeLogged[curIdx])rpeLogged[curIdx]={};
+  if(_pendingRPE!=null) rpeLogged[curIdx][pendingRepSetIdx]=_pendingRPE;
+  else delete rpeLogged[curIdx][pendingRepSetIdx];
   // PR check — celebrate every new in-session high (allows multiple PBs per exercise per session)
   if(sw > 0 && sessExs[curIdx] && !sessExs[curIdx].bw){
     const _prExName = sessExs[curIdx].name;
@@ -10125,7 +10199,8 @@ function finishSession(){
       // captured. Bodyweight moves stay 0.
       const _loggedW = _swArr.filter(w => w > 0);
       const _exW = _loggedW.length ? Math.max(..._loggedW) : _exWPlanned;
-      setLog[ex.name]={sets:done,reps:Object.values(rl),weight:_exW,bw:!!ex.bw,setWeights:_swArr,equipOverride:equipOverride[i]||null,note:_exerciseNotes[ex.name]||null,restSecs:restSecs.length?restSecs:undefined};
+      const _rpeArr = rpeLogged[i] ? Object.values(rpeLogged[i]).filter(v => typeof v === 'number' && v > 0) : [];
+      setLog[ex.name]={sets:done,reps:Object.values(rl),weight:_exW,bw:!!ex.bw,setWeights:_swArr,equipOverride:equipOverride[i]||null,note:_exerciseNotes[ex.name]||null,restSecs:restSecs.length?restSecs:undefined,...(_rpeArr.length?{rpe:_rpeArr}:{})};
     }
   });
   // Top lifts for the summary header / share card — derived from the
@@ -10863,7 +10938,7 @@ function startHIIT(idx){
       bw: isBW
     };
   });
-  curIdx=0;setsDone={};repsLogged={};totalSets=0;sessTimeSec=0;
+  curIdx=0;setsDone={};repsLogged={};rpeLogged={};_pendingRPE=null;totalSets=0;sessTimeSec=0;
   sessStartTime=null; // Don't set until user clicks start (and post-countdown for HIIT)
   supersets={};warmupShown={};warmupDone={};equipOverride={};setWeights={};setTimestamps={};
   coreCircuitExs=[];twoPhaseState=null;clearInterval(twoPhaseInterval);
@@ -11846,7 +11921,7 @@ function startCustomSubSession(progIdx,subIdx){
   const sub=prog.subcategories[subIdx];
   sessDay=sub.name;
   sessExs=sub.exercises.map(e=>({...e}));
-  curIdx=0;setsDone={};repsLogged={};totalSets=0;sessTimeSec=0;
+  curIdx=0;setsDone={};repsLogged={};rpeLogged={};_pendingRPE=null;totalSets=0;sessTimeSec=0;
   sessStartTime=Date.now();
   supersets={};warmupShown={};warmupDone={};equipOverride={};setWeights={};setTimestamps={};
   coreCircuitExs=pickCoreCircuit();
@@ -19984,6 +20059,7 @@ function renderProfile(){
   if(typeof renderBWChart === 'function') renderBWChart();
   // Refresh notification button label per current permission state
   if(typeof _refreshNotificationButton === 'function') _refreshNotificationButton();
+  if(typeof _refreshTrackRPEBtn === 'function') _refreshTrackRPEBtn();
   document.getElementById('profileFirstName').value=userProfile.firstName||'';
   document.getElementById('profileLastName').value=userProfile.lastName||'';
   // Populate email from authenticated user if not already set
@@ -20117,7 +20193,10 @@ let userPreferences = {
   // Default 'voice' — best of both worlds: real voice + uninterrupted music.
   countdownStyle: localStorage.getItem('userCountdownStyle') || 'voice',
   // Runner level — drives the treadmill speed range shown in Garry's blocks.
-  runnerLevel:  localStorage.getItem('userRunnerLevel')  || 'intermediate'
+  runnerLevel:  localStorage.getItem('userRunnerLevel')  || 'intermediate',
+  // Optional RPE/effort capture per set (default OFF). When on, an effort
+  // chip appears in the rep modal and feeds the adaptive coaching engine.
+  trackRPE:     localStorage.getItem('maxgainz_trackRPE') === '1'
 };
 
 // ── BUNDLED COUNTDOWN VOICE ──
