@@ -65,6 +65,13 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 .screen.active { display: block; animation: fadeIn var(--dur-base) var(--ease-out); }
 @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
 @keyframes rankPop { 0% { transform:scale(0.2) rotate(-12deg); opacity:0; } 60% { transform:scale(1.15) rotate(4deg); opacity:1; } 100% { transform:scale(1) rotate(0); opacity:1; } }
+/* ── Accessibility ── */
+/* Honour the OS "reduce motion" setting — near-instant animations/transitions. */
+@media (prefers-reduced-motion: reduce){
+  *, *::before, *::after { animation-duration:0.01ms !important; animation-iteration-count:1 !important; transition-duration:0.01ms !important; scroll-behavior:auto !important; }
+}
+/* Visible keyboard-focus ring (only for keyboard nav, not mouse taps). */
+:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
 .page-header { padding: 16px 20px 12px; position: sticky; top: 0; z-index: 50; background: var(--bg); }
 /* Sticky wrapper for multi-element headers (session, programme) */
 .sticky-hdr { position: sticky; top: 0; z-index: 50; background: var(--bg); transition: box-shadow var(--dur-base) var(--ease-out); /* sticky is a positioned value → containing block for #sessStickyExName's position:absolute */ }
@@ -419,7 +426,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 <div class="app hidden">
 
   <!-- PROFILE BUTTON (top-right) -->
-  <button onclick="goTab('profile',document.getElementById('nav-profile-btn'))" id="nav-profile-btn" style="position:fixed;top:calc(8px + env(safe-area-inset-top, 0px));right:calc(16px + env(safe-area-inset-right, 0px));width:44px;height:44px;border-radius:50%;background:var(--surface);border:0.5px solid var(--border);color:var(--accent);font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:100;transition:all 0.2s;box-shadow:0 2px 8px rgba(0,0,0,0.3);">👤</button>
+  <button onclick="goTab('profile',document.getElementById('nav-profile-btn'))" id="nav-profile-btn" aria-label="Profile & settings" style="position:fixed;top:calc(8px + env(safe-area-inset-top, 0px));right:calc(16px + env(safe-area-inset-right, 0px));width:44px;height:44px;border-radius:50%;background:var(--surface);border:0.5px solid var(--border);color:var(--accent);font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:100;transition:all 0.2s;box-shadow:0 2px 8px rgba(0,0,0,0.3);">👤</button>
 
   <div class="tab-content">
 
@@ -4026,6 +4033,20 @@ async function requestNotificationPermission(){
     showToast('⚠️ Could not enable notifications', { tone:'warning', duration: 3000 });
   }
 }
+
+// Make the bottom-nav (onclick <div>s) accessible: announce as buttons, make
+// them keyboard-focusable, label them, and activate on Enter/Space.
+const _NAV_LABELS = {'nav-today':'Today','nav-path':'Path','nav-active':'Active session','nav-workout':'Programme','nav-progress':'Progress','nav-game':'Gainz'};
+function _enhanceNavA11y(){
+  document.querySelectorAll('.nav-item').forEach(el => {
+    if(el.getAttribute('role')) return; // already enhanced
+    el.setAttribute('role','button');
+    el.setAttribute('tabindex','0');
+    el.setAttribute('aria-label', _NAV_LABELS[el.id] || (el.textContent||'').trim() || 'Tab');
+    el.addEventListener('keydown', e => { if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); el.click(); } });
+  });
+}
+if(typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', () => { try{ _enhanceNavA11y(); }catch(e){} });
 
 function toggleTrackRPE(){
   userPreferences.trackRPE = !userPreferences.trackRPE;
@@ -16761,6 +16782,29 @@ function _renderDailyFocusCard(){
     </div>`;
 }
 
+// Active-recovery suggestion for rest days — deterministic by date, no XP.
+const _RECOVERY = [
+  ['🧘','10-min mobility flow','Hips, t-spine, shoulders — open up what training tightened.'],
+  ['🚶','Easy 20–30 min walk','Low-intensity blood flow actually speeds recovery.'],
+  ['🤸','Stretch &amp; breathe','5–10 min on your tightest areas with slow nasal breathing.'],
+  ['🛼','Foam roll','Roll quads, glutes, back and calves for ~10 min.'],
+  ['😴','Protect your sleep','Recovery happens at night — aim for 7–9 hours tonight.'],
+];
+function _renderActiveRecovery(){
+  const now = new Date();
+  const dayIdx = Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 86400000);
+  const r = _RECOVERY[((dayIdx % _RECOVERY.length) + _RECOVERY.length) % _RECOVERY.length];
+  return `
+    <div style="background:var(--surface3);border-radius:12px;padding:12px 14px;margin-bottom:16px;text-align:left;display:flex;align-items:center;gap:12px;">
+      <div style="font-size:24px;flex-shrink:0;">${r[0]}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:10px;font-weight:800;color:var(--accent2);text-transform:uppercase;letter-spacing:1.2px;">Active recovery</div>
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-top:1px;">${r[1]}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:1px;line-height:1.35;">${r[2]}</div>
+      </div>
+    </div>`;
+}
+
 function getXPEvents(){
   const events=[];
   const weekCounts = {};   // weekKey -> count of gym sessions
@@ -17539,6 +17583,7 @@ function renderTodayWithPath() {
           <div style="font-size:36px;margin-bottom:8px;">😴</div>
           <div style="font-size:18px;font-weight:800;color:var(--text);margin-bottom:4px;">Rest Day</div>
           <div style="font-size:13px;color:var(--text2);margin-bottom:16px;">Recovery is part of the programme. Eat well, sleep well.</div>
+          ${typeof _renderActiveRecovery === 'function' ? _renderActiveRecovery() : ''}
           <div style="display:flex;flex-direction:column;gap:10px;">
             <button onclick="openActivityLog()"
               style="background:rgba(200,255,0,0.08);border:1px solid rgba(200,255,0,0.3);border-radius:12px;padding:13px 16px;font-size:14px;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;display:flex;align-items:center;gap:10px;">
