@@ -5657,6 +5657,220 @@ function parseRepTarget(repsStr){
   return isNaN(single) ? null : single;
 }
 
+// ── ADAPTIVE COACHING ENGINE ────────────────────────────────────────────
+// getLiftState is the SINGLE decision authority for weight/rep coaching. Both
+// the pre-session cue (renderLastTimeRef) and the post-session Coach's Notes
+// (computeProgressionSuggestions) derive their recommendation from it, so they
+// can never disagree again. It is PURE and fully injected — nowMs and the
+// equipment `steps` array are passed in (never Date.now()/getWeightSteps
+// internally), no DOM, no globals — so tests/check.py unit-tests it directly.
+// Currently DORMANT (the surfaces still use the old code); wired in next.
+//
+// Block week → mesocycle "lean": wk1-2 accumulate, wk3 intensify, wk4 recovery.
+function _leanFor(w){
+  if(w == null) return 'neutral';
+  const m = ((w % 4) + 4) % 4;
+  return m === 3 ? 'intensify' : m === 0 ? 'neutral' : 'accumulate';
+}
+
+function getLiftState(input){
+  const I = input || {};
+  const plannedWeight = (typeof I.plannedWeight === 'number') ? I.plannedWeight : 0;
+  const bw = !!I.bw;
+  const timed = !!I.timed;
+  const steps = (Array.isArray(I.steps) && I.steps.length) ? I.steps : [];
+  const nowMs = (typeof I.nowMs === 'number') ? I.nowMs : 0;
+  const history = Array.isArray(I.history) ? I.history : [];
+  const thisSession = I.thisSession || null;                     // null ⇒ PRE/cue mode
+  const rpe = (typeof I.rpeThisSession === 'number') ? I.rpeThisSession : null;
+  const blockWeek = (typeof I.blockWeek === 'number') ? I.blockWeek : null;
+
+  // Every return path carries this full key set so surface mappers never read undefined.
+  const out = {
+    action:'hold', suggested:plannedWeight, current:plannedWeight,
+    confidence:'medium', reason:'', rule:'untracked',
+    diag:{ daysSince:null, weeksAway:null, avgPriorReps:null, avgThisReps:null,
+           repAdjustedWeight:null, lastSameWeight:false, sessionsAtWeight:0 },
+    plateau:{ detected:false, sessionsStuck:0, tactic:null, detail:null },
+    rpeApplied:false,
+    periodization:{ week: blockWeek, lean:_leanFor(blockWeek), applied:false }
+  };
+
+  const target = parseRepTarget(I.repRange);
+
+  // 0. Untracked (timed / non-numeric reps): no recommendation.
+  if(timed || target === null){ out.rule='untracked'; return out; }
+
+  // 1. First time — no history.
+  if(!history.length){
+    out.rule='first'; out.action='hold'; out.confidence='low';
+    out.reason = 'First time logging this — pick a weight you can control.';
+    return out;
+  }
+
+  const last = history[history.length-1];
+  const baseline = (typeof last.weight === 'number' && last.weight > 0) ? last.weight : plannedWeight;
+  out.current = baseline;
+  const stepUp   = steps.length ? stepWeight(baseline, 1, steps) : baseline;
+  const stepDown = steps.length ? stepWeight(baseline,-1, steps) : baseline;
+
+  // Rep-range bounds.
+  const repsSpec = String(I.repRange||'8').split('–');
+  const lo = parseInt(repsSpec[0]) || 5;
+  const hi = parseInt(repsSpec[1]) || lo;
+
+  // Trailing sessions stuck at the baseline weight (the unified stall counter).
+  let sessionsAtWeight = 0;
+  for(let k = history.length-1; k >= 0; k--){ if(history[k].weight === baseline) sessionsAtWeight++; else break; }
+  out.diag.sessionsAtWeight = sessionsAtWeight;
+  out.diag.lastSameWeight = sessionsAtWeight >= 2;
+
+  const priorReps = Array.isArray(last.reps) ? last.reps.map(r=>parseInt(r)||0).filter(r=>r>0) : [];
+  const avgPriorReps = priorReps.length ? priorReps.reduce((a,b)=>a+b,0)/priorReps.length : null;
+  out.diag.avgPriorReps = avgPriorReps;
+
+  // 2. Gap deload (G): >= 4 weeks since last logged session.
+  const daysSince = nowMs ? Math.floor((nowMs - new Date(last.date).getTime())/86400000) : null;
+  const weeksAway = (daysSince != null) ? daysSince/7 : null;
+  out.diag.daysSince = daysSince;
+  out.diag.weeksAway = (weeksAway != null) ? Math.round(weeksAway*10)/10 : null;
+  if(weeksAway != null && weeksAway >= 4){
+    out.rule = 'G_gapDeload';
+    if(bw){
+      out.action='hold'; out.suggested=plannedWeight;
+      out.reason = `${Math.round(weeksAway)}w off — ease back in, focus on form before pushing.`;
+    } else {
+      const pct = weeksAway < 6 ? 0.15 : weeksAway < 8 ? 0.20 : 0.25;
+      const dl = steps.length ? snapToSteps(baseline*(1-pct), steps) : Math.round(baseline*(1-pct)*10)/10;
+      out.action='deload'; out.suggested=dl;
+      out.reason = `${Math.round(weeksAway)}w off — drop ~${Math.round(pct*100)}% to ${dl}kg and rebuild.`;
+    }
+    return out; // deload ignores RPE & periodization
+  }
+
+  // 3. Rep-shift (H): PRE mode only — today's target differs from prior avg.
+  if(thisSession === null && !bw && avgPriorReps != null && Math.round(avgPriorReps) !== target){
+    const oneRM = calc1RM(baseline, avgPriorReps);
+    const raw = oneRM / (1 + target/30);
+    const adj = steps.length ? snapToSteps(raw, steps) : Math.round(raw*10)/10;
+    out.diag.repAdjustedWeight = adj;
+    out.rule='H_repShift'; out.action='hold'; out.suggested=adj;
+    out.reason = `Rep target is now ${target} — ${adj}kg matches your last effort.`;
+    return out; // rep-shift ignores RPE & periodization
+  }
+
+  // 4. Performance rules off the sample (this session if POST, else last session).
+  const sample = (thisSession && Array.isArray(thisSession.reps))
+    ? thisSession.reps.map(r=>parseInt(r)||0).filter(r=>r>0)
+    : priorReps;
+  const avgThis = sample.length ? sample.reduce((a,b)=>a+b,0)/sample.length : 0;
+  out.diag.avgThisReps = sample.length ? avgThis : null;
+  const allAtOrAboveTop = sample.length && sample.every(r => r >= hi);
+  const allBelowLo      = sample.length && sample.every(r => r <  lo);
+  const minSet = sample.length ? Math.min(...sample) : 0;
+  const maxSet = sample.length ? Math.max(...sample) : 0;
+
+  if(allAtOrAboveTop && stepUp > baseline){
+    out.rule='A_topRange'; out.action='increase'; out.suggested=stepUp;
+    out.confidence = out.diag.lastSameWeight ? 'high' : 'medium';
+    out.reason = `Hit ${hi}+ on every set${out.diag.lastSameWeight?' again':''} — add weight, try ${stepUp}kg.`;
+  } else if(avgThis > hi + 1 && stepUp > baseline){
+    out.rule='B_avgOverTop'; out.action='increase'; out.suggested=stepUp; out.confidence='medium';
+    out.reason = `Averaged ${Math.round(avgThis*10)/10} > ${hi} target — bump to ${stepUp}kg.`;
+  } else if(sessionsAtWeight >= 3 && !allAtOrAboveTop && !(avgThis > hi + 1)){
+    // C_stalled — escalating plateau tactic. Only deload changes the weight;
+    // the rest keep weight and change the PLAN, so the engine stays stateless.
+    out.rule='C_stalled';
+    out.plateau.detected = true; out.plateau.sessionsStuck = sessionsAtWeight;
+    if(bw){
+      out.plateau.tactic='rep_pr'; out.action='hold';
+      out.plateau.detail = 'Add a pause or slower tempo rep this session.';
+      out.reason = `Stuck ${sessionsAtWeight} sessions — ` + out.plateau.detail;
+    } else if(sessionsAtWeight >= 6){
+      out.plateau.tactic='deload_then_accumulate'; out.action='deload'; out.suggested=stepDown; out.confidence='low';
+      out.plateau.detail = `Deload to ${stepDown}kg for one session, then accumulate: rebuild to ${baseline} adding reps before weight.`;
+      out.reason = `Stuck ${sessionsAtWeight} sessions — ` + out.plateau.detail;
+    } else if(sessionsAtWeight >= 5){
+      out.plateau.tactic='backoff'; out.action='hold';
+      out.plateau.detail = `Keep ${baseline}kg for your top set, then drop ~10% for 1-2 higher-rep back-off sets.`;
+      out.reason = `Stuck ${sessionsAtWeight} sessions — ` + out.plateau.detail;
+    } else if(sessionsAtWeight >= 4){
+      out.plateau.tactic='microload'; out.action='hold'; out.suggested=stepUp;
+      out.plateau.detail = `Add the smallest jump (${stepUp}kg) — micro-progress beats stalling.`;
+      out.reason = `Stuck ${sessionsAtWeight} sessions — ` + out.plateau.detail;
+    } else {
+      out.plateau.tactic='rep_pr'; out.action='hold';
+      out.plateau.detail = `Hold ${baseline}kg and beat your top-set rep count before adding load.`;
+      out.reason = `Stuck ${sessionsAtWeight} sessions — ` + out.plateau.detail;
+    }
+    return out; // stall ignores RPE & periodization
+  } else if(maxSet >= hi && minSet < lo){
+    out.rule='D_mixed'; out.action='reps'; out.confidence='medium';
+    out.reason = `Chase ${hi}+ on every set before adding weight.`;
+  } else if(allBelowLo){
+    out.rule='E_belowLo'; out.action='hold'; out.confidence='medium';
+    out.reason = `Below the ${lo}-rep target — hold ${baseline}kg and focus on form.`;
+  } else if(thisSession === null && plannedWeight > baseline){
+    out.rule='F_alreadyBumped'; out.action='hold'; out.confidence='medium';
+    out.reason = `You've moved up from ${baseline}kg — make every rep count.`;
+  } else {
+    out.rule='fallthrough'; out.action='hold'; out.confidence='medium';
+    out.reason = `On track at ${baseline}kg — aim for the top of your rep range.`;
+  }
+
+  // 5. RPE layer (null-guarded; touches only A/B increases and fallthrough holds).
+  if(rpe != null){
+    if(out.action==='increase' && (out.rule==='A_topRange' || out.rule==='B_avgOverTop') && rpe >= 9.5){
+      out.action='hold'; out.suggested=baseline;
+      out.confidence = out.confidence==='high' ? 'medium' : 'low';
+      out.reason = 'Reps hit but effort was near-maximal (RPE ~10) — bank this weight one more session.';
+      out.rpeApplied = true;
+    } else if(out.action==='hold' && out.rule==='fallthrough' && rpe <= 7 && avgThis >= lo && avgThis <= hi && stepUp > baseline){
+      out.action='increase'; out.suggested=stepUp; out.confidence='medium';
+      out.reason = 'Left 3+ reps in reserve — room to add a little.';
+      out.rpeApplied = true;
+    }
+  }
+
+  // 6. Periodization layer (null-guarded; never overrides a strong A_topRange or any deload).
+  if(blockWeek != null){
+    const lean = out.periodization.lean;
+    if(lean==='accumulate' && out.action==='increase'){
+      out.reason += ' (accumulation week — small jump)';
+      out.periodization.applied = true;
+    } else if(lean==='neutral' && out.action==='increase' && out.rule==='B_avgOverTop'){
+      out.action='hold'; out.suggested=baseline;
+      out.reason = 'Recovery week — hold and sharpen technique.';
+      out.periodization.applied = true;
+    }
+  }
+
+  return out;
+}
+
+// Data assembler (glue, not pure): builds the [{date(ms), weight, reps[]}]
+// history getLiftState consumes, reusing the existing alias-aware lookups.
+function buildLiftHistory(name){
+  const pts = (typeof getLiftHistoryByName === 'function') ? getLiftHistoryByName(name) : [];
+  const names = (typeof _exerciseLookupNames === 'function') ? _exerciseLookupNames(name) : [name];
+  return pts.map(p => {
+    const pdMs = p.date instanceof Date ? p.date.getTime() : new Date(p.date).getTime();
+    let reps = [];
+    const sess = completedSessions.find(s => {
+      const sd = s.date instanceof Date ? s.date.getTime() : new Date(s.date).getTime();
+      return sd === pdMs;
+    });
+    if(sess && sess.setLog){
+      for(const n of names){
+        if(sess.setLog[n] && Array.isArray(sess.setLog[n].reps)){
+          reps = sess.setLog[n].reps.map(r=>parseInt(r)||0).filter(r=>r>0); break;
+        }
+      }
+    }
+    return { date: pdMs, weight: p.weight, reps };
+  });
+}
+
 // Track whether the weight adjuster is currently editable
 let _weightEditable = true;
 

@@ -190,6 +190,87 @@ var vc = _validateSession({date:'2026-01-05T07:00:00Z', day:'Upper', cloud_id:'c
 ok('_validateSession preserves cloud_id', vc.cloud_id==='c9');
 ok('_validateSession preserves _needsUpload', vc._needsUpload===true);
 
+// ── adaptive coaching engine (getLiftState) — the unified decision authority ──
+var STEPS=[60,62.5,65,67.5,70,72.5,75,77.5,80,82.5,85,87.5,90,92.5,95,97.5,100];
+var NOW = Date.UTC(2026,0,15,12,0,0);
+function days(n){ return NOW - n*86400000; }
+function base(extra){
+  return Object.assign({ plannedWeight:80, repRange:'5–8', bw:false, timed:false,
+    steps:STEPS, nowMs:NOW, history:[], thisSession:null }, extra||{});
+}
+var STEP_UP = stepWeight(80,1,STEPS), STEP_DN = stepWeight(80,-1,STEPS);
+
+// RULE A: all sets >= hi → increase to stepUp; confidence high when 2+ sessions at weight
+var hA = [{date:days(10),weight:80,reps:[8,8,8]},{date:days(3),weight:80,reps:[8,8,8]}];
+var inA = base({history:hA, thisSession:{reps:[8,8,8]}});
+var rA = getLiftState(inA);
+eq('A action increase', rA.action, 'increase');
+eq('A suggested = stepUp', rA.suggested, STEP_UP);
+eq('A confidence high (2 sessions at weight)', rA.confidence, 'high');
+eq('A confidence medium (1 session)', getLiftState(base({history:[{date:days(3),weight:80,reps:[8,8,8]}], thisSession:{reps:[8,8,8]}})).confidence, 'medium');
+
+// RULE B float boundary (RAW avg, strict >hi+1): >hi+1 → increase; ==hi+1 → not
+eq('B avg>hi+1 → increase', getLiftState(base({repRange:'6–8', history:[{date:days(3),weight:80,reps:[7]}], thisSession:{reps:[12,12,7]}})).action, 'increase');
+ok('B avg ==hi+1 → not increase', getLiftState(base({repRange:'6–8', history:[{date:days(3),weight:80,reps:[7]}], thisSession:{reps:[10,10,7]}})).action !== 'increase');
+
+// RULE C / plateau: 3 trailing at W & reps not topping → detected + rep_pr hold; 2 → not
+function stuck(n){ var a=[]; for(var i=n;i>0;i--) a.push({date:days(i*4),weight:80,reps:[6,6,6]}); return a; }
+var rC = getLiftState(base({history:stuck(3), thisSession:{reps:[6,6,6]}}));
+ok('C plateau detected at 3', rC.plateau.detected===true && rC.plateau.sessionsStuck===3);
+eq('C tactic rep_pr', rC.plateau.tactic, 'rep_pr');
+eq('C action hold', rC.action, 'hold');
+ok('C NOT detected at 2', getLiftState(base({history:stuck(2), thisSession:{reps:[6,6,6]}})).plateau.detected===false);
+// plateau escalation
+eq('plateau 4 → microload', getLiftState(base({history:stuck(4), thisSession:{reps:[6,6,6]}})).plateau.tactic, 'microload');
+var rE6 = getLiftState(base({history:stuck(6), thisSession:{reps:[6,6,6]}}));
+eq('plateau 6 → deload_then_accumulate', rE6.plateau.tactic, 'deload_then_accumulate');
+eq('plateau 6 action deload', rE6.action, 'deload');
+eq('plateau 6 suggested = stepDown', rE6.suggested, STEP_DN);
+
+// RULE D agreement: mixed reps → 'reps' in BOTH pre and post (when H doesn't
+// intercept). reps [9,8,4] avg=7 rounds to the 5–8 target (7), so the pre-mode
+// rep-shift rule is correctly skipped and D fires in both modes.
+var mixedHist = [{date:days(3),weight:80,reps:[9,8,4]}];
+eq('D post → reps', getLiftState(base({history:mixedHist, thisSession:{reps:[9,8,4]}})).action, 'reps');
+eq('D pre  → reps', getLiftState(base({history:mixedHist, thisSession:null})).action, 'reps');
+
+// RULE G gap-deload: 5 weeks → deload snapped 15%; bw → hold
+var rG = getLiftState(base({history:[{date:days(35),weight:80,reps:[8,8,8]}], thisSession:null}));
+eq('G action deload', rG.action, 'deload');
+eq('G suggested snapped 15%', rG.suggested, snapToSteps(80*0.85,STEPS));
+eq('G bw → hold (no weight change)', getLiftState(base({bw:true, plannedWeight:0, history:[{date:days(35),weight:0,reps:[10]}], thisSession:null})).action, 'hold');
+
+// RULE H rep-shift (pre only): prior avg 5 at 100, today 8-12 → lower weight, hold
+var rH = getLiftState(base({plannedWeight:100, repRange:'8–12', history:[{date:days(3),weight:100,reps:[5,5,5]}], thisSession:null}));
+eq('H action hold', rH.action, 'hold');
+ok('H suggested < 100', rH.suggested < 100);
+eq('H suggested = snapped Epley', rH.suggested, snapToSteps(calc1RM(100,5)/(1+10/30),STEPS));
+ok('H does NOT fire in post mode', getLiftState(base({plannedWeight:100, repRange:'8–12', history:[{date:days(3),weight:100,reps:[5,5,5]}], thisSession:{reps:[10,10]}})).rule !== 'H_repShift');
+
+// RPE no-op (absence changes nothing) + influence
+ok('RPE null deep-equals omitted', JSON.stringify(getLiftState(Object.assign({},inA,{rpeThisSession:null}))) === JSON.stringify(getLiftState(inA)));
+ok('RPE null → rpeApplied false', getLiftState(Object.assign({},inA,{rpeThisSession:null})).rpeApplied===false);
+var rR10 = getLiftState(Object.assign({},inA,{rpeThisSession:10}));
+eq('RPE 10 downgrades increase→hold', rR10.action, 'hold');
+ok('RPE 10 → rpeApplied true', rR10.rpeApplied===true);
+eq('RPE 6 keeps increase', getLiftState(Object.assign({},inA,{rpeThisSession:6})).action, 'increase');
+var inF = base({history:[{date:days(3),weight:80,reps:[6,6,6]}], thisSession:{reps:[6,6,6]}});
+eq('fallthrough is hold', getLiftState(inF).action, 'hold');
+eq('fallthrough + low RPE → increase', getLiftState(Object.assign({},inF,{rpeThisSession:7})).action, 'increase');
+
+// Periodization no-op + wk4 behaviour
+ok('periodization null deep-equals omitted', JSON.stringify(getLiftState(Object.assign({},inA,{blockWeek:null}))) === JSON.stringify(getLiftState(inA)));
+ok('periodization null → applied false', getLiftState(Object.assign({},inA,{blockWeek:null})).periodization.applied===false);
+var inB = base({repRange:'6–8', history:[{date:days(3),weight:80,reps:[7]}], thisSession:{reps:[12,12,7]}});
+eq('wk4 downgrades B increase → hold', getLiftState(Object.assign({},inB,{blockWeek:4})).action, 'hold');
+eq('wk4 keeps A increase (strong signal passes)', getLiftState(Object.assign({},inA,{blockWeek:4})).action, 'increase');
+
+// Output shape + determinism/purity
+var KEYS=['action','suggested','current','confidence','reason','rule','diag','plateau','rpeApplied','periodization'];
+ok('output has full key set', KEYS.every(function(k){ return (k in rA); }));
+var frozen = Object.freeze(base({history:hA, thisSession:Object.freeze({reps:[8,8,8]})}));
+eq('deterministic (frozen input)', JSON.stringify(getLiftState(frozen)), JSON.stringify(getLiftState(frozen)));
+
 JSON.stringify(fails);
 """
 
@@ -205,7 +286,8 @@ def gate_invariants(js):
     pieces.append(step)
     for fn in ['getRank', 'getPrestigeStars', '_sessionXP', '_weekKey',
                'getMaxWeeklySessions', 'calcWeekStreak', 'getLongestWeekStreak', '_localYMD',
-               '_sessionKey', '_mergeSessions', '_validateSession']:
+               '_sessionKey', '_mergeSessions', '_validateSession',
+               'getLiftState', '_leanFor', 'snapToSteps', 'stepWeight', 'calc1RM', 'parseRepTarget']:
         src = extract_decl(js, fn)
         if not src:
             print(f'  ✗ could not extract function {fn}'); return False
