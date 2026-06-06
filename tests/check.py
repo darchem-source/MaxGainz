@@ -269,6 +269,20 @@ var inB = base({repRange:'6–8', history:[{date:days(3),weight:80,reps:[7]}], t
 eq('wk4 downgrades B increase → hold', getLiftState(Object.assign({},inB,{blockWeek:4})).action, 'hold');
 eq('wk4 keeps A increase (strong signal passes)', getLiftState(Object.assign({},inA,{blockWeek:4})).action, 'increase');
 
+// ── comeback bonus (deterministic, capped, not farmable) ──
+var DAY=86400000, T0=Date.UTC(2026,0,1);
+function gd(n){ return {date:new Date(T0+n*DAY)}; }   // gym session on day n
+function gact(n){ return {date:new Date(T0+n*DAY), manualActivity:true}; }
+eq('no sessions → no comeback', _comebackEvents([]).length, 0);
+eq('one session → no comeback', _comebackEvents([gd(0)]).length, 0);
+eq('13-day gap → no comeback', _comebackEvents([gd(0),gd(13)]).length, 0);
+eq('14-day gap → one comeback', _comebackEvents([gd(0),gd(14)]).length, 1);
+eq('comeback bonus is +100', _comebackEvents([gd(0),gd(14)])[0].pts, 100);
+eq('comeback dated to the RETURN session', +_comebackEvents([gd(0),gd(20)])[0].date, T0+20*DAY);
+eq('two long gaps → two comebacks', _comebackEvents([gd(0),gd(20),gd(40)]).length, 2);
+eq('manual activities ignored', _comebackEvents([gd(0),gact(5),gd(8)]).length, 0);
+eq('comeback type tagged', _comebackEvents([gd(0),gd(30)])[0].type, 'comeback');
+
 // Output shape + determinism/purity
 var KEYS=['action','suggested','current','confidence','reason','rule','diag','plateau','rpeApplied','periodization'];
 ok('output has full key set', KEYS.every(function(k){ return (k in rA); }));
@@ -288,10 +302,16 @@ def gate_invariants(js):
     if not step:
         print('  ✗ could not extract PRESTIGE_STEP'); return False
     pieces.append(step)
+    for cname in ['COMEBACK_GAP_DAYS', 'COMEBACK_XP']:
+        cline = extract_const_line(js, cname)
+        if not cline:
+            print(f'  ✗ could not extract {cname}'); return False
+        pieces.append(cline)
     for fn in ['getRank', 'getPrestigeStars', '_sessionXP', '_weekKey',
                'getMaxWeeklySessions', 'calcWeekStreak', 'getLongestWeekStreak', '_localYMD',
                '_sessionKey', '_mergeSessions', '_validateSession',
-               'getLiftState', '_leanFor', 'snapToSteps', 'stepWeight', 'calc1RM', 'parseRepTarget']:
+               'getLiftState', '_leanFor', 'snapToSteps', 'stepWeight', 'calc1RM', 'parseRepTarget',
+               '_comebackEvents']:
         src = extract_decl(js, fn)
         if not src:
             print(f'  ✗ could not extract function {fn}'); return False
