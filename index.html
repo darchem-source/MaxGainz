@@ -4771,9 +4771,16 @@ function _renderTodaySkeleton(){
 }
 
 function renderTodayLegacy(){
-  // Restore legacy elements hidden by path view
+  // Restore legacy elements hidden by path view. The todayContent slot (which
+  // sits above the day picker) is repurposed to surface the retention cards
+  // (welcome-back / daily focus) for non-path users too.
   const todayContent=document.getElementById('todayContent');
-  if(todayContent){ todayContent.style.display='none'; todayContent.innerHTML=''; }
+  if(todayContent){
+    const _cards = (typeof _renderWelcomeBackCard === 'function' ? _renderWelcomeBackCard() : '')
+                 + (typeof _renderDailyFocusCard === 'function' ? _renderDailyFocusCard() : '');
+    if(_cards){ todayContent.style.display='block'; todayContent.innerHTML='<div style="margin-bottom:12px;">'+_cards+'</div>'; }
+    else { todayContent.style.display='none'; todayContent.innerHTML=''; }
+  }
   const dayPickerEl=document.getElementById('dayPicker');
   if(dayPickerEl) dayPickerEl.style.display='';
   const heroEl=document.getElementById('todayHeroWrap');
@@ -16672,6 +16679,88 @@ function _weekKey(d){
   return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
 }
 
+// Comeback bonus — deterministic, capped, not farmable. A "comeback" is a gym
+// session logged >= COMEBACK_GAP_DAYS after the previous gym session; each
+// earns a FIXED bonus (you'd have to stop training for two weeks to get it, so
+// it can't be gamed). Pure → unit-tested in tests/check.py.
+const COMEBACK_GAP_DAYS = 14;
+const COMEBACK_XP = 100;
+function _comebackEvents(sessions){
+  const gym = (sessions || [])
+    .filter(s => !s.manualActivity)
+    .map(s => (s.date instanceof Date ? s.date : new Date(s.date)))
+    .filter(d => !isNaN(d))
+    .sort((a, b) => a - b);
+  const out = [];
+  for(let i = 1; i < gym.length; i++){
+    const gapDays = (gym[i] - gym[i-1]) / 86400000;
+    if(gapDays >= COMEBACK_GAP_DAYS){
+      out.push({ date: gym[i], desc: `Welcome back — ${Math.round(gapDays)}-day comeback bonus`, pts: COMEBACK_XP, type: 'comeback' });
+    }
+  }
+  return out;
+}
+
+// Days since the most recent logged session (gym OR activity), or null if none.
+function _daysSinceLastSession(){
+  if(!completedSessions || !completedSessions.length) return null;
+  let latest = 0;
+  completedSessions.forEach(s => {
+    const d = (s.date instanceof Date ? s.date : new Date(s.date)).getTime();
+    if(!isNaN(d) && d > latest) latest = d;
+  });
+  if(!latest) return null;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const last = new Date(latest); last.setHours(0,0,0,0);
+  return Math.round((today - last) / 86400000);
+}
+
+// "Welcome back" card — shown when the user returns after a 7+ day break.
+function _renderWelcomeBackCard(){
+  const gap = _daysSinceLastSession();
+  if(gap == null || gap < 7) return '';
+  const bonusNote = gap >= COMEBACK_GAP_DAYS
+    ? ` Log a session today to bank a <strong style="color:var(--accent);">+${COMEBACK_XP} XP</strong> comeback bonus.`
+    : '';
+  return `
+    <div style="margin:12px 16px 0;background:linear-gradient(135deg,rgba(200,255,0,0.10),rgba(123,77,255,0.08));border:1px solid rgba(200,255,0,0.35);border-radius:16px;padding:16px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="font-size:30px;">👋</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:16px;font-weight:900;color:var(--text);">Welcome back!</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:2px;line-height:1.4;">It's been ${gap} days — no pressure, just pick something light and ease back in.${bonusNote}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// Daily Focus — a deterministic, no-XP rotating prompt (safe "daily quest"
+// surrogate; a real reward-bearing quest needs a stored ledger, deferred).
+const _DAILY_FOCUS = [
+  ['🎯','Chase a rep PR','Beat your top-set rep count on your first lift today.'],
+  ['🔥','Finish strong','Tack a 6–10 min finisher onto the end of today\'s session.'],
+  ['⏱','Mind the rest','Keep rest tight — aim to start each set within ~90s.'],
+  ['📝','Leave a note','Jot how a lift felt — your future self will thank you.'],
+  ['🧘','Move well','Spend 5 min on mobility before your first heavy set.'],
+  ['💧','Fuel up','Hydrate and get some protein in around today\'s session.'],
+  ['📊','Log the effort','Try rating effort (RPE) on your top set today.'],
+];
+function _renderDailyFocusCard(){
+  // Deterministic by date → same focus all day, rotates daily.
+  const now = new Date();
+  const dayIdx = Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 86400000);
+  const f = _DAILY_FOCUS[((dayIdx % _DAILY_FOCUS.length) + _DAILY_FOCUS.length) % _DAILY_FOCUS.length];
+  return `
+    <div style="margin:12px 16px 0;background:var(--surface2);border:0.5px solid var(--border);border-radius:14px;padding:13px 14px;display:flex;align-items:center;gap:12px;">
+      <div style="font-size:22px;flex-shrink:0;">${f[0]}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:10px;font-weight:800;color:var(--accent2);text-transform:uppercase;letter-spacing:1.5px;">Today's focus</div>
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-top:1px;">${f[1]}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:1px;line-height:1.35;">${f[2]}</div>
+      </div>
+    </div>`;
+}
+
 function getXPEvents(){
   const events=[];
   const weekCounts = {};   // weekKey -> count of gym sessions
@@ -16702,6 +16791,8 @@ function getXPEvents(){
   // Week streak bonus (grows with the current streak).
   const streak=calcWeekStreak(completedSessions);
   if(streak>=2) events.push({date:new Date(),desc:`${streak}-week streak bonus`,pts:streak*50,type:'streak'});
+  // Comeback bonuses (deterministic from gym-session gaps).
+  _comebackEvents(completedSessions).forEach(e => events.push(e));
   // Achievement XP
   ACHIEVEMENTS.forEach(a=>{
     if(a.check(completedSessions)){
@@ -17331,6 +17422,10 @@ function renderTodayWithPath() {
         <span>${userPath.duration - week} weeks remaining</span>
       </div>
     </div>`;
+
+  // ── WELCOME-BACK + DAILY FOCUS (retention) ──
+  if(typeof _renderWelcomeBackCard === 'function') html += _renderWelcomeBackCard();
+  if(typeof _renderDailyFocusCard === 'function') html += _renderDailyFocusCard();
 
   // ── TODAY'S LOGGED SESSIONS ──
   // Surface EVERYTHING completed today — manual activities (runs, yoga…)
@@ -19975,7 +20070,7 @@ function renderGame(){
 
   // XP history (most recent first)
   const events=getXPEvents().slice().reverse().slice(0,12);
-  const typeIcons={session:'💪',volume:'📊',streak:'🔥',achievement:'🏆',activity:'🏅',challenge:'🎯'};
+  const typeIcons={session:'💪',volume:'📊',streak:'🔥',achievement:'🏆',activity:'🏅',challenge:'🎯',comeback:'👋'};
   document.getElementById('xpHistory').innerHTML=events.length?events.map(e=>`
     <div class="event-row">
       <div style="font-size:18px;">${typeIcons[e.type]||'⭐'}</div>
