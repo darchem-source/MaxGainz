@@ -5729,12 +5729,15 @@ function getLiftState(input){
   const avgPriorReps = priorReps.length ? priorReps.reduce((a,b)=>a+b,0)/priorReps.length : null;
   out.diag.avgPriorReps = avgPriorReps;
 
-  // 2. Gap deload (G): >= 4 weeks since last logged session.
+  // 2. Gap deload (G): >= 4 weeks since last logged session. PRE-mode only —
+  // post-session you've just trained, so a gap that's already over must not
+  // prescribe a deload for next time (this also matches the old post-session
+  // logic, which had no gap rule → no regression).
   const daysSince = nowMs ? Math.floor((nowMs - new Date(last.date).getTime())/86400000) : null;
   const weeksAway = (daysSince != null) ? daysSince/7 : null;
   out.diag.daysSince = daysSince;
   out.diag.weeksAway = (weeksAway != null) ? Math.round(weeksAway*10)/10 : null;
-  if(weeksAway != null && weeksAway >= 4){
+  if(thisSession === null && weeksAway != null && weeksAway >= 4){
     out.rule = 'G_gapDeload';
     if(bw){
       out.action='hold'; out.suggested=plannedWeight;
@@ -5782,6 +5785,8 @@ function getLiftState(input){
     // the rest keep weight and change the PLAN, so the engine stays stateless.
     out.rule='C_stalled';
     out.plateau.detected = true; out.plateau.sessionsStuck = sessionsAtWeight;
+    out.suggested = baseline; // advisory tactics keep the weight (no Apply row);
+                              // only deload_then_accumulate changes it, below.
     if(bw){
       out.plateau.tactic='rep_pr'; out.action='hold';
       out.plateau.detail = 'Add a pause or slower tempo rep this session.';
@@ -5795,8 +5800,8 @@ function getLiftState(input){
       out.plateau.detail = `Keep ${baseline}kg for your top set, then drop ~10% for 1-2 higher-rep back-off sets.`;
       out.reason = `Stuck ${sessionsAtWeight} sessions — ` + out.plateau.detail;
     } else if(sessionsAtWeight >= 4){
-      out.plateau.tactic='microload'; out.action='hold'; out.suggested=stepUp;
-      out.plateau.detail = `Add the smallest jump (${stepUp}kg) — micro-progress beats stalling.`;
+      out.plateau.tactic='microload'; out.action='hold';
+      out.plateau.detail = `Add the smallest jump (to ${stepUp}kg) next session — micro-progress beats stalling.`;
       out.reason = `Stuck ${sessionsAtWeight} sessions — ` + out.plateau.detail;
     } else {
       out.plateau.tactic='rep_pr'; out.action='hold';
@@ -6116,6 +6121,11 @@ function applyPreSessionSuggestion(newWeight){
 //   - deload   (3+ session stall at same weight)
 // Each suggestion includes a plain-English `reason` and a `confidence` flag
 // so the UI can colour / emphasise differently.
+// POST-session Coach's Notes — now a thin loop over the unified getLiftState
+// engine so the pre- and post-session coaching can never disagree. Returns the
+// SAME shape applyProgressions/the renderer consume {name,current,suggested,
+// action,confidence,reason} plus additive analytics (rule, plateau, rpeApplied)
+// that those consumers ignore.
 function computeProgressionSuggestions(){
   const suggestions = [];
   sessExs.forEach((ex, i) => {
@@ -6124,106 +6134,40 @@ function computeProgressionSuggestions(){
     const repsArr = Object.values(rl).map(r => parseInt(r) || 0).filter(r => r > 0);
     if(!repsArr.length) return;
 
-    // Rep range parse: '5–8' → lo=5, hi=8. Single number '8' → lo=hi=8.
-    const repsSpec = String(ex.reps || '8').split('–');
-    const lo = parseInt(repsSpec[0]) || 5;
-    const hi = parseInt(repsSpec[1]) || lo;
-
-    const minSet = Math.min(...repsArr);
-    const maxSet = Math.max(...repsArr);
-    const avgRaw = repsArr.reduce((a, b) => a + b, 0) / repsArr.length;
-    const avg = Math.round(avgRaw * 10) / 10;
-    const allAtOrAboveTop = repsArr.every(r => r >= hi);
-    const allBelowLo      = repsArr.every(r => r <  lo);
-
     const steps = getWeightSteps(ex, equipOverride[i]);
-    const nextW = stepWeight(ex.weight, 1, steps);
-    const prevW = stepWeight(ex.weight, -1, steps);
+    const st = getLiftState({
+      plannedWeight: ex.weight,
+      repRange: ex.reps,
+      bw: !!ex.bw,
+      timed: !!(ex.duration || ex.format === 'AMRAP' || ex.format === 'EMOM'),
+      steps,
+      nowMs: Date.now(),
+      history: (typeof buildLiftHistory === 'function') ? buildLiftHistory(ex.name) : [],
+      thisSession: { reps: repsArr },
+      // RPE capture (Commit 6) and periodization (Commit 8) self-activate once
+      // their helpers exist; null until then ⇒ engine layers are no-ops.
+      rpeThisSession: (typeof _sessionMeanRPE === 'function') ? _sessionMeanRPE(i) : null,
+      blockWeek: (typeof _currentBlockWeek === 'function') ? _currentBlockWeek() : null
+    });
 
-    // Cross-session history: last few sessions on this lift (excluding the
-    // one we're currently building, which isn't saved yet).
-    const history = (typeof getLiftHistoryByName === 'function')
-      ? getLiftHistoryByName(ex.name).slice(-4) // last 4 prior sessions
-      : [];
-    // Was the last session also at this weight? Used for confidence boost.
-    const lastSameWeight = history.length && history[history.length - 1].weight === ex.weight;
-    // 3+ sessions stuck at this exact weight (this session + 2 prior)
-    const stalled = history.length >= 2
-      && history.slice(-2).every(h => h.weight === ex.weight);
+    // Skip non-actionable engine states. 'fallthrough' is the generic
+    // "on track, hold" — the old function pushed nothing for it, so we skip it
+    // too (keeps Coach's Notes to actionable items: increase / reps / plateau
+    // / below-target hold / deload).
+    if(st.rule === 'first' || st.rule === 'untracked' || st.rule === 'fallthrough') return;
 
-    // ── Rule 1: All sets at OR above top of range → increase ──
-    if(allAtOrAboveTop && nextW !== ex.weight){
-      const overTop = repsArr.filter(r => r > hi).length;
-      let reason;
-      if(overTop === repsArr.length){
-        reason = `${repsArr.length}/${repsArr.length} sets above ${hi} reps — strong cue to add weight`;
-      } else if(lastSameWeight){
-        reason = `${repsArr.length}/${repsArr.length} sets at top of range, second session in a row — push to ${nextW}kg`;
-      } else {
-        reason = `${repsArr.length}/${repsArr.length} sets at top of range — try ${nextW}kg`;
-      }
-      suggestions.push({
-        name: ex.name,
-        current: ex.weight,
-        suggested: nextW,
-        action: 'increase',
-        confidence: lastSameWeight ? 'high' : 'medium',
-        reason,
-      });
-      return;
-    }
-
-    // ── Rule 2: Avg comfortably above top of range → increase ──
-    if(avgRaw > hi + 1 && nextW !== ex.weight){
-      suggestions.push({
-        name: ex.name,
-        current: ex.weight,
-        suggested: nextW,
-        action: 'increase',
-        confidence: 'medium',
-        reason: `Avg ${avg} reps exceeded ${hi} target — bump to ${nextW}kg`,
-      });
-      return;
-    }
-
-    // ── Rule 3: Stalled at same weight for 3+ sessions → deload ──
-    if(stalled && prevW !== ex.weight){
-      suggestions.push({
-        name: ex.name,
-        current: ex.weight,
-        suggested: prevW,
-        action: 'deload',
-        confidence: 'low',
-        reason: `Stuck at ${ex.weight}kg for 3 sessions — deload to ${prevW}kg and rebuild momentum`,
-      });
-      return;
-    }
-
-    // ── Rule 4: Mixed performance (some at top, some below low) → hold ──
-    if(maxSet >= hi && minSet < lo){
-      suggestions.push({
-        name: ex.name,
-        current: ex.weight,
-        suggested: ex.weight,
-        action: 'hold',
-        confidence: 'medium',
-        reason: `Range ${minSet}–${maxSet} — chase ${hi}+ on every set before adding weight`,
-      });
-      return;
-    }
-
-    // ── Rule 5: All below low end → hold ──
-    if(allBelowLo){
-      suggestions.push({
-        name: ex.name,
-        current: ex.weight,
-        suggested: ex.weight,
-        action: 'hold',
-        confidence: 'medium',
-        reason: `Hit ${avg} reps avg, below the ${lo} target — hold and focus on form / recovery`,
-      });
-      return;
-    }
+    suggestions.push({
+      name: ex.name,
+      current: st.current,
+      suggested: st.suggested,
+      action: st.action,
+      confidence: st.confidence,
+      reason: st.reason,
+      // additive — for session.progressions analytics; ignored by apply/render
+      rule: st.rule,
+      ...(st.plateau && st.plateau.detected ? { plateau: st.plateau } : {}),
+      ...(st.rpeApplied ? { rpeApplied: true } : {})
+    });
   });
   return suggestions;
 }

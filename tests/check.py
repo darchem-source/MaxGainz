@@ -221,7 +221,10 @@ eq('C tactic rep_pr', rC.plateau.tactic, 'rep_pr');
 eq('C action hold', rC.action, 'hold');
 ok('C NOT detected at 2', getLiftState(base({history:stuck(2), thisSession:{reps:[6,6,6]}})).plateau.detected===false);
 // plateau escalation
-eq('plateau 4 → microload', getLiftState(base({history:stuck(4), thisSession:{reps:[6,6,6]}})).plateau.tactic, 'microload');
+var rE4 = getLiftState(base({history:stuck(4), thisSession:{reps:[6,6,6]}}));
+eq('plateau 4 → microload', rE4.plateau.tactic, 'microload');
+eq('microload keeps weight (advisory, no Apply)', rE4.suggested, 80);
+eq('rep_pr keeps weight (advisory)', getLiftState(base({history:stuck(3), thisSession:{reps:[6,6,6]}})).suggested, 80);
 var rE6 = getLiftState(base({history:stuck(6), thisSession:{reps:[6,6,6]}}));
 eq('plateau 6 → deload_then_accumulate', rE6.plateau.tactic, 'deload_then_accumulate');
 eq('plateau 6 action deload', rE6.action, 'deload');
@@ -239,6 +242,7 @@ var rG = getLiftState(base({history:[{date:days(35),weight:80,reps:[8,8,8]}], th
 eq('G action deload', rG.action, 'deload');
 eq('G suggested snapped 15%', rG.suggested, snapToSteps(80*0.85,STEPS));
 eq('G bw → hold (no weight change)', getLiftState(base({bw:true, plannedWeight:0, history:[{date:days(35),weight:0,reps:[10]}], thisSession:null})).action, 'hold');
+ok('G does NOT fire in post mode (gap already over)', getLiftState(base({history:[{date:days(35),weight:80,reps:[8,8,8]}], thisSession:{reps:[8,8,8]}})).rule !== 'G_gapDeload');
 
 // RULE H rep-shift (pre only): prior avg 5 at 100, today 8-12 → lower weight, hold
 var rH = getLiftState(base({plannedWeight:100, repRange:'8–12', history:[{date:days(3),weight:100,reps:[5,5,5]}], thisSession:null}));
