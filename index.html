@@ -1127,6 +1127,9 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
           <!-- Effort (RPE) tracking -->
           <button id="trackRpeBtn" onclick="toggleTrackRPE()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">📊 Track effort (RPE): Off</button>
           <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Adds an optional effort chip when logging a set — the coach uses it to fine-tune weight suggestions.</div>
+          <!-- Periodization -->
+          <button id="periodizeBtn" onclick="togglePeriodize()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">🗓 Periodize training: Off</button>
+          <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">A rolling 4-week rhythm (build → push → recover) that eases off borderline jumps on recovery weeks.</div>
           <!-- Feedback -->
           <button onclick="openFeedbackModal()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;">📬 Send Feedback</button>
         </div>
@@ -3473,7 +3476,8 @@ async function cloudSaveProfile() {
       audioEnabled: userPreferences.audioEnabled,
       countdownStyle: userPreferences.countdownStyle || 'beeps',
       runnerLevel:  localStorage.getItem('userRunnerLevel')  || 'intermediate',
-      trackRPE:     !!userPreferences.trackRPE
+      trackRPE:     !!userPreferences.trackRPE,
+      periodize:    !!userPreferences.periodize
     }
   });
   // Try to upsert — will silently fail if notes column doesn't exist yet
@@ -3609,6 +3613,10 @@ async function cloudLoadAll() {
             if (blob.prefs.trackRPE !== undefined) {
               userPreferences.trackRPE = !!blob.prefs.trackRPE;
               localStorage.setItem('maxgainz_trackRPE', userPreferences.trackRPE ? '1' : '0');
+            }
+            if (blob.prefs.periodize !== undefined) {
+              userPreferences.periodize = !!blob.prefs.periodize;
+              localStorage.setItem('maxgainz_periodize', userPreferences.periodize ? '1' : '0');
             }
           }
           if (blob.userPath) {
@@ -3998,6 +4006,37 @@ function _refreshTrackRPEBtn(){
   if(!btn) return;
   btn.textContent = '📊 Track effort (RPE): ' + (userPreferences.trackRPE ? 'On' : 'Off');
   btn.style.color = userPreferences.trackRPE ? 'var(--accent2)' : 'var(--text)';
+}
+
+// Rolling mesocycle week (1–4) derived from the count of distinct training
+// weeks — opt-in. Returns null when off ⇒ getLiftState's periodization layer
+// is a complete no-op. wk1-2 accumulate, wk3 intensify, wk4 recovery.
+function _currentBlockWeek(){
+  if(!userPreferences.periodize) return null;
+  const weeks = new Set();
+  (completedSessions || []).forEach(s => {
+    if(s.manualActivity) return;
+    const d = s.date instanceof Date ? s.date : new Date(s.date);
+    if(isNaN(d)) return;
+    const mon = new Date(d); mon.setDate(d.getDate() - ((d.getDay()+6)%7)); mon.setHours(0,0,0,0);
+    weeks.add(mon.getTime());
+  });
+  if(!weeks.size) return null;
+  return ((weeks.size - 1) % 4) + 1;
+}
+function togglePeriodize(){
+  userPreferences.periodize = !userPreferences.periodize;
+  localStorage.setItem('maxgainz_periodize', userPreferences.periodize ? '1' : '0');
+  _refreshPeriodizeBtn();
+  if(typeof cloudSaveProfile === 'function') cloudSaveProfile();
+  showToast(userPreferences.periodize ? '🗓 Periodization on' : 'Periodization off', { duration: 2000 });
+  if(typeof updateSessUI === 'function' && sessExs.length) updateSessUI();
+}
+function _refreshPeriodizeBtn(){
+  const btn = document.getElementById('periodizeBtn');
+  if(!btn) return;
+  btn.textContent = '🗓 Periodize training: ' + (userPreferences.periodize ? 'On' : 'Off');
+  btn.style.color = userPreferences.periodize ? 'var(--accent2)' : 'var(--text)';
 }
 
 function _refreshNotificationButton(){
@@ -6074,8 +6113,15 @@ function renderLastTimeRef(ex){
     ? `<div style="margin-top:6px;font-size:12px;color:var(--text2);font-style:italic;line-height:1.4;">📝 Last note: "${String(last.note).replace(/</g,'&lt;').slice(0,140)}"</div>`
     : '';
 
+  // Periodization chip (opt-in) — shows the current rolling block week + lean.
+  const _pz = _st.periodization;
+  const _pzLabel = { accumulate:'build', intensify:'push', neutral:'recover' };
+  const _pzChip = (_pz && _pz.week != null)
+    ? `<span style="display:inline-block;margin-left:8px;font-size:9px;font-weight:800;color:var(--accent2);background:rgba(0,212,255,0.12);border-radius:6px;padding:1px 6px;letter-spacing:0.5px;">WK ${_pz.week} · ${(_pzLabel[_pz.lean]||_pz.lean).toUpperCase()}</span>`
+    : '';
+
   panel.innerHTML = `<div>
-    <div style="font-size:10px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:3px;">⏱ Last time · ${dateStr}</div>
+    <div style="font-size:10px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:3px;">⏱ Last time · ${dateStr}${_pzChip}</div>
     <div style="font-size:14px;font-weight:700;color:var(--text);">${wt}${repsDisplay}</div>
     ${noteHtml}
     ${cueHtml}
@@ -20060,6 +20106,7 @@ function renderProfile(){
   // Refresh notification button label per current permission state
   if(typeof _refreshNotificationButton === 'function') _refreshNotificationButton();
   if(typeof _refreshTrackRPEBtn === 'function') _refreshTrackRPEBtn();
+  if(typeof _refreshPeriodizeBtn === 'function') _refreshPeriodizeBtn();
   document.getElementById('profileFirstName').value=userProfile.firstName||'';
   document.getElementById('profileLastName').value=userProfile.lastName||'';
   // Populate email from authenticated user if not already set
@@ -20196,7 +20243,10 @@ let userPreferences = {
   runnerLevel:  localStorage.getItem('userRunnerLevel')  || 'intermediate',
   // Optional RPE/effort capture per set (default OFF). When on, an effort
   // chip appears in the rep modal and feeds the adaptive coaching engine.
-  trackRPE:     localStorage.getItem('maxgainz_trackRPE') === '1'
+  trackRPE:     localStorage.getItem('maxgainz_trackRPE') === '1',
+  // Opt-in light periodization (default OFF) — a rolling 4-week
+  // accumulate→intensify→recover rhythm that softens borderline increases.
+  periodize:    localStorage.getItem('maxgainz_periodize') === '1'
 };
 
 // ── BUNDLED COUNTDOWN VOICE ──
