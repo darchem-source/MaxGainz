@@ -289,6 +289,21 @@ ok('output has full key set', KEYS.every(function(k){ return (k in rA); }));
 var frozen = Object.freeze(base({history:hA, thisSession:Object.freeze({reps:[8,8,8]})}));
 eq('deterministic (frozen input)', JSON.stringify(getLiftState(frozen)), JSON.stringify(getLiftState(frozen)));
 
+// ── body measurements: _measureDelta(log, field) ──
+eq('measure: no entries → null', _measureDelta([], 'chest'), null);
+eq('measure: field absent → null', _measureDelta([{date:'2026-01-01', waist:80}], 'chest'), null);
+eq('measure: single entry latest', _measureDelta([{date:'2026-01-01', chest:100}], 'chest').latest, 100);
+eq('measure: single entry change 0', _measureDelta([{date:'2026-01-01', chest:100}], 'chest').change, 0);
+eq('measure: single entry count 1', _measureDelta([{date:'2026-01-01', chest:100}], 'chest').count, 1);
+eq('measure: change = latest - first', _measureDelta([{date:'2026-01-01', chest:100},{date:'2026-02-01', chest:104}], 'chest').change, 4);
+eq('measure: negative change', _measureDelta([{date:'2026-01-01', waist:90},{date:'2026-02-01', waist:85}], 'waist').change, -5);
+eq('measure: sorted by date not array order', _measureDelta([{date:'2026-03-01', chest:106},{date:'2026-01-01', chest:100}], 'chest').change, 6);
+eq('measure: latest is most recent date', _measureDelta([{date:'2026-03-01', chest:106},{date:'2026-01-01', chest:100}], 'chest').latest, 106);
+eq('measure: ignores non-numeric values', _measureDelta([{date:'2026-01-01', chest:'x'},{date:'2026-02-01', chest:102}], 'chest').count, 1);
+eq('measure: ignores zero/negative values', _measureDelta([{date:'2026-01-01', chest:0},{date:'2026-02-01', chest:102}], 'chest').count, 1);
+eq('measure: change rounds to 0.1', _measureDelta([{date:'2026-01-01', chest:100.04},{date:'2026-02-01', chest:101.07}], 'chest').change, 1);
+ok('measure: tolerates null/undefined entries', _measureDelta([null, undefined, {date:'2026-01-01', chest:100}], 'chest').count===1);
+
 JSON.stringify(fails);
 """
 
@@ -311,7 +326,7 @@ def gate_invariants(js):
                'getMaxWeeklySessions', 'calcWeekStreak', 'getLongestWeekStreak', '_localYMD',
                '_sessionKey', '_mergeSessions', '_validateSession',
                'getLiftState', '_leanFor', 'snapToSteps', 'stepWeight', 'calc1RM', 'parseRepTarget',
-               '_comebackEvents']:
+               '_comebackEvents', '_measureDelta']:
         src = extract_decl(js, fn)
         if not src:
             print(f'  ✗ could not extract function {fn}'); return False

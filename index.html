@@ -955,6 +955,15 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
           </div>
         </div>
 
+        <!-- Body Measurements -->
+        <div style="margin-top:14px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <label style="font-size:12px;font-weight:700;color:var(--text2);">Measurements <span style="font-weight:400;opacity:0.6;">(cm)</span></label>
+            <button onclick="openMeasureLog()" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer;">+ Log measurements</button>
+          </div>
+          <div class="card" style="padding:16px;" id="measureCard"></div>
+        </div>
+
         <!-- Appearance / Colour Theme -->
         <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;">
           <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:12px;">🎨 App Theme</div>
@@ -1723,6 +1732,47 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
     </div>
     <!-- Recent entries -->
     <div id="bwRecentList" style="margin-top:16px;"></div>
+  </div>
+</div>
+
+<!-- LOG MEASUREMENTS MODAL -->
+<div class="modal-ov" id="measureLogMod" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal" style="max-width:360px;">
+    <div class="modal-handle"></div>
+    <div style="font-size:17px;font-weight:800;margin-bottom:4px;">Log Measurements</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:16px;">All optional, in cm. Leave a field blank to skip it.</div>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:12px;color:var(--text2);margin-bottom:6px;">Date</div>
+      <input id="measureDate" type="date" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:11px 12px;font-size:14px;color:var(--text);box-sizing:border-box;" />
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+      <div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:4px;">Chest</div>
+        <input id="m_chest" type="number" inputmode="decimal" step="0.1" placeholder="cm" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:11px 12px;font-size:16px;font-weight:700;color:var(--text);box-sizing:border-box;" />
+      </div>
+      <div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:4px;">Waist</div>
+        <input id="m_waist" type="number" inputmode="decimal" step="0.1" placeholder="cm" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:11px 12px;font-size:16px;font-weight:700;color:var(--text);box-sizing:border-box;" />
+      </div>
+      <div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:4px;">Arms</div>
+        <input id="m_arms" type="number" inputmode="decimal" step="0.1" placeholder="cm" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:11px 12px;font-size:16px;font-weight:700;color:var(--text);box-sizing:border-box;" />
+      </div>
+      <div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:4px;">Thighs</div>
+        <input id="m_thighs" type="number" inputmode="decimal" step="0.1" placeholder="cm" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:11px 12px;font-size:16px;font-weight:700;color:var(--text);box-sizing:border-box;" />
+      </div>
+      <div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:4px;">Hips</div>
+        <input id="m_hips" type="number" inputmode="decimal" step="0.1" placeholder="cm" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:11px 12px;font-size:16px;font-weight:700;color:var(--text);box-sizing:border-box;" />
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button onclick="document.getElementById('measureLogMod').classList.remove('open')" style="flex:1;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:13px;font-size:14px;font-weight:700;color:var(--text2);cursor:pointer;">Cancel</button>
+      <button onclick="saveMeasureEntry()" style="flex:1;background:var(--accent);border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:800;color:#000;cursor:pointer;">Save</button>
+    </div>
+    <!-- Recent entries -->
+    <div id="measureRecentList"></div>
   </div>
 </div>
 
@@ -3508,6 +3558,7 @@ async function cloudSaveProfile() {
     userPath,
     pathHistory: Array.isArray(pathHistory) ? pathHistory : [],
     bodyWeightLog,
+    measurementsLog: Array.isArray(measurementsLog) ? measurementsLog : [],
     onboarded: !!localStorage.getItem('maxgainz_onboarded'),
     pbLifts: Array.isArray(pbLifts) ? pbLifts : [],
     prefs: {
@@ -3690,6 +3741,10 @@ async function cloudLoadAll() {
           if (Array.isArray(blob.bodyWeightLog)) {
             bodyWeightLog = blob.bodyWeightLog;
           }
+          // Restore body measurements log
+          if (Array.isArray(blob.measurementsLog)) {
+            measurementsLog = blob.measurementsLog;
+          }
           // Restore Personal Best tile set
           if (Array.isArray(blob.pbLifts)) {
             pbLifts = blob.pbLifts;
@@ -3788,6 +3843,7 @@ function saveLocalCache() {
       todayProg,
       userProfile,
       bodyWeightLog,
+      measurementsLog,
       savedAt: new Date().toISOString()
     }));
   } catch(e) {}
@@ -4149,6 +4205,7 @@ function _buildExportPayload(){
     pathHistory:    lsRead('maxgainz_pathHistory', []),
     // Body weight history
     bodyWeightLog:  bodyWeightLog || [],
+    measurementsLog: measurementsLog || [],
     // Preferences
     prefs: {
       speedUnit:    lsReadRaw('userSpeedUnit')    || 'mph',
@@ -4260,6 +4317,11 @@ function applyImportPayload(payload){
   if(typeof bodyWeightLog !== 'undefined'){
     bodyWeightLog.length = 0;
     (payload.bodyWeightLog || []).forEach(e => bodyWeightLog.push(e));
+  }
+  // Body measurements log
+  if(typeof measurementsLog !== 'undefined' && Array.isArray(payload.measurementsLog)){
+    measurementsLog.length = 0;
+    payload.measurementsLog.forEach(e => measurementsLog.push(e));
   }
 
   // Personal Best tile set
@@ -4398,6 +4460,9 @@ catch(e) { pathHistory = []; }
 
 // Body weight log — array of {date: ISO string, weight: number, unit: 'kg'|'lbs'}
 let bodyWeightLog = stored ? (stored.bodyWeightLog || []) : [];
+// Body measurements log — array of {date, chest, waist, arms, thighs, hips} in cm
+// (each field optional). Mirrors bodyWeightLog's persistence/sync exactly.
+let measurementsLog = stored ? (stored.measurementsLog || []) : [];
 
 // User profile - stored separately
 let userProfile = stored && stored.userProfile ? stored.userProfile : {
@@ -14530,6 +14595,95 @@ function renderBWRecentList() {
     </div>`;
 }
 
+// ── BODY MEASUREMENTS ──────────────────────────────────────────────────
+const _MEASURE_FIELDS = [['chest','Chest'],['waist','Waist'],['arms','Arms'],['thighs','Thighs'],['hips','Hips']];
+// Pure: latest value + change since the first entry for a given field (cm).
+function _measureDelta(log, field){
+  const vals = (log || [])
+    .filter(e => e && typeof e[field] === 'number' && isFinite(e[field]) && e[field] > 0)
+    .sort((a,b) => String(a.date||'').localeCompare(String(b.date||'')));
+  if(!vals.length) return null;
+  const first = vals[0][field], latest = vals[vals.length-1][field];
+  return { latest, first, change: Math.round((latest - first) * 10) / 10, count: vals.length };
+}
+function openMeasureLog(){
+  const sorted = [...measurementsLog].sort((a,b) => String(b.date).localeCompare(String(a.date)));
+  const last = sorted[0] || {};
+  _MEASURE_FIELDS.forEach(([k]) => {
+    const inp = document.getElementById('m_' + k);
+    if(inp) inp.value = (typeof last[k] === 'number') ? last[k] : '';
+  });
+  const dateEl = document.getElementById('measureDate');
+  if(dateEl) dateEl.value = new Date().toISOString().split('T')[0];
+  renderMeasureRecentList();
+  document.getElementById('measureLogMod').classList.add('open');
+}
+function saveMeasureEntry(){
+  const dateVal = document.getElementById('measureDate').value;
+  if(!dateVal){ showToast('⚠️ Please pick a date'); return; }
+  const entry = { date: dateVal };
+  let any = false;
+  _MEASURE_FIELDS.forEach(([k]) => {
+    const raw = parseFloat(document.getElementById('m_' + k).value);
+    if(!isNaN(raw) && raw > 0 && raw < 300){ entry[k] = Math.round(raw * 10) / 10; any = true; }
+  });
+  if(!any){ showToast('⚠️ Enter at least one measurement'); return; }
+  const idx = measurementsLog.findIndex(e => e.date === dateVal);
+  if(idx >= 0) measurementsLog[idx] = entry; else measurementsLog.push(entry);
+  measurementsLog.sort((a,b) => String(a.date).localeCompare(String(b.date)));
+  saveLocalCache();
+  if(typeof cloudSaveProfile === 'function') cloudSaveProfile();
+  renderMeasureRecentList();
+  renderMeasureCard();
+  showToast('✅ Measurements logged!');
+}
+function deleteMeasureEntry(date){
+  measurementsLog = measurementsLog.filter(e => e.date !== date);
+  saveLocalCache();
+  if(typeof cloudSaveProfile === 'function') cloudSaveProfile();
+  renderMeasureRecentList();
+  renderMeasureCard();
+}
+function renderMeasureCard(){
+  const el = document.getElementById('measureCard');
+  if(!el) return;
+  const anyData = _MEASURE_FIELDS.some(([k]) => _measureDelta(measurementsLog, k));
+  if(!anyData){
+    el.innerHTML = '<div style="text-align:center;color:var(--text2);font-size:13px;padding:6px 0;">No measurements yet — tap + Log measurements</div>';
+    return;
+  }
+  el.innerHTML = _MEASURE_FIELDS.map(([k,label]) => {
+    const d = _measureDelta(measurementsLog, k);
+    const latest = d ? `${d.latest} cm` : '–';
+    const delta = (d && d.count >= 2)
+      ? `<span style="font-size:11px;color:var(--text2);margin-left:8px;">${d.change > 0 ? '+' : ''}${d.change} cm</span>`
+      : '';
+    return `<div style="display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:0.5px solid var(--border);">
+      <span style="font-size:13px;color:var(--text2);">${label}</span>
+      <span style="font-size:14px;font-weight:700;color:${d?'var(--text)':'var(--text2)'};">${latest}${delta}</span>
+    </div>`;
+  }).join('');
+}
+function renderMeasureRecentList(){
+  const el = document.getElementById('measureRecentList');
+  if(!el) return;
+  const sorted = [...measurementsLog].sort((a,b) => String(b.date).localeCompare(String(a.date))).slice(0, 5);
+  if(!sorted.length){ el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div style="border-top:0.5px solid var(--border);padding-top:12px;margin-top:12px;">
+      <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Recent Entries</div>
+      ${sorted.map(e => {
+        const d = new Date(e.date + 'T12:00:00');
+        const label = d.toLocaleDateString('en-GB', {day:'numeric', month:'short', year:'numeric'});
+        const vals = _MEASURE_FIELDS.filter(([k]) => typeof e[k] === 'number').map(([k,lbl]) => `${lbl[0]}:${e[k]}`).join(' · ');
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:0.5px solid var(--border);">
+          <div style="font-size:12px;color:var(--text2);min-width:0;"><div>${label}</div><div style="font-size:10px;opacity:0.8;">${vals}</div></div>
+          <button onclick="deleteMeasureEntry('${e.date}')" style="background:rgba(255,77,106,0.1);border:0.5px solid rgba(255,77,106,0.25);border-radius:6px;padding:2px 8px;font-size:11px;color:var(--red);cursor:pointer;flex-shrink:0;">✕</button>
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
 function renderBWChart() {
   const chartEl = document.getElementById('bwChart');
   const yAxisEl = document.getElementById('bwYAxis');
@@ -20366,6 +20520,8 @@ const AVATARS=['🏋️','💪','🏆','⚡','🔥','🎯','🚀','💯','😤',
 function renderProfile(){
   // Body weight history chart (moved from Progress tab)
   if(typeof renderBWChart === 'function') renderBWChart();
+  // Body measurements card
+  if(typeof renderMeasureCard === 'function') renderMeasureCard();
   // Refresh notification button label per current permission state
   if(typeof _refreshNotificationButton === 'function') _refreshNotificationButton();
   if(typeof _refreshTrackRPEBtn === 'function') _refreshTrackRPEBtn();
