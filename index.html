@@ -2366,6 +2366,39 @@ const LIBRARY_PROGRAMMES = [
       ]},
     ],
   },
+  {
+    id:'db-home-fb', name:'Dumbbell Home Full-Body', short:'DB Home', author:'Max Gainz',
+    level:'Beginner', goal:'Hypertrophy', daysPerWeek:3, equipment:'Dumbbells',
+    tags:['hypertrophy','beginner','dumbbell','home','3-day','full-body'],
+    blurb:'A pair of dumbbells and a mat — three full-body days a week. Built for home and travel.',
+    description:'Three rotating full-body sessions (A/B/C) hitting every major muscle with just dumbbells. Work toward the top of each rep range, then nudge the weight up. No barbell, rack, or machines needed.',
+    schedule:[
+      { day:'Day A', badge:'badge-f', exercises:[
+        {name:'Goblet Squat',sets:4,reps:'8–12',weight:20,muscles:['legs','glutes'],type:'Primary'},
+        {name:'Dumbbell Bench Press',sets:4,reps:'8–12',weight:18,muscles:['chest','triceps'],type:'Primary'},
+        {name:'Dumbbell Row',sets:4,reps:'8–12',weight:18,muscles:['back','biceps'],type:'Primary'},
+        {name:'Dumbbell Shoulder Press',sets:3,reps:'10–12',weight:12,muscles:['shoulders','triceps'],type:'Compound'},
+        {name:'Dumbbell Bicep Curls',sets:3,reps:'10–15',weight:10,muscles:['biceps'],type:'Accessory'},
+        {name:'Plank',sets:3,reps:'45s',weight:0,muscles:['core'],type:'Accessory'},
+      ]},
+      { day:'Day B', badge:'badge-f', exercises:[
+        {name:'Dumbbell Romanian Deadlift',sets:4,reps:'8–12',weight:20,muscles:['back','legs'],type:'Primary'},
+        {name:'Dumbbell Lunges',sets:3,reps:'10–12 each',weight:14,muscles:['legs','glutes'],type:'Primary'},
+        {name:'Incline Dumbbell Press',sets:4,reps:'8–12',weight:16,muscles:['chest','shoulders'],type:'Primary'},
+        {name:'Renegade Rows',sets:3,reps:'8–10 each',weight:12,muscles:['back','core'],type:'Compound'},
+        {name:'Hammer Curls',sets:3,reps:'10–12',weight:12,muscles:['biceps'],type:'Accessory'},
+        {name:'Russian Twists',sets:3,reps:'20',weight:6,muscles:['core'],type:'Accessory'},
+      ]},
+      { day:'Day C', badge:'badge-f', exercises:[
+        {name:'Goblet Squat',sets:4,reps:'10–15',weight:18,muscles:['legs','glutes'],type:'Primary'},
+        {name:'Dumbbell Shoulder Press',sets:4,reps:'8–12',weight:12,muscles:['shoulders','triceps'],type:'Primary'},
+        {name:'Dumbbell Row',sets:4,reps:'8–12',weight:18,muscles:['back','biceps'],type:'Primary'},
+        {name:'Dumbbell Floor Press',sets:3,reps:'10–12',weight:16,muscles:['chest','triceps'],type:'Compound'},
+        {name:'Glute Bridge',sets:3,reps:'15',weight:0,muscles:['glutes','core'],type:'Accessory'},
+        {name:'Dead Bug',sets:3,reps:'10 each',weight:0,muscles:['core'],type:'Accessory'},
+      ]},
+    ],
+  },
 ];
 
 // Library helpers
@@ -10727,6 +10760,83 @@ const HIIT=[
     {name:"Russian Twists",sets:2,reps:"40s",weight:0,bw:true},
     {name:"Hollow Body Hold",sets:2,reps:"30s",weight:0,bw:true},
     {name:"Bicycle Crunches",sets:2,reps:"40s",weight:0,bw:true}
+  ]},
+
+  // ── TABATA ── (20s on / 10s off × 8 intervals per round; 4 moves cycle.
+  //   Reps MUST contain "Ns on/Ns off" for the Tabata engine to parse timing.)
+  {name:"Tabata · Full Body Sweat",duration:16,diff:2,format:"Tabata",
+   desc:"Classic Tabata: 8 intervals of 20-on/10-off per round, 4 moves cycling. Pick your rounds before you start.",exercises:[
+    {name:"Burpees",reps:"20s on/10s off",weight:0,bw:true},
+    {name:"Mountain Climbers",reps:"20s on/10s off",weight:0,bw:true},
+    {name:"Jump Squats",reps:"20s on/10s off",weight:0,bw:true},
+    {name:"Push-Ups",reps:"20s on/10s off",weight:0,bw:true}
+  ]},
+  {name:"Tabata · Lower Body Burn",duration:16,diff:2,format:"Tabata",
+   desc:"Leg-focused Tabata — 20-on/10-off, glutes and quads screaming by round 3.",exercises:[
+    {name:"Jump Squats",reps:"20s on/10s off",weight:0,bw:true},
+    {name:"Reverse Lunge with Knee Drive",reps:"20s on/10s off",weight:0,bw:true},
+    {name:"Glute Bridge",reps:"20s on/10s off",weight:0,bw:true},
+    {name:"Squat to Calf Raise",reps:"20s on/10s off",weight:0,bw:true}
+  ]},
+  {name:"Tabata · Upper Body Blast",duration:16,diff:3,format:"Tabata",
+   desc:"Push-focused Tabata for shoulders, chest and triceps. Knee push-ups are fine.",exercises:[
+    {name:"Push-Ups",reps:"20s on/10s off",weight:0,bw:true},
+    {name:"Plank Shoulder Taps",reps:"20s on/10s off",weight:0,bw:true},
+    {name:"Pike Push-Ups",reps:"20s on/10s off",weight:0,bw:true},
+    {name:"Tricep Dips",reps:"20s on/10s off",weight:0,bw:true}
+  ]},
+  {name:"Tabata · Core Inferno",duration:16,diff:2,format:"Tabata",
+   desc:"Eight rounds of relentless ab work — 20 on, 10 off, no mercy.",exercises:[
+    {name:"Bicycle Crunches",reps:"20s on/10s off",weight:0,bw:true},
+    {name:"Russian Twists",reps:"20s on/10s off",weight:0,bw:true},
+    {name:"Mountain Climbers",reps:"20s on/10s off",weight:0,bw:true},
+    {name:"Plank Up-Downs",reps:"20s on/10s off",weight:0,bw:true}
+  ]},
+
+  // ── FINISHERS ── (short 6–10 min add-ons to bolt onto any session)
+  {name:"Finisher · Core Crusher (6 min)",duration:6,diff:2,format:"Core/Timed",
+   desc:"6-minute ab finisher — 40s on, 20s rest. 2 rounds.",exercises:[
+    {name:"Plank",sets:2,reps:"40s",weight:0,bw:true},
+    {name:"Bicycle Crunches",sets:2,reps:"40s",weight:0,bw:true},
+    {name:"Russian Twists",sets:2,reps:"40s",weight:0,bw:true},
+    {name:"Leg Raises",sets:2,reps:"40s",weight:0,bw:true}
+  ]},
+  {name:"Finisher · Leg Burnout (8 min)",duration:8,diff:2,format:"Core/Timed",
+   desc:"Lower-body burnout to end your session. Iso holds + bridges, 2 rounds.",exercises:[
+    {name:"Wall Sit",sets:2,reps:"45s",weight:0,bw:true},
+    {name:"Squat Hold",sets:2,reps:"40s",weight:0,bw:true},
+    {name:"Glute Bridge",sets:2,reps:"45s",weight:0,bw:true},
+    {name:"Reverse Lunge Hold",sets:2,reps:"40s each",weight:0,bw:true}
+  ]},
+  {name:"Finisher · Arm Pump (8 min)",duration:8,diff:2,format:"AMRAP",amrapMinutes:8,
+   desc:"AMRAP arm-and-shoulder pump finisher. As many rounds as possible in 8 min.",exercises:[
+    {name:"Push-Ups",sets:1,reps:"12 reps",weight:0,bw:true},
+    {name:"Tricep Dips",sets:1,reps:"12 reps",weight:0,bw:true},
+    {name:"Pike Push-Ups",sets:1,reps:"8 reps",weight:0,bw:true}
+  ]},
+  {name:"Finisher · Conditioning Blast (10 min)",duration:10,diff:3,format:"AMRAP",amrapMinutes:10,
+   desc:"Cardio gas-tank finisher. AMRAP in 10 — keep moving, log each round.",exercises:[
+    {name:"Burpees",sets:1,reps:"8 reps",weight:0,bw:true},
+    {name:"Mountain Climbers",sets:1,reps:"20 reps",weight:0,bw:true},
+    {name:"Jump Squats",sets:1,reps:"15 reps",weight:0,bw:true}
+  ]},
+
+  // ── LOW-IMPACT / APARTMENT ── (no jumping, joint-friendly, neighbour-safe)
+  {name:"Low-Impact · Apartment Cardio (20 min)",duration:20,diff:1,format:"Core/Timed",
+   desc:"Quiet, joint-friendly cardio — no jumping. 40s on / 20s rest, 3 rounds.",exercises:[
+    {name:"Marching in Place",sets:3,reps:"40s",weight:0,bw:true},
+    {name:"Standing Mountain Climbers",sets:3,reps:"40s",weight:0,bw:true},
+    {name:"Wall Push-Ups",sets:3,reps:"40s",weight:0,bw:true},
+    {name:"Glute Bridges",sets:3,reps:"40s",weight:0,bw:true},
+    {name:"Squat to Calf Raise",sets:3,reps:"40s",weight:0,bw:true}
+  ]},
+  {name:"Low-Impact · Quiet Core & Glutes (18 min)",duration:18,diff:1,format:"Core/Timed",
+   desc:"Floor-based, silent core + glute work. Perfect for hotels & shared walls. 3 rounds.",exercises:[
+    {name:"Glute Bridge",sets:3,reps:"45s",weight:0,bw:true},
+    {name:"Bird Dog",sets:3,reps:"40s",weight:0,bw:true},
+    {name:"Dead Bug",sets:3,reps:"40s",weight:0,bw:true},
+    {name:"Single-Leg Glute Bridge",sets:3,reps:"30s each",weight:0,bw:true},
+    {name:"Wall Sit",sets:3,reps:"45s",weight:0,bw:true}
   ]}
 ];
 
@@ -10760,6 +10870,19 @@ const HIIT_MUSCLE_FOCUS = {
   "Summer Series · Upper & Core Sculpt":  ['push','core'],
   "Summer Series · Full Floor Burn":      ['push','pull','legs','core'],
   "Summer Series · Express Core":         ['core'],
+  // ── Tabata ──
+  "Tabata · Full Body Sweat":             ['push','legs','core'],
+  "Tabata · Lower Body Burn":             ['legs'],
+  "Tabata · Upper Body Blast":            ['push','core'],
+  "Tabata · Core Inferno":                ['core'],
+  // ── Finishers ──
+  "Finisher · Core Crusher (6 min)":      ['core'],
+  "Finisher · Leg Burnout (8 min)":       ['legs'],
+  "Finisher · Arm Pump (8 min)":          ['push'],
+  "Finisher · Conditioning Blast (10 min)":['push','legs','core'],
+  // ── Low-impact / apartment ──
+  "Low-Impact · Apartment Cardio (20 min)":['legs','push','core'],
+  "Low-Impact · Quiet Core & Glutes (18 min)":['legs','core'],
 };
 
 // ── HIIT SERIES ──
