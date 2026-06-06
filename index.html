@@ -730,7 +730,10 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
           <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--text2);margin-left:34px;" id="chartX"></div>
         </div>
 
-        <div class="section-label">ESTIMATED 1RM</div>
+        <div class="section-label" style="display:flex;align-items:center;justify-content:space-between;">
+          <span>ESTIMATED 1RM</span>
+          <button onclick="openOneRMCalc()" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;padding:5px 10px;font-size:11px;font-weight:800;color:var(--accent);cursor:pointer;">🧮 Calculator</button>
+        </div>
         <div class="card" style="padding:16px;"><div id="oneRMChart"></div></div>
 
         <div class="collapsible-section" id="cs-strengthRatios" style="margin-bottom:24px;">
@@ -1561,6 +1564,35 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
     <div id="ladderModSub" style="font-size:13px;color:var(--text2);margin-bottom:14px;"></div>
     <div id="ladderModBody"></div>
     <button onclick="closeLadderModal()" style="width:100%;margin-top:10px;background:transparent;border:0.5px solid var(--border);border-radius:12px;padding:13px;font-size:14px;font-weight:700;color:var(--text2);cursor:pointer;">Close</button>
+  </div>
+</div>
+
+<!-- 1RM CALCULATOR -->
+<div class="modal-ov" id="oneRMCalcMod" style="z-index:400;" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div style="font-size:19px;font-weight:800;margin-bottom:4px;">1RM Calculator</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:16px;">Estimate your one-rep max from a set you can do, using the Epley formula.</div>
+    <div style="display:flex;gap:10px;margin-bottom:16px;">
+      <div style="flex:1;">
+        <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Weight (kg)</div>
+        <input id="ormWeight" type="number" inputmode="decimal" value="60" oninput="renderOneRMCalc()"
+          style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:11px 12px;font-size:16px;color:var(--text);box-sizing:border-box;">
+      </div>
+      <div style="flex:1;">
+        <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Reps</div>
+        <input id="ormReps" type="number" inputmode="numeric" value="5" oninput="renderOneRMCalc()"
+          style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:11px 12px;font-size:16px;color:var(--text);box-sizing:border-box;">
+      </div>
+    </div>
+    <div style="background:var(--surface2);border-radius:14px;padding:16px;text-align:center;margin-bottom:14px;">
+      <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;">Estimated 1RM</div>
+      <div id="ormResult" style="font-size:40px;font-weight:900;color:var(--accent);line-height:1.1;margin-top:4px;">—</div>
+    </div>
+    <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Training percentages</div>
+    <div id="ormTable" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;"></div>
+    <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:14px;">Estimates only — true maxes vary. Don't max out without a spotter.</div>
+    <button onclick="document.getElementById('oneRMCalcMod').classList.remove('open')" style="width:100%;background:transparent;border:none;color:var(--text2);font-size:13px;padding:8px;cursor:pointer;">Close</button>
   </div>
 </div>
 
@@ -5401,13 +5433,45 @@ function getLastSessionData(exName){
   const s = past[0];
   // The matching key in this session is the one that wins
   const matched = names.find(n => s.setLog[n]);
-  return {date:s.date, weight:s.setLog[matched].weight, reps:s.setLog[matched].reps||[]};
+  return {date:s.date, weight:s.setLog[matched].weight, reps:s.setLog[matched].reps||[], note:s.setLog[matched].note||null};
 }
 
 // Epley 1RM estimate: weight × (1 + reps/30)
 function calc1RM(weight, reps){
   if(!weight || !reps || reps < 1) return weight;
   return weight * (1 + reps / 30);
+}
+
+// ── Standalone 1RM calculator tool (Progress > Strength) ──
+function openOneRMCalc(){
+  renderOneRMCalc();
+  document.getElementById('oneRMCalcMod').classList.add('open');
+}
+function renderOneRMCalc(){
+  const w = parseFloat(document.getElementById('ormWeight').value) || 0;
+  const r = parseInt(document.getElementById('ormReps').value) || 0;
+  const resEl = document.getElementById('ormResult');
+  const tblEl = document.getElementById('ormTable');
+  if(w <= 0 || r < 1){
+    if(resEl) resEl.textContent = '—';
+    if(tblEl) tblEl.innerHTML = '';
+    return;
+  }
+  // Round to nearest 0.5kg for a usable number.
+  const orm = Math.round(calc1RM(w, r) * 2) / 2;
+  if(resEl) resEl.textContent = orm + ' kg';
+  // Common training percentages of 1RM with rough rep guidance.
+  const rows = [
+    [100,'1 rep'],[95,'2 reps'],[90,'3–4'],[85,'5–6'],
+    [80,'7–8'],[75,'9–10'],[70,'11–12'],[65,'12–15']
+  ];
+  if(tblEl) tblEl.innerHTML = rows.map(([pct,reps]) => {
+    const kg = Math.round(orm * pct / 100 * 2) / 2;
+    return `<div style="display:flex;justify-content:space-between;align-items:baseline;background:var(--surface2);border-radius:8px;padding:8px 10px;">
+      <span style="font-size:13px;font-weight:800;">${kg}<span style="font-size:10px;font-weight:500;color:var(--text2);">kg</span></span>
+      <span style="font-size:10px;color:var(--text2);">${pct}% · ${reps}</span>
+    </div>`;
+  }).join('');
 }
 
 // Parse a rep target (midpoint of range, or single value). Returns null for timed/AMRAP strings.
@@ -5626,9 +5690,17 @@ function renderLastTimeRef(ex){
     }
   }
 
+  // Recall the note left on this exercise last time ("felt easy", "left
+  // elbow tweak", "used green band") — high real-world utility, the data was
+  // already stored in setLog but never surfaced.
+  const noteHtml = last.note
+    ? `<div style="margin-top:6px;font-size:12px;color:var(--text2);font-style:italic;line-height:1.4;">📝 Last note: "${String(last.note).replace(/</g,'&lt;').slice(0,140)}"</div>`
+    : '';
+
   panel.innerHTML = `<div>
     <div style="font-size:10px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:3px;">⏱ Last time · ${dateStr}</div>
     <div style="font-size:14px;font-weight:700;color:var(--text);">${wt}${repsDisplay}</div>
+    ${noteHtml}
     ${cueHtml}
   </div>`;
   panel.style.display = 'block';
@@ -9959,19 +10031,51 @@ function closeFinish(){
   goTab('today',document.getElementById('nav-today'));
 }
 
+// Set of exercise names contraindicated by the user's logged injuries
+// (from onboarding) — combines every flagged injury's affected-exercise set.
+// Empty set when no injuries / no onboarding data.
+function _userInjurySet(){
+  const inj = (userProfile && userProfile.onboarding && userProfile.onboarding.injuryHistory) || [];
+  const out = new Set();
+  inj.forEach(k => { if(k !== 'none' && _OB_INJ[k]) _OB_INJ[k].forEach(n => out.add(n)); });
+  return out;
+}
+// Friendly label list of the user's active injuries.
+function _userInjuryLabels(){
+  const map={shoulder:'shoulder',elbow_wrist:'elbow/wrist',lower_back:'lower back',knee_ankle:'knee/ankle'};
+  const inj=(userProfile && userProfile.onboarding && userProfile.onboarding.injuryHistory)||[];
+  return inj.filter(k=>k!=='none'&&map[k]).map(k=>map[k]);
+}
+
 function openSwap(idx){
   const ex=idx>=0?sessExs[idx]:null,muscles=ex?ex.muscles:null;
   document.getElementById('swapTitle').textContent=ex?'Swap: '+ex.name:'Exercise Ideas';
   document.getElementById('swapSub').textContent=ex?'Same muscle group alternatives':'Browse alternatives';
   let alts=[];
-  if(muscles){alts=EXDB.filter(e=>e.muscles.some(m=>muscles.includes(m))&&e.name!==ex.name).slice(0,8);}
+  if(muscles){alts=EXDB.filter(e=>e.muscles.some(m=>muscles.includes(m))&&e.name!==ex.name).slice(0,12);}
   else alts=EXDB.slice(0,16);
+  // Injury-aware: deprioritise exercises that aggravate a flagged injury and
+  // mark them, so the safe options surface first. (The injury data was
+  // collected at onboarding but never used after — this closes that loop.)
+  const injSet=_userInjurySet();
+  if(injSet.size){
+    alts=alts.slice().sort((a,b)=>(injSet.has(a.name)?1:0)-(injSet.has(b.name)?1:0));
+  }
+  alts=alts.slice(0,8);
+  const injLabels=_userInjuryLabels();
+  // Header hint when the exercise being swapped is itself contraindicated.
+  let hintHtml='';
+  if(ex && injSet.has(ex.name) && injLabels.length){
+    hintHtml=`<div style="background:rgba(255,140,66,0.10);border:0.5px solid rgba(255,140,66,0.35);border-radius:10px;padding:9px 12px;margin-bottom:10px;font-size:12px;color:var(--orange);line-height:1.4;">⚠️ You flagged a ${injLabels.join(' & ')} issue. Safer options are listed first; ⚠️-marked moves may aggravate it.</div>`;
+  }
   const dL=['','Beginner','Intermediate','Advanced','Elite'],dC=['','var(--green)','var(--accent)','var(--orange)','var(--red)'];
-  document.getElementById('swapContent').innerHTML=alts.map(a=>`
-    <div class="alt-row" onclick="swapIn(${idx},'${a.name.replace(/'/g,"\\'")}')">
-      <div style="flex:1;"><div style="font-size:14px;font-weight:700;">${a.name}</div><div style="font-size:11px;color:var(--text2);">${a.equip} · ${a.reps} reps</div><div style="font-size:11px;color:var(--text2);margin-top:1px;">${a.benefits.slice(0,55)}…</div></div>
+  document.getElementById('swapContent').innerHTML=hintHtml+alts.map(a=>{
+    const risky=injSet.has(a.name);
+    return `
+    <div class="alt-row" onclick="swapIn(${idx},'${a.name.replace(/'/g,"\\'")}')" style="${risky?'opacity:0.7;':''}">
+      <div style="flex:1;"><div style="font-size:14px;font-weight:700;">${risky?'⚠️ ':''}${a.name}</div><div style="font-size:11px;color:var(--text2);">${a.equip} · ${a.reps} reps</div><div style="font-size:11px;color:var(--text2);margin-top:1px;">${a.benefits.slice(0,55)}…</div></div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">${a.muscles.slice(0,2).map(m=>`<span class="tag tag-${m}">${m}</span>`).join('')}<span style="font-size:10px;color:${dC[a.diff]};">${dL[a.diff]}</span></div>
-    </div>`).join('');
+    </div>`;}).join('');
   document.getElementById('swapMod').classList.add('open');
 }
 
