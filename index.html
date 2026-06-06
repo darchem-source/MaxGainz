@@ -5969,114 +5969,45 @@ function renderLastTimeRef(ex){
       ? repsArr.join('/')
       : `${Math.round(repsArr.reduce((a,b)=>a+b,0)/repsArr.length)} reps`;
 
-  // Compute multi-rule pre-session suggestion based on last session's performance
-  const editInfo = getWeightEditability(ex.name);
-  const repsSpec = String(ex.reps || '8').split('–');
-  const lo = parseInt(repsSpec[0]) || 5;
-  const hi = parseInt(repsSpec[1]) || lo;
-  const minSet = repsArr.length ? Math.min(...repsArr) : 0;
-  const maxSet = repsArr.length ? Math.max(...repsArr) : 0;
-  const avgReps = repsArr.length ? Math.round((repsArr.reduce((a,b)=>a+b,0) / repsArr.length) * 10) / 10 : 0;
-  const allAtOrAboveTop = repsArr.length && repsArr.every(r => r >= hi);
-  const allBelowLo      = repsArr.length && repsArr.every(r => r <  lo);
-
-  // Are we already at a higher weight this session than last?
-  const alreadyBumped = !ex.bw && last.weight && ex.weight > last.weight;
-
-  // Cross-session: was the prior session ALSO at the top (consistency cue)?
-  const allHistory = (typeof getLiftHistoryByName === 'function')
-    ? getLiftHistoryByName(ex.name).slice(-4)
-    : [];
-  const stalled = allHistory.length >= 3
-    && allHistory.slice(-3).every(h => h.weight === last.weight);
-
+  // Pre-session coach cue — derived from the SAME getLiftState engine as the
+  // post-session Coach's Notes, so the two surfaces can never disagree. The
+  // panel's last-time data (date / weight×reps / note) renders below unchanged;
+  // only the cue line + Apply button now come from the engine.
+  const _plSteps = (typeof getWeightSteps === 'function') ? getWeightSteps(ex, equipOverride[curIdx]) : [];
+  const _st = getLiftState({
+    plannedWeight: ex.weight,
+    repRange: ex.reps,
+    bw: !!ex.bw,
+    timed: false,
+    steps: _plSteps,
+    nowMs: Date.now(),
+    history: (typeof buildLiftHistory === 'function') ? buildLiftHistory(ex.name) : [],
+    thisSession: null, // PRE / cue mode
+    // self-activate once their helpers exist (RPE = commit 6, periodization = 8)
+    rpeThisSession: (typeof _preSessionRPE === 'function') ? _preSessionRPE(ex.name) : null,
+    blockWeek: (typeof _currentBlockWeek === 'function') ? _currentBlockWeek() : null
+  });
   let cueHtml = '';
-  // Deload (long gap). For BW exercises (Ab Wheel Rollout, Plank, Pull-Ups
-  // etc.) there's no weight to deload — show a generic ease-back-in cue
-  // instead of "try nullkg". Same fallback covers any weighted exercise
-  // whose history happens to be 0 (rare but renders "0kg" if not guarded).
-  if(editInfo && editInfo.status === 'deload'){
-    const isBWish = ex.bw || !(editInfo.suggestedWeight > 0);
-    if(isBWish){
-      cueHtml = `<div style="margin-top:6px;font-size:12px;color:#ff8c42;">
-        🌱 Coach: ${editInfo.weeksAway}w gap — ease back in, focus on form before pushing volume
-      </div>`;
-    } else {
-      const pct = Math.round(editInfo.deloadPct * 100);
-      cueHtml = `<div style="margin-top:6px;font-size:12px;color:#ff8c42;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-        <span>📉 Coach: try <strong style="color:var(--text);">${editInfo.suggestedWeight}${unit}</strong> <span style="opacity:0.7;">(−${pct}% · ${editInfo.weeksAway}w gap)</span></span>
-        ${(editInfo.suggestedWeight !== ex.weight) ? `<button onclick="applyPreSessionSuggestion(${editInfo.suggestedWeight})" style="background:rgba(255,140,66,0.15);border:0.5px solid rgba(255,140,66,0.45);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:800;color:#ff8c42;cursor:pointer;">Apply</button>` : ''}
-      </div>`;
-    }
-  } else if(!ex.bw && last.weight){
-    const steps = getWeightSteps(ex, equipOverride[curIdx]);
-    const nextW = stepWeight(last.weight, 1, steps);
-    const prevW = stepWeight(last.weight, -1, steps);
-
-    // Rule 0: rep-target has shifted vs last session and the weight has
-    // already been auto-adjusted. Explain that adjustment so the cue agrees
-    // with the displayed weight, rather than falling through to a rule that
-    // says "hold last weight" while the displayed weight is something else.
-    // Without this, e.g. last 90kg × 5/5/5/5 with today's 8–12 target
-    // showed a 77.5kg weight AND the cue "hold 90kg, focus on form" —
-    // contradictory.
-    const _adjW = editInfo && editInfo.repAdjustedWeight;
-    if(_adjW && _adjW !== last.weight){
-      const diff = +(_adjW - last.weight).toFixed(1);
-      const goingDown = _adjW < last.weight;
-      const arrow    = goingDown ? '📉' : '📈';
-      const colour   = goingDown ? '#ff8c42' : 'var(--accent)';
-      const reason   = goingDown
-        ? `${last.weight}${unit} × ${avgReps} avg last time is below today's ${lo}–${hi} target — ${_adjW}${unit} should give you room for ${lo}+ reps`
-        : `${last.weight}${unit} × ${avgReps} avg last time exceeded today's ${lo}–${hi} target — ${_adjW}${unit} matches the new rep range`;
-      cueHtml = `<div style="margin-top:6px;font-size:12px;color:${colour};display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-        <span>${arrow} Coach: ${reason} <span style="opacity:0.7;">(${diff > 0 ? '+' : ''}${diff}${unit})</span></span>
-      </div>`;
-    }
-    // Rule A: All sets at top of range last time → bump
-    else if(allAtOrAboveTop && nextW > last.weight){
-      const target = nextW;
-      const diff = +(target - ex.weight).toFixed(1);
-      const action = ex.weight < target ? 'try' : ex.weight === target ? 'on target' : 'already above';
-      cueHtml = `<div style="margin-top:6px;font-size:12px;color:var(--accent);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-        <span>📈 Coach: ${repsArr.length}/${repsArr.length} sets at top — ${action} <strong>${target}${unit}</strong>${diff > 0 ? ` <span style="opacity:0.7;">(+${diff}${unit})</span>` : ''}</span>
-        ${(target !== ex.weight) ? `<button onclick="applyPreSessionSuggestion(${target})" style="background:rgba(200,255,0,0.15);border:0.5px solid rgba(200,255,0,0.45);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:800;color:var(--accent);cursor:pointer;">Apply</button>` : ''}
-      </div>`;
-    }
-    // Rule B: Avg comfortably above top → bump
-    else if(avgReps > hi + 1 && nextW > last.weight){
-      const target = nextW;
-      const diff = +(target - ex.weight).toFixed(1);
-      cueHtml = `<div style="margin-top:6px;font-size:12px;color:var(--accent);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-        <span>📈 Coach: avg ${avgReps} > ${hi} — try <strong>${target}${unit}</strong>${diff > 0 ? ` <span style="opacity:0.7;">(+${diff}${unit})</span>` : ''}</span>
-        ${(target !== ex.weight) ? `<button onclick="applyPreSessionSuggestion(${target})" style="background:rgba(200,255,0,0.15);border:0.5px solid rgba(200,255,0,0.45);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:800;color:var(--accent);cursor:pointer;">Apply</button>` : ''}
-      </div>`;
-    }
-    // Rule C: Stuck for 3+ sessions → suggest deload
-    else if(stalled && prevW < last.weight){
-      cueHtml = `<div style="margin-top:6px;font-size:12px;color:#ff8c42;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-        <span>⬇ Coach: stuck at ${last.weight}${unit} for 3 sessions — deload to <strong>${prevW}${unit}</strong></span>
-        ${(prevW !== ex.weight) ? `<button onclick="applyPreSessionSuggestion(${prevW})" style="background:rgba(255,140,66,0.15);border:0.5px solid rgba(255,140,66,0.45);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:800;color:#ff8c42;cursor:pointer;">Apply</button>` : ''}
-      </div>`;
-    }
-    // Rule D: Mixed performance (max ≥ top, min < lo) → push reps not weight
-    else if(maxSet >= hi && minSet < lo){
-      cueHtml = `<div style="margin-top:6px;font-size:12px;color:var(--accent2);">
-        🔁 Coach: chase ${hi}+ on every set before adding weight
-      </div>`;
-    }
-    // Rule E: All below low → hold
-    else if(allBelowLo){
-      cueHtml = `<div style="margin-top:6px;font-size:12px;color:var(--accent2);">
-        ⏸ Coach: hit ${avgReps} avg, below ${lo} target — hold ${last.weight}${unit}, focus on form
-      </div>`;
-    }
-    // Rule F: User has manually bumped above last week — affirm
-    else if(alreadyBumped){
-      cueHtml = `<div style="margin-top:6px;font-size:12px;color:var(--accent);">
-        📈 You've bumped from ${last.weight}${unit} — make every set count
-      </div>`;
-    }
+  // 'first' / 'untracked' / generic 'fallthrough' → no cue line (the panel still
+  // shows the last-time data), matching the prior behaviour.
+  if(_st.rule !== 'first' && _st.rule !== 'untracked' && _st.rule !== 'fallthrough'){
+    let _c, _icon;
+    if(_st.action === 'increase'){ _c='var(--accent)'; _icon='📈'; }
+    else if(_st.action === 'deload'){ _c='#ff8c42'; _icon='📉'; }
+    else if(_st.action === 'reps'){ _c='var(--accent2)'; _icon='🔁'; }
+    else if(_st.rule === 'F_alreadyBumped'){ _c='var(--accent)'; _icon='📈'; }
+    else if(_st.rule === 'H_repShift'){ _c = (_st.suggested < _st.current ? '#ff8c42' : 'var(--accent)'); _icon = (_st.suggested < _st.current ? '📉' : '📈'); }
+    else { _c='var(--accent2)'; _icon='⏸'; }
+    // Apply only for genuine weight changes (increase / deload) — never for
+    // advisory holds, plateau tactics, or rep-shift explanations.
+    const _showApply = (_st.action === 'increase' || _st.action === 'deload')
+      && typeof _st.suggested === 'number' && _st.suggested !== ex.weight;
+    const _aBg = _st.action === 'deload' ? 'rgba(255,140,66,0.15)' : 'rgba(200,255,0,0.15)';
+    const _aBd = _st.action === 'deload' ? 'rgba(255,140,66,0.45)' : 'rgba(200,255,0,0.45)';
+    cueHtml = `<div style="margin-top:6px;font-size:12px;color:${_c};display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <span>${_icon} Coach: ${_st.reason}</span>
+      ${_showApply ? `<button onclick="applyPreSessionSuggestion(${_st.suggested})" style="background:${_aBg};border:0.5px solid ${_aBd};border-radius:6px;padding:3px 8px;font-size:10px;font-weight:800;color:${_c};cursor:pointer;">Apply</button>` : ''}
+    </div>`;
   }
 
   // Recall the note left on this exercise last time ("felt easy", "left
