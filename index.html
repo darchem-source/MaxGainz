@@ -1121,7 +1121,8 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
           <!-- Path -->
           <button onclick="openPathWizard()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🎯 Change My Path</button>
           <!-- Reminders -->
-          <button id="notifEnableBtn" onclick="requestNotificationPermission()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;margin-bottom:10px;">🔔 Enable training reminders</button>
+          <button id="notifEnableBtn" onclick="requestNotificationPermission()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;margin-bottom:2px;">🔔 Enable training reminders</button>
+          <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Nudges you when a muscle group is overdue — shown when you next open the app (background push coming later).</div>
           <!-- Feedback -->
           <button onclick="openFeedbackModal()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;">📬 Send Feedback</button>
         </div>
@@ -15921,6 +15922,38 @@ function _summerSeriesUniqueDone(sessions){
 function _summerSeriesPathDone(){
   return !!(userPath && userPath.hiitSeries === 'summer-series' && userPath.status === 'completed');
 }
+
+// Progress toward a count-based achievement → [current, target], or null when
+// the achievement isn't a simple countable ladder (e.g. one-off "specials").
+// Centralised here (rather than per-achievement fields) to keep the data
+// definition untouched; only the obvious milestone ladders get a progress bar.
+function _achProgress(a){
+  if(!a || !a.id) return null;
+  const all = completedSessions;
+  const gymN = all.filter(s => !s.manualActivity).length;
+  const wkStreak = (typeof calcWeekStreak === 'function') ? calcWeekStreak(all) : 0;
+  const actStreak = (typeof calcActivityStreak === 'function') ? calcActivityStreak(all) : 0;
+  const M = {
+    first_session:[gymN,1], sessions_5:[gymN,5], sessions_10:[gymN,10], sessions_25:[gymN,25],
+    sessions_50:[gymN,50], sessions_100:[gymN,100], sessions_250:[gymN,250],
+    streak_2:[wkStreak,2], streak_4:[wkStreak,4], streak_8:[wkStreak,8], streak_12:[wkStreak,12],
+    activity_streak_4:[actStreak,4], activity_streak_8:[actStreak,8],
+    path_workouts_10:[getPathCoreSessions(all).length,10], path_workouts_25:[getPathCoreSessions(all).length,25],
+    exercise_30:[getUniqueExerciseCount(all),30], exercise_50:[getUniqueExerciseCount(all),50],
+    log_activity:[all.filter(s=>s.manualActivity).length,10],
+    hiit_first:[_hiitSessionCount(all),1], hiit_10:[_hiitSessionCount(all),10], hiit_50:[_hiitSessionCount(all),50],
+    ss_first:[_summerSeriesCount(all),1], ss_25:[_summerSeriesCount(all),25],
+    ss_full_rotation:[_summerSeriesUniqueDone(all),7],
+  };
+  if(M[a.id]) return M[a.id];
+  const totalVol = all.filter(s=>!s.manualActivity).reduce((x,s)=>x+(s.volume||0),0);
+  if(a.id==='volume_100k') return [totalVol,100000];
+  if(a.id==='volume_500k') return [totalVol,500000];
+  if(a.id==='volume_1m')   return [totalVol,1000000];
+  if(a.id==='week_volume_50k')  return [getMaxWeeklyVolume(all),50000];
+  if(a.id==='week_volume_100k') return [getMaxWeeklyVolume(all),100000];
+  return null;
+}
 function getPRsFromSessions(sessions){
   // Count how many exercises have a setLog entry that beats anything before it
   const prs=new Set();
@@ -18475,6 +18508,39 @@ function pathWizardNext() {
   if(renderFns[_pathWizard.step]) renderFns[_pathWizard.step]();
 }
 
+// Jump directly to a wizard step (used by quick-start presets to land on review).
+function pathWizardGoTo(step){
+  for(let i=1;i<=5;i++){ const el=document.getElementById('pathStep'+i); if(el) el.style.display = (i===step?'block':'none'); }
+  _pathWizard.step = step;
+  updatePathWizardDots(step);
+  const renderFns = { 1:renderPathStep1, 2:renderPathStep2, 3:renderPathStep3, 4:renderPathStep4, 5:renderPathStep5 };
+  if(renderFns[step]) renderFns[step]();
+}
+
+// 2-tap presets: pre-fill the whole wizard with a sensible setup and jump to
+// the review step so the user still confirms (and can go Back to tweak).
+function quickStartPath(preset){
+  if(preset === 'ulf'){
+    _pathWizard.programme = 'ULF';
+    _pathWizard.variant = 'standard';
+    _pathWizard.duration = 8;
+    _pathWizard.daysPerWeek = 3;
+    _pathWizard.coreDays = ['Monday','Wednesday','Friday'];
+    _pathWizard.addOns = [];
+    _pathWizard.hiitSeries = null;
+  } else if(preset === 'summer'){
+    _pathWizard.programme = 'HIIT';
+    _pathWizard.variant = 'standard';
+    _pathWizard.duration = 8;
+    _pathWizard.daysPerWeek = 3;
+    _pathWizard.coreDays = ['Monday','Wednesday','Friday'];
+    _pathWizard.addOns = [];
+    _pathWizard.hiitSeries = 'summer-series';
+    _pathWizard.equipmentDefault = 'home';
+  } else { return; }
+  pathWizardGoTo(5);
+}
+
 function pathWizardBack() {
   if(_pathWizard.step <= 1) return;
   document.getElementById('pathStep' + _pathWizard.step).style.display = 'none';
@@ -18856,9 +18922,27 @@ function renderPathStep1() {
 
   document.getElementById('pathStep1').innerHTML = `
     <div style="font-size:22px;font-weight:900;margin-bottom:6px;">Choose Your Path</div>
-    <div style="font-size:14px;color:var(--text2);margin-bottom:20px;">
+    <div style="font-size:14px;color:var(--text2);margin-bottom:16px;">
       Pick your core programme. You can add extra workouts in the next steps.
     </div>
+    <!-- Quick start — 2-tap presets that pre-fill the whole wizard to the review screen -->
+    <div style="background:var(--surface2);border:1px solid rgba(200,255,0,0.25);border-radius:14px;padding:12px;margin-bottom:18px;">
+      <div style="font-size:11px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">⚡ Quick start</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.4;">Not sure? Pick a recommended setup — you'll review &amp; can tweak it before starting.</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <button onclick="quickStartPath('ulf')" style="display:flex;align-items:center;gap:10px;width:100%;background:var(--surface);border:0.5px solid var(--border);border-radius:10px;padding:11px 12px;cursor:pointer;text-align:left;">
+          <span style="font-size:22px;">🏋️</span>
+          <span style="flex:1;"><span style="font-size:13px;font-weight:800;color:var(--text);">Beginner Strength</span><br><span style="font-size:11px;color:var(--text2);">ULF · 3×/week (Mon·Wed·Fri) · 8 weeks</span></span>
+          <span style="color:var(--accent);font-weight:800;">→</span>
+        </button>
+        <button onclick="quickStartPath('summer')" style="display:flex;align-items:center;gap:10px;width:100%;background:var(--surface);border:0.5px solid var(--border);border-radius:10px;padding:11px 12px;cursor:pointer;text-align:left;">
+          <span style="font-size:22px;">🌴</span>
+          <span style="flex:1;"><span style="font-size:13px;font-weight:800;color:var(--text);">Hot Girl Summer</span><br><span style="font-size:11px;color:var(--text2);">Summer Series HIIT · 3×/week · 8 weeks · home kit</span></span>
+          <span style="color:var(--accent);font-weight:800;">→</span>
+        </button>
+      </div>
+    </div>
+    <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;">Or choose your own</div>
     ${programmes.map(p => `
       <div class="path-prog-card ${_pathWizard.programme === p.id ? 'selected' : ''}"
            onclick="selectPathProgramme('${p.id}')">
@@ -19336,19 +19420,36 @@ function renderGame(){
     ${wPct>=100?'<div style="font-size:12px;color:var(--green);margin-top:6px;font-weight:700;">✅ Challenge complete! +150 XP earned</div>':''}`;
 
   // Achievements — grouped by category, unlocked first within each
-  const renderAch = (a, unlocked) => `<div style="display:flex;align-items:center;padding:12px 16px;border-top:0.5px solid var(--border);gap:10px;${unlocked?'':'opacity:0.45;'}">
+  const renderAch = (a, unlocked) => {
+    // Progress bar for locked, count-based achievements ("7 / 25").
+    let progHtml = '';
+    if(!unlocked){
+      const p = (typeof _achProgress === 'function') ? _achProgress(a) : null;
+      if(p && p[1] > 0){
+        const cur = Math.min(p[0], p[1]);
+        const pct = Math.max(0, Math.min(100, Math.round((p[0] / p[1]) * 100)));
+        const fmt = (v) => v >= 1000 ? (Math.round(v/100)/10) + 'k' : v;
+        progHtml = `<div style="margin-top:5px;">
+          <div style="background:rgba(255,255,255,0.07);border-radius:99px;height:4px;overflow:hidden;"><div style="height:100%;width:${pct}%;background:var(--accent2);border-radius:99px;"></div></div>
+          <div style="font-size:10px;color:var(--text2);margin-top:2px;">${fmt(cur)} / ${fmt(p[1])}</div>
+        </div>`;
+      }
+    }
+    return `<div style="display:flex;align-items:center;padding:12px 16px;border-top:0.5px solid var(--border);gap:10px;${unlocked?'':'opacity:0.6;'}">
     <div style="font-size:24px;width:36px;text-align:center;flex-shrink:0;${unlocked?'':'filter:grayscale(1);'}">${unlocked?a.emoji:'🔒'}</div>
     <div style="flex:1;min-width:0;">
       <div style="font-size:13px;font-weight:700;color:${unlocked?'var(--text)':'var(--text2)'};display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
         ${a.name}${unlocked?'<span style="font-size:9px;background:rgba(76,255,145,0.15);color:#4cff91;font-weight:800;padding:1px 5px;border-radius:4px;letter-spacing:0.5px;">✓ DONE</span>':''}
       </div>
       <div style="font-size:11px;color:var(--text2);margin-top:1px;">${a.desc}</div>
+      ${progHtml}
     </div>
     <div style="font-size:13px;font-weight:800;color:${unlocked?'var(--accent)':'var(--text2)'};flex-shrink:0;">+${a.xp}</div>
   </div>`;
+  };
 
-  const catOrder=['Sessions','Consistency','Streaks','Volume','Strength','Path','Exploration','Special'];
-  const catEmoji={'Sessions':'💪','Consistency':'📅','Streaks':'🔥','Volume':'📊','Strength':'🏋️','Path':'🎯','Exploration':'🗺️','Special':'✨'};
+  const catOrder=['Sessions','Consistency','Streaks','Volume','Strength','HIIT','Path','Exploration','Special'];
+  const catEmoji={'Sessions':'💪','Consistency':'📅','Streaks':'🔥','Volume':'📊','Strength':'🏋️','HIIT':'⚡','Path':'🎯','Exploration':'🗺️','Special':'✨'};
   let totalUnlocked=0;
   let achHTML='';
   catOrder.forEach(cat=>{
