@@ -3677,7 +3677,15 @@ function _normalizeSessionWeights(sessions){
 function saveLocalCache() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      sessions: completedSessions.map(s => ({...s, date: s.date instanceof Date ? s.date.toISOString() : s.date})),
+      // Stamp the owning user so cloudLoadAll only ever merges local-only
+      // sessions back in when the cache belongs to the SAME account (prevents
+      // a previous user's data leaking in after a re-login on a shared device).
+      userId: (typeof getCurrentUserId === 'function' ? getCurrentUserId() : null),
+      sessions: completedSessions.map(s => {
+        const o = {...s, date: s.date instanceof Date ? s.date.toISOString() : s.date};
+        delete o._needsUpload; // transient flag, never persist
+        return o;
+      }),
       weights: customWeights,
       todayProg,
       userProfile,
@@ -3689,6 +3697,67 @@ function saveLocalCache() {
 
 // Legacy alias so nothing breaks
 function saveLocalFallback() { saveLocalCache(); }
+
+// ── DATA-INTEGRITY HELPERS (pure — covered by tests/check.py) ───────────────
+// Stable match key for a session: finish timestamp (to the second) + day.
+// Distinct sessions never collide (a user can't finish two in the same second
+// on the same day); a local copy and its cloud copy of the SAME session still
+// match even if sub-second precision differs across the Supabase round-trip.
+function _sessionKey(s){
+  if(!s || !s.date) return '?';
+  const d = s.date instanceof Date ? s.date : new Date(s.date);
+  const iso = isNaN(d) ? String(s.date) : d.toISOString().slice(0,19);
+  return iso + '|' + (s.day || '');
+}
+
+// Conflict-safe merge of local + cloud session lists. Cloud copies are
+// authoritative (they carry cloud_id); any LOCAL session whose key is absent
+// from the cloud set is an unsynced/offline session — keep it and flag it for
+// re-upload (_needsUpload). Never drops data, never duplicates a matched one.
+function _mergeSessions(localArr, cloudArr){
+  const byKey = {};
+  (cloudArr || []).forEach(s => { byKey[_sessionKey(s)] = s; });
+  (localArr || []).forEach(s => {
+    const k = _sessionKey(s);
+    if(!(k in byKey)) byKey[k] = Object.assign({}, s, { _needsUpload: true });
+  });
+  return Object.values(byKey).sort((a, b) => new Date(a.date) - new Date(b.date));
+}
+
+// Sanitize a session on load so malformed data can't NaN-poison analytics.
+// Returns a cleaned COPY (preserving cloud_id / _needsUpload / adhoc / etc.),
+// or null only when there's no usable date at all.
+function _validateSession(s){
+  if(!s || typeof s !== 'object') return null;
+  const d = s.date instanceof Date ? s.date : new Date(s.date);
+  if(isNaN(d)) return null;
+  const num = (v) => (typeof v === 'number' && isFinite(v) && v >= 0) ? v : 0;
+  const out = Object.assign({}, s);
+  out.date = d;
+  out.day = (typeof s.day === 'string' && s.day) ? s.day : 'Workout';
+  out.durationMin = num(s.durationMin);
+  out.volume = num(s.volume);
+  out.exercises = num(s.exercises);
+  out.manualActivity = !!s.manualActivity;
+  if(!Array.isArray(out.topLifts)) out.topLifts = [];
+  if(s.setLog && typeof s.setLog === 'object'){
+    const sl = {};
+    for(const k in s.setLog){
+      const e = s.setLog[k];
+      if(e && typeof e === 'object'){
+        sl[k] = Object.assign({}, e, {
+          sets: num(e.sets),
+          weight: num(e.weight),
+          reps: Array.isArray(e.reps) ? e.reps : []
+        });
+      }
+    }
+    out.setLog = sl;
+  } else {
+    out.setLog = {};
+  }
+  return out;
+}
 
 // ── TRAINING REMINDERS ──
 // Two-layer system:

@@ -149,6 +149,47 @@ eq('0 stars at exactly top', getPrestigeStars(topMin), 0);
 eq('1 star at +25000', getPrestigeStars(topMin+25000), 1);
 eq('2 stars at +55000', getPrestigeStars(topMin+55000), 2);
 
+// ── conflict-safe sync (the data-loss-prevention core) ──
+var cloud = [
+  {cloud_id:'c1', date:'2026-01-05T07:00:00.000Z', day:'Upper', volume:5000},
+  {cloud_id:'c2', date:'2026-01-07T07:00:00.000Z', day:'Lower', volume:6000}
+];
+// (a) empty local + cloud → cloud as-is, nothing flagged for upload
+var m1 = _mergeSessions([], cloud);
+eq('merge([],cloud) length', m1.length, 2);
+ok('merge([],cloud) flags nothing', m1.every(function(s){return !s._needsUpload;}));
+// (b) a local-only (offline) session is preserved AND flagged for re-upload
+var localOnly = {date:'2026-01-09T07:00:00.000Z', day:'Full Body', volume:7000};
+var m2 = _mergeSessions([localOnly], cloud);
+eq('merge keeps offline session', m2.length, 3);
+ok('offline session flagged for upload', m2.filter(function(s){return s.day==='Full Body';})[0]._needsUpload===true);
+// (c) a local copy of a session already in cloud does NOT duplicate; cloud wins
+var dupOfCloud = {date:'2026-01-05T07:00:00.000Z', day:'Upper', volume:5000};
+var m3 = _mergeSessions([dupOfCloud], cloud);
+eq('matched session not duplicated', m3.length, 2);
+ok('cloud copy wins (has cloud_id)', m3.filter(function(s){return s.day==='Upper';})[0].cloud_id==='c1');
+// (d) result is date-sorted ascending
+var sorted = m2.map(function(s){return +new Date(s.date);});
+ok('merge result date-sorted', sorted[0]<=sorted[1] && sorted[1]<=sorted[2]);
+
+// ── _sessionKey ──
+ok('distinct dates → distinct keys', _sessionKey({date:'2026-01-05T07:00:00Z',day:'A'}) !== _sessionKey({date:'2026-01-06T07:00:00Z',day:'A'}));
+eq('same date+day → same key',
+   _sessionKey({date:'2026-01-05T07:00:00.123Z',day:'A'}),
+   _sessionKey({date:'2026-01-05T07:00:00.999Z',day:'A'}));
+
+// ── _validateSession ──
+eq('invalid date → null', _validateSession({date:'not-a-date',day:'X'}), null);
+eq('non-object → null', _validateSession(null), null);
+var v = _validateSession({date:'2026-01-05T07:00:00Z', day:'', volume:-50, durationMin:'oops', exercises:3});
+ok('valid session sanitized: negative volume → 0', v.volume===0);
+ok('valid session sanitized: bad duration → 0', v.durationMin===0);
+ok('valid session: empty day → fallback', v.day==='Workout');
+ok('valid session: exercises preserved', v.exercises===3);
+var vc = _validateSession({date:'2026-01-05T07:00:00Z', day:'Upper', cloud_id:'c9', _needsUpload:true});
+ok('_validateSession preserves cloud_id', vc.cloud_id==='c9');
+ok('_validateSession preserves _needsUpload', vc._needsUpload===true);
+
 JSON.stringify(fails);
 """
 
@@ -163,7 +204,8 @@ def gate_invariants(js):
         print('  ✗ could not extract PRESTIGE_STEP'); return False
     pieces.append(step)
     for fn in ['getRank', 'getPrestigeStars', '_sessionXP', '_weekKey',
-               'getMaxWeeklySessions', 'calcWeekStreak', 'getLongestWeekStreak', '_localYMD']:
+               'getMaxWeeklySessions', 'calcWeekStreak', 'getLongestWeekStreak', '_localYMD',
+               '_sessionKey', '_mergeSessions', '_validateSession']:
         src = extract_decl(js, fn)
         if not src:
             print(f'  ✗ could not extract function {fn}'); return False
