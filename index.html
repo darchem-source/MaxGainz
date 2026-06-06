@@ -1118,6 +1118,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
             <button onclick="exportData()" style="flex:1;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;">⬇ Export JSON</button>
             <button onclick="confirmClear()" style="flex:1;background:rgba(255,77,106,0.08);border:0.5px solid rgba(255,77,106,0.3);border-radius:10px;padding:11px;font-size:12px;font-weight:700;color:var(--red);cursor:pointer;">🗑 Clear history</button>
           </div>
+          <button onclick="openDataHealth()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🩺 Data health check</button>
           <!-- Path -->
           <button onclick="openPathWizard()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🎯 Change My Path</button>
           <!-- Reminders -->
@@ -1565,6 +1566,17 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
     <div id="ladderModSub" style="font-size:13px;color:var(--text2);margin-bottom:14px;"></div>
     <div id="ladderModBody"></div>
     <button onclick="closeLadderModal()" style="width:100%;margin-top:10px;background:transparent;border:0.5px solid var(--border);border-radius:12px;padding:13px;font-size:14px;font-weight:700;color:var(--text2);cursor:pointer;">Close</button>
+  </div>
+</div>
+
+<!-- DATA HEALTH -->
+<div class="modal-ov" id="dataHealthMod" style="z-index:400;" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal" style="max-height:86vh;overflow-y:auto;">
+    <div class="modal-handle"></div>
+    <div style="font-size:19px;font-weight:800;margin-bottom:4px;">🩺 Data health</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:16px;">A quick integrity check of your logged data and sync state.</div>
+    <div id="dataHealthBody"></div>
+    <button onclick="document.getElementById('dataHealthMod').classList.remove('open')" style="width:100%;margin-top:12px;background:transparent;border:0.5px solid var(--border);border-radius:12px;padding:13px;font-size:14px;font-weight:700;color:var(--text2);cursor:pointer;">Close</button>
   </div>
 </div>
 
@@ -3501,10 +3513,19 @@ async function cloudLoadAll() {
 
   if (sessRows === null) { setSyncStatus('offline'); return false; }
 
-  // Supabase is source of truth — replace local sessions entirely
+  // Cloud is authoritative, BUT we no longer blindly discard local sessions —
+  // that silently lost any workout logged offline that never reached the cloud.
+  // Conflict-safe merge instead: keep cloud copies, preserve local-only
+  // (unsynced) sessions, and re-upload them. Gated to the SAME user (via the
+  // userId stamped in the local cache) so a previous account's data can never
+  // leak in after a re-login on a shared device.
   if (Array.isArray(sessRows)) {
-    completedSessions.length = 0;
-    sessRows.forEach(r => completedSessions.push({
+    let _cachedUserId = null;
+    try { const _raw = localStorage.getItem(STORAGE_KEY); if(_raw) _cachedUserId = (JSON.parse(_raw) || {}).userId || null; } catch(e){}
+    const _sameUser = _cachedUserId && _cachedUserId === userId;
+    const _localSnapshot = _sameUser ? completedSessions.slice() : [];
+
+    const cloudArr = sessRows.map(r => ({
       cloud_id: r.id,
       date: new Date(r.date),
       day: r.day,
@@ -3519,7 +3540,23 @@ async function cloudLoadAll() {
       intensity: r.intensity,
       xpAwarded: r.xp_awarded
     }));
-    _normalizeSessionWeights(completedSessions); // repair amended-weight sessions from cloud
+
+    const merged = _mergeSessions(_localSnapshot, cloudArr).map(s => _validateSession(s) || s);
+    completedSessions.length = 0;
+    merged.forEach(s => completedSessions.push(s));
+    _normalizeSessionWeights(completedSessions); // repair amended-weight sessions
+
+    // Re-upload any local-only (offline) sessions that never reached the cloud.
+    const _toUpload = completedSessions.filter(s => s._needsUpload);
+    _toUpload.forEach(s => {
+      delete s._needsUpload;
+      if(typeof cloudSaveSession === 'function'){
+        cloudSaveSession(s).then(res => {
+          if(Array.isArray(res) && res[0] && res[0].id){ s.cloud_id = res[0].id; saveLocalCache(); }
+        }).catch(()=>{});
+      }
+    });
+    if(_toUpload.length){ console.log('[sync] recovered', _toUpload.length, 'offline session(s)'); saveLocalCache(); }
   }
 
   // Load weights + profile blob
@@ -3677,7 +3714,15 @@ function _normalizeSessionWeights(sessions){
 function saveLocalCache() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      sessions: completedSessions.map(s => ({...s, date: s.date instanceof Date ? s.date.toISOString() : s.date})),
+      // Stamp the owning user so cloudLoadAll only ever merges local-only
+      // sessions back in when the cache belongs to the SAME account (prevents
+      // a previous user's data leaking in after a re-login on a shared device).
+      userId: (typeof getCurrentUserId === 'function' ? getCurrentUserId() : null),
+      sessions: completedSessions.map(s => {
+        const o = {...s, date: s.date instanceof Date ? s.date.toISOString() : s.date};
+        delete o._needsUpload; // transient flag, never persist
+        return o;
+      }),
       weights: customWeights,
       todayProg,
       userProfile,
@@ -3689,6 +3734,130 @@ function saveLocalCache() {
 
 // Legacy alias so nothing breaks
 function saveLocalFallback() { saveLocalCache(); }
+
+// ── DATA HEALTH CHECK ──
+// User-facing integrity report — builds trust that PRs/XP/streaks are right.
+function openDataHealth(){
+  const checks = [];
+  const all = completedSessions || [];
+  const total = all.length;
+  const gym = all.filter(s => !s.manualActivity).length;
+  const manual = total - gym;
+
+  // 1) Valid dates
+  const badDates = all.filter(s => isNaN(new Date(s.date))).length;
+  checks.push(badDates === 0
+    ? ['ok', `All ${total} sessions have valid dates`]
+    : ['warn', `${badDates} session(s) have an unreadable date`]);
+
+  // 2) Duplicate signatures (would indicate a bad merge)
+  const seen = {}; let dups = 0;
+  all.forEach(s => { const k = _sessionKey(s); if(seen[k]) dups++; else seen[k] = 1; });
+  checks.push(dups === 0
+    ? ['ok', 'No duplicate sessions detected']
+    : ['warn', `${dups} possible duplicate session(s)`]);
+
+  // 3) Sync state (only meaningful when signed in)
+  if(typeof isAuthenticated === 'function' && isAuthenticated()){
+    const unsynced = all.filter(s => !s.cloud_id).length;
+    checks.push(unsynced === 0
+      ? ['ok', 'Every session is backed up to the cloud']
+      : ['warn', `${unsynced} session(s) not yet synced — they'll re-upload on next online load`]);
+  } else {
+    checks.push(['info', 'Not signed in — data is local only']);
+  }
+
+  // 4) XP recompute sanity (no NaN)
+  let xp = 0, xpOk = true;
+  try { xp = getTotalXP(); if(!isFinite(xp)) xpOk = false; } catch(e){ xpOk = false; }
+  checks.push(xpOk
+    ? ['ok', `XP recomputes cleanly (${xp.toLocaleString()} total)`]
+    : ['warn', 'XP failed to recompute — please report this']);
+
+  // 5) Cache freshness
+  let savedAt = null;
+  try { savedAt = (JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}')).savedAt; } catch(e){}
+  checks.push(savedAt
+    ? ['ok', 'Local backup saved ' + new Date(savedAt).toLocaleString('en-GB', {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})]
+    : ['info', 'No local backup yet']);
+
+  const allHealthy = checks.every(c => c[0] !== 'warn');
+  const icon = { ok:'✅', warn:'⚠️', info:'ℹ️' };
+  const colr = { ok:'var(--green)', warn:'var(--orange)', info:'var(--text2)' };
+  const summary = `<div style="text-align:center;padding:14px;background:${allHealthy?'rgba(57,224,155,0.08)':'rgba(255,140,66,0.08)'};border-radius:14px;margin-bottom:14px;">
+    <div style="font-size:32px;">${allHealthy?'✅':'⚠️'}</div>
+    <div style="font-size:15px;font-weight:800;margin-top:4px;color:${allHealthy?'var(--green)':'var(--orange)'};">${allHealthy?'Your data looks healthy':'A couple of things to note'}</div>
+    <div style="font-size:12px;color:var(--text2);margin-top:2px;">${gym} gym sessions · ${manual} activities</div>
+  </div>`;
+  const rows = checks.map(([st, msg]) => `
+    <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-top:0.5px solid var(--border);">
+      <div style="font-size:16px;flex-shrink:0;">${icon[st]}</div>
+      <div style="font-size:13px;color:${colr[st]};line-height:1.4;">${msg}</div>
+    </div>`).join('');
+  document.getElementById('dataHealthBody').innerHTML = summary + rows;
+  document.getElementById('dataHealthMod').classList.add('open');
+}
+
+// ── DATA-INTEGRITY HELPERS (pure — covered by tests/check.py) ───────────────
+// Stable match key for a session: finish timestamp (to the second) + day.
+// Distinct sessions never collide (a user can't finish two in the same second
+// on the same day); a local copy and its cloud copy of the SAME session still
+// match even if sub-second precision differs across the Supabase round-trip.
+function _sessionKey(s){
+  if(!s || !s.date) return '?';
+  const d = s.date instanceof Date ? s.date : new Date(s.date);
+  const iso = isNaN(d) ? String(s.date) : d.toISOString().slice(0,19);
+  return iso + '|' + (s.day || '');
+}
+
+// Conflict-safe merge of local + cloud session lists. Cloud copies are
+// authoritative (they carry cloud_id); any LOCAL session whose key is absent
+// from the cloud set is an unsynced/offline session — keep it and flag it for
+// re-upload (_needsUpload). Never drops data, never duplicates a matched one.
+function _mergeSessions(localArr, cloudArr){
+  const byKey = {};
+  (cloudArr || []).forEach(s => { byKey[_sessionKey(s)] = s; });
+  (localArr || []).forEach(s => {
+    const k = _sessionKey(s);
+    if(!(k in byKey)) byKey[k] = Object.assign({}, s, { _needsUpload: true });
+  });
+  return Object.values(byKey).sort((a, b) => new Date(a.date) - new Date(b.date));
+}
+
+// Sanitize a session on load so malformed data can't NaN-poison analytics.
+// Returns a cleaned COPY (preserving cloud_id / _needsUpload / adhoc / etc.),
+// or null only when there's no usable date at all.
+function _validateSession(s){
+  if(!s || typeof s !== 'object') return null;
+  const d = s.date instanceof Date ? s.date : new Date(s.date);
+  if(isNaN(d)) return null;
+  const num = (v) => (typeof v === 'number' && isFinite(v) && v >= 0) ? v : 0;
+  const out = Object.assign({}, s);
+  out.date = d;
+  out.day = (typeof s.day === 'string' && s.day) ? s.day : 'Workout';
+  out.durationMin = num(s.durationMin);
+  out.volume = num(s.volume);
+  out.exercises = num(s.exercises);
+  out.manualActivity = !!s.manualActivity;
+  if(!Array.isArray(out.topLifts)) out.topLifts = [];
+  if(s.setLog && typeof s.setLog === 'object'){
+    const sl = {};
+    for(const k in s.setLog){
+      const e = s.setLog[k];
+      if(e && typeof e === 'object'){
+        sl[k] = Object.assign({}, e, {
+          sets: num(e.sets),
+          weight: num(e.weight),
+          reps: Array.isArray(e.reps) ? e.reps : []
+        });
+      }
+    }
+    out.setLog = sl;
+  } else {
+    out.setLog = {};
+  }
+  return out;
+}
 
 // ── TRAINING REMINDERS ──
 // Two-layer system:
