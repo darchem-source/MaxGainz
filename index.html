@@ -10267,8 +10267,22 @@ function renderSessionExerciseList(){
           ${group.exerciseIndices.map((idx,pos) => {
             const done = (setsDone[idx]||[]).length;
             const isCur = idx === curIdx;
+            const m = sessExs[idx];
             const c = done >= group.sets ? 'var(--green)' : isCur ? 'var(--accent)' : done > 0 ? 'var(--orange)' : 'var(--text2)';
-            return `<div style="color:${c};padding:2px 0 2px 8px;font-weight:${isCur?'700':'400'};">${isCur?'▶ ':''  }${pos+1}. ${sessExs[idx].name}${done >= group.sets ? ' ✓' : done > 0 ? ` (${done}/${group.sets})` : ''}</div>`;
+            // Planned weight · reps for this member (strength supersets store weight as a kg number)
+            let wLbl = '';
+            if(m.bw){ wLbl = (typeof m.weight === 'number' && m.weight > 0) ? `BW +${m.weight}kg` : 'BW'; }
+            else if(m.weight && typeof m.weight === 'object'){ const dw = getDisplayWeight(m.weight); if(dw) wLbl = `${dw}${userPreferences.weightUnit || 'kg'}`; }
+            else if(m.weight){ wLbl = `${m.weight}kg${getEquipType(m) === 'dumbbell' ? '/hand' : ''}`; }
+            // Timed moves encode seconds in .reps (e.g. '45s' / '30–60s') — render bare, no " reps" suffix
+            const repLbl = m.duration ? `${m.duration}s`
+              : (m.reps ? (/s\s*$/i.test(String(m.reps)) ? `${m.reps}` : `${m.reps} reps`) : '');
+            const plan = [wLbl, repLbl].filter(Boolean).join(' · ');
+            const prog = done >= group.sets ? ' ✓' : done > 0 ? ` (${done}/${group.sets})` : '';
+            return `<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;color:${c};padding:2px 0 2px 8px;font-weight:${isCur?'700':'400'};">
+              <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${isCur?'▶ ':''}${pos+1}. ${m.name}${prog}</span>
+              ${plan ? `<span style="font-size:10px;color:var(--text2);font-weight:600;white-space:nowrap;flex-shrink:0;">${plan}</span>` : ''}
+            </div>`;
           }).join('')}
         </div>`;
       }
