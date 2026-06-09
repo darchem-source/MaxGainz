@@ -14409,11 +14409,13 @@ function renderCalendar(){
     const isPast = cellDate < today && !isToday;
     const isFuture = cellDate > today;
     const data = getDayWorkoutType(cellDate);
-    
+    const noteKey = (typeof _localYMD === 'function') ? _localYMD(cellDate) : null;
+    const hasNote = !!(noteKey && typeof dailyNotes === 'object' && dailyNotes && dailyNotes[noteKey]);
+
     if(isPast || isToday) pastDays++;
     if(data) workoutDays++;
-    
-    let cellStyle = 'aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:8px;font-size:11px;';
+
+    let cellStyle = 'position:relative;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:8px;font-size:11px;';
     let cellContent = '';
     
     if(data){
@@ -14434,12 +14436,16 @@ function renderCalendar(){
       cellContent = `<div>${d}</div><div style="font-size:9px;line-height:1;margin-top:1px;opacity:0.4;">＋</div>`;
     }
 
-    // Days with a workout open the detail view; empty past/today days open
-    // the activity logger backdated to that day; future days aren't loggable.
+    // Days with a workout (or a saved note) open the detail view; other empty
+    // past/today days open the activity logger backdated to that day; future
+    // days aren't loggable.
     let clickable = '';
-    if(data) clickable = `onclick="showCalDayDetail('${cellDate.toISOString()}')"`;
+    if(data || hasNote) clickable = `onclick="showCalDayDetail('${cellDate.toISOString()}')"`;
     else if(!isFuture) clickable = `onclick="openActivityLogForDate('${cellDate.toISOString()}')"`;
-    html += `<div style="${cellStyle}" ${clickable}>${cellContent}</div>`;
+    if(hasNote && cellStyle.indexOf('cursor:pointer') === -1) cellStyle += 'cursor:pointer;';
+    // Small 📝 corner badge marks days that carry a note.
+    const noteBadge = hasNote ? `<div style="position:absolute;top:1px;right:2px;font-size:9px;line-height:1;">📝</div>` : '';
+    html += `<div style="${cellStyle}" ${clickable}>${cellContent}${noteBadge}</div>`;
   }
   
   grid.innerHTML = html;
@@ -14456,7 +14462,9 @@ function showCalDayDetail(dateStr){
     const d = s.date instanceof Date ? s.date : new Date(s.date);
     return d.toDateString() === day;
   });
-  if(!sessions.length) return;
+  const noteKey = _localYMD(date);
+  const dayNote = (typeof dailyNotes === 'object' && dailyNotes) ? (dailyNotes[noteKey] || '') : '';
+  if(!sessions.length && !dayNote) return;
 
   // Lazy-create the rich detail modal on first call
   let m = document.getElementById('calDayDetailMod');
@@ -14478,9 +14486,10 @@ function showCalDayDetail(dateStr){
 
   const dateLabel = date.toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
   document.getElementById('calDayDetailTitle').textContent = dateLabel;
-  document.getElementById('calDayDetailSub').textContent = sessions.length === 1
-    ? '1 session logged'
-    : sessions.length + ' sessions logged';
+  const _subParts = [];
+  if(sessions.length) _subParts.push(sessions.length === 1 ? '1 session logged' : sessions.length + ' sessions logged');
+  if(dayNote) _subParts.push('📝 note');
+  document.getElementById('calDayDetailSub').textContent = _subParts.join(' · ') || 'No sessions logged';
 
   // Build the same rich card layout that Recent Sessions used
   const todayStr = new Date().toDateString();
@@ -14540,7 +14549,22 @@ function showCalDayDetail(dateStr){
     </div>`;
   }).join('');
 
-  document.getElementById('calDayDetailBody').innerHTML = html;
+  // Note block (read view + Edit button that hands off to the day-scoped editor)
+  const _escNote = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const noteBlock = dayNote ? `
+    <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:14px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <div style="font-size:11px;font-weight:800;color:var(--accent2);text-transform:uppercase;letter-spacing:1px;">📝 Note</div>
+        <button onclick="document.getElementById('calDayDetailMod').classList.remove('open');openDailyNote('${date.toISOString()}')" style="background:transparent;border:0.5px solid var(--border);border-radius:8px;padding:3px 10px;font-size:11px;font-weight:700;color:var(--accent);cursor:pointer;">Edit</button>
+      </div>
+      <div style="font-size:13px;color:var(--text);line-height:1.45;white-space:pre-wrap;word-break:break-word;">${_escNote(dayNote)}</div>
+    </div>` : '';
+  // Empty (no sessions) past/today day keeps the "log an activity" affordance.
+  const _todayD = new Date();
+  const _isFutureDay = date > _todayD && date.toDateString() !== _todayD.toDateString();
+  const logBtn = (!sessions.length && !_isFutureDay) ? `
+    <button onclick="document.getElementById('calDayDetailMod').classList.remove('open');openActivityLogForDate('${date.toISOString()}')" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:12px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;">＋ Log an activity for this day</button>` : '';
+  document.getElementById('calDayDetailBody').innerHTML = noteBlock + html + logBtn;
   m.classList.add('open');
 }
 
@@ -16995,7 +17019,7 @@ function _renderDailyFocusCard(){
       ctaLabel = 'Edit note';
     }
   }
-  return `
+  let html = `
     <div onclick="_dailyFocusTap('${action}')" style="margin:12px 16px 0;background:var(--surface2);border:0.5px solid var(--border);border-radius:14px;padding:13px 14px;display:flex;align-items:center;gap:12px;cursor:pointer;">
       <div style="font-size:22px;flex-shrink:0;">${f[0]}</div>
       <div style="flex:1;min-width:0;">
@@ -17007,6 +17031,22 @@ function _renderDailyFocusCard(){
         ? `<div style="flex-shrink:0;font-size:11px;font-weight:700;color:var(--accent);background:rgba(200,255,0,0.1);border-radius:8px;padding:6px 10px;white-space:nowrap;">${ctaLabel}</div>`
         : `<div style="flex-shrink:0;color:var(--text2);font-size:16px;opacity:0.5;">›</div>`}
     </div>`;
+  // Independent today's-note line so a saved note is readable on any day —
+  // not only when the rotating "note" focus happens to be showing (the note
+  // focus already previews it inline, so skip the duplicate there).
+  if(action !== 'note'){
+    const tNote = (typeof dailyNotes === 'object' && dailyNotes) ? dailyNotes[_localYMD(now)] : '';
+    if(tNote){
+      const safe = String(tNote).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      html += `
+    <div onclick="openDailyNote()" style="margin:8px 16px 0;background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:10px 12px;display:flex;align-items:center;gap:10px;cursor:pointer;">
+      <div style="font-size:15px;flex-shrink:0;">📝</div>
+      <div style="flex:1;min-width:0;font-size:12px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">“${safe.slice(0,80)}${safe.length > 80 ? '…' : ''}”</div>
+      <div style="flex-shrink:0;color:var(--text2);font-size:14px;opacity:0.5;">›</div>
+    </div>`;
+    }
+  }
+  return html;
 }
 
 // Dispatch a tap on the Today's Focus card to the relevant action.
@@ -17046,18 +17086,23 @@ function _focusStartTodayWorkout(){
 }
 
 // ── Daily note modal ──
-function openDailyNote(){
-  const key = _localYMD(new Date());
+// Tracks which day's note is open in #dailyNoteMod. null/today by default; the
+// calendar passes a past date so notes can be read/edited on any day.
+let _dailyNoteEditKey = null;
+function openDailyNote(dateStr){
+  const d = dateStr ? new Date(dateStr) : new Date();
+  const key = _localYMD(d);
+  _dailyNoteEditKey = key;
   const ta = document.getElementById('dailyNoteInput');
   const lbl = document.getElementById('dailyNoteDateLabel');
   if(ta) ta.value = (typeof dailyNotes === 'object' && dailyNotes && dailyNotes[key]) ? dailyNotes[key] : '';
-  if(lbl) lbl.textContent = new Date().toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long' });
+  if(lbl) lbl.textContent = d.toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
   const mod = document.getElementById('dailyNoteMod');
   if(mod) mod.classList.add('open');
   if(ta) setTimeout(() => { try{ ta.focus(); }catch(e){} }, 50);
 }
 function saveDailyNote(){
-  const key = _localYMD(new Date());
+  const key = _dailyNoteEditKey || _localYMD(new Date());
   const ta = document.getElementById('dailyNoteInput');
   const text = ta ? ta.value.trim() : '';
   if(typeof dailyNotes !== 'object' || !dailyNotes) dailyNotes = {};
@@ -17066,8 +17111,10 @@ function saveDailyNote(){
   if(typeof cloudSaveProfile === 'function') cloudSaveProfile();
   const mod = document.getElementById('dailyNoteMod');
   if(mod) mod.classList.remove('open');
+  _dailyNoteEditKey = null;
   if(typeof showToast === 'function') showToast(text ? '📝 Note saved' : 'Note cleared', 1600);
   if(typeof renderToday === 'function') renderToday();
+  if(typeof renderCalendar === 'function') renderCalendar();
 }
 
 // Active-recovery suggestion for rest days — deterministic by date, no XP.
