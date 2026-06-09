@@ -10449,7 +10449,14 @@ function finishSession(){
       const _loggedW = _swArr.filter(w => w > 0);
       const _exW = _loggedW.length ? Math.max(..._loggedW) : _exWPlanned;
       const _rpeArr = rpeLogged[i] ? Object.values(rpeLogged[i]).filter(v => typeof v === 'number' && v > 0) : [];
-      setLog[ex.name]={sets:done,reps:Object.values(rl),weight:_exW,bw:!!ex.bw,setWeights:_swArr,equipOverride:equipOverride[i]||null,note:_exerciseNotes[ex.name]||null,restSecs:restSecs.length?restSecs:undefined,...(_rpeArr.length?{rpe:_rpeArr}:{})};
+      // ord = position in the session's exercise list = performed order.
+      // setLog is a name-keyed object; when round-tripped through Supabase
+      // (jsonb), Postgres normalizes object key order by (length, bytewise),
+      // scrambling the displayed exercise order on reload. Storing ord as a
+      // NUMBER inside each value survives jsonb intact, so order-sensitive
+      // views can re-sort by it. (Array/number values keep their order in
+      // jsonb; only object KEY order is normalized.)
+      setLog[ex.name]={ord:i,sets:done,reps:Object.values(rl),weight:_exW,bw:!!ex.bw,setWeights:_swArr,equipOverride:equipOverride[i]||null,note:_exerciseNotes[ex.name]||null,restSecs:restSecs.length?restSecs:undefined,...(_rpeArr.length?{rpe:_rpeArr}:{})};
     }
   });
   // Top lifts for the summary header / share card — derived from the
@@ -14477,6 +14484,19 @@ function renderCalendar(){
   monthStats.textContent = `${workoutDays} workout${workoutDays===1?'':'s'} · ${pct}% of days`;
 }
 
+// Return setLog [name, value] entries in the order the exercises were
+// performed. New sessions stamp a numeric `ord` on each value (survives the
+// Supabase jsonb key-order normalization that otherwise scrambles the list).
+// Legacy sessions lack `ord` → they all sort equal and a stable sort leaves
+// them in their existing (object-key) order, i.e. unchanged behavior.
+function _orderedSetLogEntries(setLog){
+  return Object.entries(setLog || {}).sort((a, b) => {
+    const oa = (typeof a[1].ord === 'number') ? a[1].ord : Infinity;
+    const ob = (typeof b[1].ord === 'number') ? b[1].ord : Infinity;
+    return oa - ob;
+  });
+}
+
 function showCalDayDetail(dateStr){
   const date = new Date(dateStr);
   const day = date.toDateString();
@@ -14544,7 +14564,7 @@ function showCalDayDetail(dateStr){
 
     const topStr = (s.topLifts || []).map(l => l.name + (l.weight ? ` ${l.weight}kg` : '')).join(' · ') || 'Bodyweight';
     const vol = s.volume >= 1000 ? (Math.round(s.volume / 100) / 10) + 'k kg' : (s.volume ? s.volume + 'kg' : '');
-    const setLogEntries = Object.entries(s.setLog || {}).filter(([,v]) => v.reps && v.reps.length);
+    const setLogEntries = _orderedSetLogEntries(s.setLog).filter(([,v]) => v.reps && v.reps.length);
     const pills = setLogEntries.map(([n, v]) =>
       `<div class="rep-log-pill">${n.split(' ')[0]} ${v.reps.join('/')}r @ ${v.weight || 'BW'}kg</div>`
     ).join('');
@@ -20592,7 +20612,7 @@ function openSessDetail(idx){
   if(s.manualActivity){
     document.getElementById('sessDetailContent').innerHTML=`<div style="padding:16px;text-align:center;font-size:32px;">${s.activityEmoji||'🏅'}</div><div style="padding:0 16px 16px;text-align:center;font-size:14px;color:var(--text2);">Intensity: ${s.intensity} · Duration: ${s.durationMin}min · XP: +${s.xpAwarded}</div>`;
   } else {
-    const entries=Object.entries(s.setLog||{});
+    const entries=_orderedSetLogEntries(s.setLog);
     document.getElementById('sessDetailContent').innerHTML=entries.length?entries.map(([name,v])=>{
       const repsArr=v.reps||[], swArr=v.setWeights||[];
       const setsHtml=Array.from({length:v.sets},(_,i)=>{
