@@ -1776,6 +1776,31 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
   </div>
 </div>
 
+<!-- DAILY NOTE MODAL -->
+<div class="modal-ov" id="dailyNoteMod" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal" style="max-width:360px;">
+    <div class="modal-handle"></div>
+    <div style="font-size:17px;font-weight:800;margin-bottom:2px;">Today's Note</div>
+    <div id="dailyNoteDateLabel" style="font-size:12px;color:var(--text2);margin-bottom:14px;"></div>
+    <textarea id="dailyNoteInput" rows="5" placeholder="How did training feel today? Energy, niggles, wins…" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px;font-size:14px;color:var(--text);box-sizing:border-box;resize:vertical;line-height:1.4;font-family:inherit;"></textarea>
+    <div style="display:flex;gap:10px;margin-top:14px;">
+      <button onclick="document.getElementById('dailyNoteMod').classList.remove('open')" style="flex:1;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:13px;font-size:14px;font-weight:700;color:var(--text2);cursor:pointer;">Cancel</button>
+      <button onclick="saveDailyNote()" style="flex:1;background:var(--accent);border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:800;color:#000;cursor:pointer;">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- WORKOUT SUMMARY MODAL (upcoming-schedule preview) -->
+<div class="modal-ov" id="workoutSummaryMod" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal" style="max-width:360px;">
+    <div class="modal-handle"></div>
+    <div id="wsumTitle" style="font-size:17px;font-weight:800;margin-bottom:2px;">Workout</div>
+    <div id="wsumSub" style="font-size:12px;color:var(--text2);margin-bottom:12px;"></div>
+    <div id="wsumBody" style="max-height:50vh;overflow-y:auto;"></div>
+    <button onclick="document.getElementById('workoutSummaryMod').classList.remove('open')" style="width:100%;margin-top:14px;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:13px;font-size:14px;font-weight:700;color:var(--text2);cursor:pointer;">Close</button>
+  </div>
+</div>
+
 <!-- CELEBRATE ALERT -->
 <div class="celebrate-alert" id="celebrateAlert">
   <!-- Lottie burst (lazy-loaded). Falls back to emoji below if lottie fails. -->
@@ -3559,6 +3584,7 @@ async function cloudSaveProfile() {
     pathHistory: Array.isArray(pathHistory) ? pathHistory : [],
     bodyWeightLog,
     measurementsLog: Array.isArray(measurementsLog) ? measurementsLog : [],
+    dailyNotes: (dailyNotes && typeof dailyNotes === 'object' && !Array.isArray(dailyNotes)) ? dailyNotes : {},
     onboarded: !!localStorage.getItem('maxgainz_onboarded'),
     pbLifts: Array.isArray(pbLifts) ? pbLifts : [],
     prefs: {
@@ -3745,6 +3771,10 @@ async function cloudLoadAll() {
           if (Array.isArray(blob.measurementsLog)) {
             measurementsLog = blob.measurementsLog;
           }
+          // Restore daily notes (object keyed by date)
+          if (blob.dailyNotes && typeof blob.dailyNotes === 'object' && !Array.isArray(blob.dailyNotes)) {
+            dailyNotes = blob.dailyNotes;
+          }
           // Restore Personal Best tile set
           if (Array.isArray(blob.pbLifts)) {
             pbLifts = blob.pbLifts;
@@ -3844,6 +3874,7 @@ function saveLocalCache() {
       userProfile,
       bodyWeightLog,
       measurementsLog,
+      dailyNotes,
       savedAt: new Date().toISOString()
     }));
   } catch(e) {}
@@ -4206,6 +4237,7 @@ function _buildExportPayload(){
     // Body weight history
     bodyWeightLog:  bodyWeightLog || [],
     measurementsLog: measurementsLog || [],
+    dailyNotes:     (dailyNotes && typeof dailyNotes === 'object' && !Array.isArray(dailyNotes)) ? dailyNotes : {},
     // Preferences
     prefs: {
       speedUnit:    lsReadRaw('userSpeedUnit')    || 'mph',
@@ -4322,6 +4354,11 @@ function applyImportPayload(payload){
   if(typeof measurementsLog !== 'undefined' && Array.isArray(payload.measurementsLog)){
     measurementsLog.length = 0;
     payload.measurementsLog.forEach(e => measurementsLog.push(e));
+  }
+  // Daily notes (object keyed by date)
+  if(typeof dailyNotes !== 'undefined' && payload.dailyNotes && typeof payload.dailyNotes === 'object' && !Array.isArray(payload.dailyNotes)){
+    Object.keys(dailyNotes).forEach(k => delete dailyNotes[k]);
+    Object.assign(dailyNotes, payload.dailyNotes);
   }
 
   // Personal Best tile set
@@ -4463,6 +4500,10 @@ let bodyWeightLog = stored ? (stored.bodyWeightLog || []) : [];
 // Body measurements log — array of {date, chest, waist, arms, thighs, hips} in cm
 // (each field optional). Mirrors bodyWeightLog's persistence/sync exactly.
 let measurementsLog = stored ? (stored.measurementsLog || []) : [];
+
+// Daily notes — object keyed by local 'YYYY-MM-DD' → free-text note for the day.
+// Surfaced via the "Leave a note" Today's Focus card. Persisted/synced like the logs.
+let dailyNotes = (stored && stored.dailyNotes && typeof stored.dailyNotes === 'object' && !Array.isArray(stored.dailyNotes)) ? stored.dailyNotes : {};
 
 // User profile - stored separately
 let userProfile = stored && stored.userProfile ? stored.userProfile : {
@@ -16925,29 +16966,108 @@ function _renderWelcomeBackCard(){
 
 // Daily Focus — a deterministic, no-XP rotating prompt (safe "daily quest"
 // surrogate; a real reward-bearing quest needs a stored ledger, deferred).
+// Each entry: [emoji, title, subtitle, action, ctaLabel].
+// action drives the tap behaviour: 'note' → daily note modal, 'rpe' → enable
+// effort tracking, 'start' → launch/scroll to today's workout.
 const _DAILY_FOCUS = [
-  ['🎯','Chase a rep PR','Beat your top-set rep count on your first lift today.'],
-  ['🔥','Finish strong','Tack a 6–10 min finisher onto the end of today\'s session.'],
-  ['⏱','Mind the rest','Keep rest tight — aim to start each set within ~90s.'],
-  ['📝','Leave a note','Jot how a lift felt — your future self will thank you.'],
-  ['🧘','Move well','Spend 5 min on mobility before your first heavy set.'],
-  ['💧','Fuel up','Hydrate and get some protein in around today\'s session.'],
-  ['📊','Log the effort','Try rating effort (RPE) on your top set today.'],
+  ['🎯','Chase a rep PR','Beat your top-set rep count on your first lift today.','start','Start workout'],
+  ['🔥','Finish strong','Tack a 6–10 min finisher onto the end of today\'s session.','start','Start workout'],
+  ['⏱','Mind the rest','Keep rest tight — aim to start each set within ~90s.','start','Start workout'],
+  ['📝','Leave a note','Jot how a lift felt — your future self will thank you.','note','Add note'],
+  ['🧘','Move well','Spend 5 min on mobility before your first heavy set.','start','Start workout'],
+  ['💧','Fuel up','Hydrate and get some protein in around today\'s session.','start','Start workout'],
+  ['📊','Log the effort','Try rating effort (RPE) on your top set today.','rpe','Enable RPE'],
 ];
 function _renderDailyFocusCard(){
   // Deterministic by date → same focus all day, rotates daily.
   const now = new Date();
   const dayIdx = Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 86400000);
   const f = _DAILY_FOCUS[((dayIdx % _DAILY_FOCUS.length) + _DAILY_FOCUS.length) % _DAILY_FOCUS.length];
+  const action = f[3] || 'start';
+  let sub = f[2];
+  let ctaLabel = f[4] || '';
+  // For the note focus, surface today's saved note inline and flip the CTA.
+  if(action === 'note'){
+    const note = (typeof dailyNotes === 'object' && dailyNotes) ? dailyNotes[_localYMD(now)] : '';
+    if(note){
+      const safe = String(note).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      sub = '📝 “' + safe.slice(0,90) + (safe.length > 90 ? '…' : '') + '”';
+      ctaLabel = 'Edit note';
+    }
+  }
   return `
-    <div style="margin:12px 16px 0;background:var(--surface2);border:0.5px solid var(--border);border-radius:14px;padding:13px 14px;display:flex;align-items:center;gap:12px;">
+    <div onclick="_dailyFocusTap('${action}')" style="margin:12px 16px 0;background:var(--surface2);border:0.5px solid var(--border);border-radius:14px;padding:13px 14px;display:flex;align-items:center;gap:12px;cursor:pointer;">
       <div style="font-size:22px;flex-shrink:0;">${f[0]}</div>
       <div style="flex:1;min-width:0;">
         <div style="font-size:10px;font-weight:800;color:var(--accent2);text-transform:uppercase;letter-spacing:1.5px;">Today's focus</div>
         <div style="font-size:13px;font-weight:700;color:var(--text);margin-top:1px;">${f[1]}</div>
-        <div style="font-size:11px;color:var(--text2);margin-top:1px;line-height:1.35;">${f[2]}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:1px;line-height:1.35;">${sub}</div>
       </div>
+      ${ctaLabel
+        ? `<div style="flex-shrink:0;font-size:11px;font-weight:700;color:var(--accent);background:rgba(200,255,0,0.1);border-radius:8px;padding:6px 10px;white-space:nowrap;">${ctaLabel}</div>`
+        : `<div style="flex-shrink:0;color:var(--text2);font-size:16px;opacity:0.5;">›</div>`}
     </div>`;
+}
+
+// Dispatch a tap on the Today's Focus card to the relevant action.
+function _dailyFocusTap(action){
+  if(action === 'note'){ openDailyNote(); return; }
+  if(action === 'rpe'){
+    if(typeof userPreferences === 'object' && userPreferences && !userPreferences.trackRPE && typeof toggleTrackRPE === 'function'){
+      toggleTrackRPE(); // turns it on (+ its own toast)
+    } else if(typeof showToast === 'function'){
+      showToast('📊 Effort tracking is already on — rate your top set today.', 2200);
+    }
+    return;
+  }
+  _focusStartTodayWorkout();
+}
+
+// "Start workout" focus action — launch today's scheduled path session, with
+// graceful fallbacks for already-done / rest / freestyle-HIIT / no-path states.
+function _focusStartTodayWorkout(){
+  const info = (typeof getTodayPathWorkout === 'function') ? getTodayPathWorkout() : null;
+  if(info && info.coreWorkout){
+    const prog = info.coreWorkout;
+    if(typeof hasCorePathWorkoutBeenCompletedToday === 'function' && hasCorePathWorkoutBeenCompletedToday(prog)){
+      if(typeof showToast === 'function') showToast('✅ Today\'s workout is already logged — great job!', 2200);
+      return;
+    }
+    const dayName = (typeof getNextPathDay === 'function') ? getNextPathDay(prog) : null;
+    startPathSession(prog, dayName || '');
+    return;
+  }
+  if(info && info.addOnWorkout && typeof openAddOnSelector === 'function'){
+    openAddOnSelector(info.addOnWorkout);
+    return;
+  }
+  // Rest day or no active path — nudge gently rather than doing nothing.
+  if(typeof showToast === 'function') showToast('😌 Nothing scheduled today — enjoy the rest, or log a different activity.', 2600);
+}
+
+// ── Daily note modal ──
+function openDailyNote(){
+  const key = _localYMD(new Date());
+  const ta = document.getElementById('dailyNoteInput');
+  const lbl = document.getElementById('dailyNoteDateLabel');
+  if(ta) ta.value = (typeof dailyNotes === 'object' && dailyNotes && dailyNotes[key]) ? dailyNotes[key] : '';
+  if(lbl) lbl.textContent = new Date().toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long' });
+  const mod = document.getElementById('dailyNoteMod');
+  if(mod) mod.classList.add('open');
+  if(ta) setTimeout(() => { try{ ta.focus(); }catch(e){} }, 50);
+}
+function saveDailyNote(){
+  const key = _localYMD(new Date());
+  const ta = document.getElementById('dailyNoteInput');
+  const text = ta ? ta.value.trim() : '';
+  if(typeof dailyNotes !== 'object' || !dailyNotes) dailyNotes = {};
+  if(text) dailyNotes[key] = text; else delete dailyNotes[key];
+  if(typeof saveLocalCache === 'function') saveLocalCache();
+  if(typeof cloudSaveProfile === 'function') cloudSaveProfile();
+  const mod = document.getElementById('dailyNoteMod');
+  if(mod) mod.classList.remove('open');
+  if(typeof showToast === 'function') showToast(text ? '📝 Note saved' : 'Note cleared', 1600);
+  if(typeof renderToday === 'function') renderToday();
 }
 
 // Active-recovery suggestion for rest days — deterministic by date, no XP.
@@ -18228,6 +18348,64 @@ function getExercisesForPathDay(programme, dayName) {
   return [];
 }
 
+// ── Upcoming-schedule workout preview ──
+// Resolve a day's exercise list, falling back to a direct HIIT-name lookup so
+// add-on HIIT recommendations (not in the series rotation) still resolve.
+function _resolveWorkoutExercises(programme, dayName){
+  let exs = (typeof getExercisesForPathDay === 'function') ? getExercisesForPathDay(programme, dayName) : [];
+  if((!exs || !exs.length) && dayName && typeof getHIITIndexByName === 'function' && typeof HIIT !== 'undefined'){
+    const idx = getHIITIndexByName(dayName);
+    if(idx >= 0 && HIIT[idx]) exs = HIIT[idx].exercises || [];
+  }
+  return Array.isArray(exs) ? exs : [];
+}
+function _progDisplayName(programme){
+  if(!programme) return '';
+  if(programme === 'ULF') return 'Upper / Lower / Full Body';
+  if(programme === 'PPL') return 'Push / Pull / Legs';
+  if(programme === 'HIIT') return 'HIIT';
+  if(typeof isLibraryProgramme === 'function' && isLibraryProgramme(programme)){
+    const lib = (typeof getLibraryProgramme === 'function') ? getLibraryProgramme(programme) : null;
+    return lib ? lib.name : programme;
+  }
+  return programme;
+}
+// Open a read-only summary of the exercises in an upcoming scheduled session.
+function openWorkoutSummary(programme, dayName){
+  const esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const exs = _resolveWorkoutExercises(programme, dayName);
+  const titleEl = document.getElementById('wsumTitle');
+  const subEl   = document.getElementById('wsumSub');
+  const bodyEl  = document.getElementById('wsumBody');
+  const mod     = document.getElementById('workoutSummaryMod');
+  if(!titleEl || !subEl || !bodyEl || !mod) return;
+  titleEl.textContent = dayName || 'Workout';
+  const progName = _progDisplayName(programme);
+  subEl.textContent = (progName ? progName + ' · ' : '') +
+    (exs.length ? exs.length + ' exercise' + (exs.length === 1 ? '' : 's') : 'No details available');
+  if(!exs.length){
+    bodyEl.innerHTML = `<div style="color:var(--text2);font-size:13px;text-align:center;padding:16px 0;">No exercise details available for this session.</div>`;
+  } else {
+    const unitPref = (typeof userPreferences === 'object' && userPreferences && userPreferences.weightUnit) ? userPreferences.weightUnit : 'kg';
+    bodyEl.innerHTML = exs.map((e, i) => {
+      let wLbl = '';
+      if(e.bw){ wLbl = (typeof e.weight === 'number' && e.weight > 0) ? `BW +${e.weight}kg` : 'BW'; }
+      else if(e.weight && typeof e.weight === 'object'){ const dw = (typeof getDisplayWeight === 'function') ? getDisplayWeight(e.weight) : (e.weight.kg||''); if(dw) wLbl = `${dw}${unitPref}`; }
+      else if(e.weight){ wLbl = `${e.weight}kg`; }
+      // reps: timed moves encode seconds in .reps (e.g. '45s') or carry .duration
+      const repLbl = e.duration ? `${e.duration}s`
+        : (e.reps ? (/s\s*$/i.test(String(e.reps)) ? `${e.reps}` : `${e.reps} reps`) : '');
+      const setsLbl = (typeof e.sets === 'number' && e.sets > 0) ? `${e.sets}×` : '';
+      const right = [ (setsLbl + (repLbl.replace(/ reps$/, ''))).trim(), wLbl ].filter(Boolean).join(' · ');
+      return `<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:9px 0;border-bottom:0.5px solid var(--border);">
+        <span style="font-size:13px;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${i+1}. ${esc(e.name)}</span>
+        <span style="font-size:12px;color:var(--text2);white-space:nowrap;flex-shrink:0;">${esc(right)}</span>
+      </div>`;
+    }).join('');
+  }
+  mod.classList.add('open');
+}
+
 function startPathSession(programme, dayName) {
   window._currentSessionIsAdhoc = false;
   if(programme === 'ULF') startSessionULF(dayName);
@@ -19155,17 +19333,27 @@ function _renderPathTabActive() {
       }
     }
 
+    // Tap target → show a summary of the session's exercises. Core days map to
+    // the path programme; add-on days map to the add-on (HIIT) workout. Rest
+    // days (with no logged activity) aren't tappable.
+    let _sumProg = '', _sumDay = '', _sumTap = false;
+    if(d.isCoreDay && d.specificWorkout){ _sumProg = userPath.programme; _sumDay = d.specificWorkout; _sumTap = true; }
+    else if(d.addOnForDay){ _sumProg = (d.addOnForDay.type === 'HIIT') ? 'HIIT' : userPath.programme; _sumDay = d.addOnSpecific || d.addOnForDay.type || ''; _sumTap = !!_sumDay; }
+    const _escP = String(_sumProg).replace(/'/g, "\\'");
+    const _escD = String(_sumDay).replace(/'/g, "\\'");
+
     return `
-      <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;
-        background:${bg};border:1px solid ${border};border-radius:12px;margin-bottom:6px;
+      <div ${_sumTap ? `onclick="openWorkoutSummary('${_escP}','${_escD}')"` : ''} style="display:flex;align-items:center;gap:10px;padding:10px 14px;
+        background:${bg};border:1px solid ${border};border-radius:12px;margin-bottom:6px;cursor:${_sumTap ? 'pointer' : 'default'};
         ${d.isToday ? 'font-weight:700;' : ''}">
         ${indicator}
-        <div style="flex:1;">
+        <div style="flex:1;min-width:0;">
           <div style="font-size:12px;color:${d.isToday ? 'var(--text)' : d.isPast ? 'var(--text2)' : 'var(--text)'};font-weight:${d.isToday ? '700' : '500'};">
             ${d.isToday ? 'Today · ' : ''}${d.dayLabel}
           </div>
           <div style="margin-top:2px;">${workoutLabel}</div>
         </div>
+        ${_sumTap ? `<div style="flex-shrink:0;color:var(--text2);font-size:16px;opacity:0.5;">›</div>` : ''}
       </div>`;
   }).join('');
 
