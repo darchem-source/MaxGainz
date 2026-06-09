@@ -8588,10 +8588,11 @@ function markSet(i){
     
     // Round NOT complete - jump to next exercise (no rest, continue the round)
     // console.log('[SUPERSET] Round not complete, jumping to next exercise');
-    const sortedIndices = group.exerciseIndices.slice().sort((a,b) => a - b);
-    const curPos = sortedIndices.indexOf(curIdx);
-    const nextPos = (curPos + 1) % sortedIndices.length;
-    const nextExIdx = sortedIndices[nextPos];
+    // Cycle to the next member in BUILDER (stored selection) order, matching
+    // what the SESSION EXERCISES card displays — NOT ascending physical order.
+    const curPos = group.exerciseIndices.indexOf(curIdx);
+    const nextPos = (curPos + 1) % group.exerciseIndices.length;
+    const nextExIdx = group.exerciseIndices[nextPos];
     // console.log('[SUPERSET]   Jumping to: ' + sessExs[nextExIdx].name);
     
     // Advance immediately so the card flip feels instant; only defer the scroll
@@ -8644,8 +8645,9 @@ function advance(){
     if(done>=ex.sets){
       stopRest();
       dismissCelebrate();
-      // Try to move to next exercise (if any)
-      const nextIdx = findNextIncompleteEx(curIdx);
+      // Try to move to next exercise (if any). Route so landing on a superset
+      // member enters it at the builder-first incomplete member.
+      const nextIdx = routeIntoSuperset(findNextIncompleteEx(curIdx));
       if(nextIdx !== -1){
         curIdx = nextIdx;
         updateSessUI();
@@ -8677,19 +8679,20 @@ function advance(){
         
         // If superset is fully complete, move to next non-superset exercise
         if(group.completedRounds >= group.sets){
-          const nextIdx = findNextIncompleteEx(Math.max(...group.exerciseIndices));
+          // Physical scan past the highest member to leave this superset, then
+          // route in case we land inside ANOTHER superset (start it builder-first).
+          const nextIdx = routeIntoSuperset(findNextIncompleteEx(Math.max(...group.exerciseIndices)));
           if(nextIdx !== -1){
             curIdx = nextIdx;
           }
         } else {
-          // Move to first exercise in superset for next round
-          curIdx = Math.min(...group.exerciseIndices);
+          // Move to first exercise in superset for next round (builder order)
+          curIdx = group.exerciseIndices[0];
         }
       } else {
-        // Not all exercises done this round yet - find next incomplete in superset (in order)
-        // Sort indices to ensure we go in order
-        const sortedIndices = group.exerciseIndices.slice().sort((a,b) => a - b);
-        for(let idx of sortedIndices){
+        // Not all exercises done this round yet - find next incomplete in superset
+        // in BUILDER order (matching the displayed order), not sorted physical order.
+        for(let idx of group.exerciseIndices){
           if((setsDone[idx]||[]).length <= currentRound){
             curIdx = idx;
             break;
@@ -8706,6 +8709,9 @@ function advance(){
   // Wrap around to index 0 if nothing found forward (handles out-of-order completion)
   let nextIdx = findNextIncompleteEx(curIdx);
   if(nextIdx === -1 && curIdx > 0) nextIdx = findNextIncompleteEx(-1);
+  // Route a superset-member landing to its builder-first incomplete member so
+  // entry matches the displayed order. No-op for -1 and non-members.
+  nextIdx = routeIntoSuperset(nextIdx);
   if(nextIdx !== -1){
     curIdx = nextIdx;
     updateSessUI();
@@ -8732,6 +8738,21 @@ function findNextIncompleteEx(fromIdx){
     return i;
   }
   return -1; // All done
+}
+
+// When a physical-position scan (findNextIncompleteEx) lands on a superset
+// member, re-route to that group's FIRST incomplete member in builder order
+// (group.exerciseIndices is stored in the user's selection order). Non-members
+// and -1 pass through unchanged. This keeps superset ENTRY aligned with the
+// displayed order without altering the physical scan itself.
+function routeIntoSuperset(idx){
+  if(idx === -1) return idx;
+  const ssId = supersets[idx];
+  if(!ssId) return idx;
+  const group = supersetGroups.find(g => g.id === ssId);
+  if(!group) return idx;
+  const firstIncomplete = group.exerciseIndices.find(i => (setsDone[i]||[]).length < group.sets);
+  return (firstIncomplete !== undefined) ? firstIncomplete : group.exerciseIndices[0];
 }
 
 function adjW(d){
@@ -9702,9 +9723,8 @@ function skipRest(){
     if(group && group.completedRounds < group.sets){
       // We're in a superset with more rounds to do
       // Jump to first exercise of superset (in order)
-      const sortedIndices = group.exerciseIndices.slice().sort((a,b) => a - b);
-      // console.log('[SKIP REST] Jumping to first exercise of superset:', sessExs[sortedIndices[0]].name);
-      curIdx = sortedIndices[0];
+      // Jump to the start of the round = first member in builder order.
+      curIdx = group.exerciseIndices[0];
       updateSessUI();
       // The actual scroll container is .tab-content (s-active itself doesn't
       // scroll), so reset there. Previously this was a silent no-op.
@@ -9744,8 +9764,8 @@ function dismissRestAlert(){
   if(ssId){
     const group = supersetGroups.find(g => g.id === ssId);
     if(group && group.completedRounds < group.sets){
-      const sortedIndices = group.exerciseIndices.slice().sort((a,b) => a - b);
-      curIdx = sortedIndices[0];
+      // Start the next round at the first member in builder order.
+      curIdx = group.exerciseIndices[0];
       updateSessUI();
       scrollToActiveEx();
       return;
@@ -9937,6 +9957,8 @@ function celebrateNext(){
   // exercise before finishing earlier exercises in the list).
   let nextIdx = findNextIncompleteEx(scanFrom);
   if(nextIdx === -1 && scanFrom > 0) nextIdx = findNextIncompleteEx(-1);
+  // Enter a landed superset at its builder-first incomplete member.
+  nextIdx = routeIntoSuperset(nextIdx);
 
   if(nextIdx === -1){
     dismissCelebrate();
@@ -10236,9 +10258,9 @@ function jumpToSuperset(groupId){
     scrollToActiveEx(); // already here — just scroll the card into view
     return;
   }
-  const sorted = group.exerciseIndices.slice().sort((a,b) => a - b);
-  const nextIdx = sorted.find(idx => (setsDone[idx]||[]).length < group.sets);
-  jumpTo(nextIdx !== undefined ? nextIdx : sorted[0]);
+  // Jump to the first incomplete member in builder order (matches the card).
+  const nextIdx = group.exerciseIndices.find(idx => (setsDone[idx]||[]).length < group.sets);
+  jumpTo(nextIdx !== undefined ? nextIdx : group.exerciseIndices[0]);
 }
 
 function renderQueue(){ renderSessionExerciseList(); } // redirect old call-sites
