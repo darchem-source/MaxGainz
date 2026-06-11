@@ -1273,6 +1273,16 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
     <div class="modal-handle"></div>
     <div id="adhocModTitle" style="font-size:19px;font-weight:800;margin-bottom:4px;">Add Extra Session</div>
     <div id="adhocModSub" style="font-size:13px;color:var(--text2);margin-bottom:10px;">Pick any workout from the full library. Won't affect your Path progress.</div>
+    <!-- Swap mode only: choose whether this session counts toward the Path week -->
+    <div id="adhocSwapToggleRow" style="display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px;flex-shrink:0;">
+      <div style="min-width:0;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);">Count toward my Path week</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:1px;">On = feeds streak, XP &amp; weekly target. Off = logged as an extra.</div>
+      </div>
+      <button id="adhocSwapToggleBtn" onclick="_toggleSwapCount()" style="flex-shrink:0;border:none;border-radius:999px;padding:7px 16px;font-size:12px;font-weight:800;cursor:pointer;background:var(--accent);color:#000;">On</button>
+    </div>
+    <!-- Swap mode only: data-driven recommendations -->
+    <div id="adhocRecs" style="display:none;flex-shrink:0;margin-bottom:8px;"></div>
     <input id="adhocSearch" type="text" placeholder="Search workouts…" oninput="setAdhocSearch(this.value)"
       style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:10px 14px;font-size:14px;color:var(--text);margin-bottom:8px;box-sizing:border-box;flex-shrink:0;">
     <div id="adhocFilter" style="display:flex;gap:6px;margin-bottom:8px;overflow-x:auto;padding-bottom:2px;flex-shrink:0;">
@@ -18162,10 +18172,33 @@ function renderTodayWithPath() {
                   ${overflow > 0 ? `<span style="background:var(--surface3);border-radius:6px;padding:4px 8px;font-size:11px;color:var(--text2);">+${overflow} more</span>` : ''}
                 </div>`;
               })()}
+              ${(() => {
+                // Smart swap nudge: surface ONLY when a major muscle group is
+                // overdue (>=7 days) AND today's planned session doesn't cover
+                // it — so we never suggest swapping away from a workout that
+                // already trains the weak area.
+                const rem = (typeof getTrainingReminder === 'function') ? getTrainingReminder() : null;
+                if(!rem) return '';
+                const covered = new Set();
+                (exs || []).forEach(e => {
+                  const sp = (typeof getSplits === 'function') ? getSplits(e.name) : null;
+                  if(sp) sp.forEach(x => covered.add(x.cat));
+                });
+                if(covered.has(rem.group)) return '';
+                return `
+                <div style="background:linear-gradient(135deg,rgba(255,140,66,0.12),rgba(255,140,66,0.04));border:1px solid rgba(255,140,66,0.35);border-radius:12px;padding:11px 12px;margin-bottom:12px;display:flex;align-items:flex-start;gap:10px;">
+                  <div style="font-size:20px;flex-shrink:0;">${rem.emoji}</div>
+                  <div style="flex:1;min-width:0;">
+                    <div style="font-size:12px;font-weight:700;color:var(--text);line-height:1.4;">Your ${rem.label} hasn't been trained in ${rem.days} days — today's session doesn't cover it.</div>
+                    <div onclick="openSwapToday('${rem.group}')" style="display:inline-block;margin-top:6px;font-size:12px;font-weight:800;color:var(--accent);cursor:pointer;">🔄 Swap for a ${rem.label}-focused session →</div>
+                  </div>
+                </div>`;
+              })()}
               <button class="btn-p" style="width:100%;font-size:15px;padding:14px;"
                       onclick="startPathSession('${prog}','${dayName || ''}')">
                 ▶ Start Session
               </button>
+              <button onclick="openSwapToday()" style="width:100%;margin-top:8px;background:transparent;border:0.5px solid var(--border);border-radius:12px;padding:11px;font-size:13px;font-weight:700;color:var(--text2);cursor:pointer;">🔄 Swap today's workout</button>
             </div>
           </div>`;
       }
@@ -18555,6 +18588,8 @@ function startPathSession(programme, dayName) {
 
 // ── Ad-hoc session modal ──
 // Search/filter state for the Add Extra Session picker — reset on each open.
+let _adhocSwapMode = false;      // true when opened as a "Swap today's workout" picker
+let _swapCountToward = true;     // swap toggle: does the swapped session count toward the Path week?
 let _adhocSearch = '';
 let _adhocFilter = 'all';        // 'all' | 'strength' | 'hiit'
 let _adhocHiitFormat = 'all';    // 'all' | 'AMRAP' | 'EMOM' | 'Tabata' | 'Core' | 'Garrys' | 'series'
@@ -18577,10 +18612,17 @@ let _adhocExpanded = {};    // { sectionKey: true } — tracks expanded library/
 function openAdhocModal() {
   const content = document.getElementById('adhocContent');
   if(!content) return;
+  // Plain "Add Extra" mode — never counts toward the Path, no swap UI.
+  _adhocSwapMode = false;
+  window._adhocCountsTowardPath = false;
   const titleEl = document.getElementById('adhocModTitle');
   const subEl   = document.getElementById('adhocModSub');
   if(titleEl) titleEl.textContent = 'Add Extra Session';
   if(subEl)   subEl.textContent   = "Pick any workout from the full library. Won't affect your Path progress.";
+  const toggleRow = document.getElementById('adhocSwapToggleRow');
+  if(toggleRow) toggleRow.style.display = 'none';
+  const recsEl = document.getElementById('adhocRecs');
+  if(recsEl){ recsEl.style.display = 'none'; recsEl.innerHTML = ''; }
 
   // Reset filters every open so users always start at the broadest view.
   _adhocSearch = '';
@@ -18595,6 +18637,117 @@ function openAdhocModal() {
 
   _renderAdhocList();
   document.getElementById('adhocMod').classList.add('open');
+}
+
+// ── Swap today's workout ──
+// Opens the same library picker, themed as a swap, with a "count toward Path"
+// toggle and data-driven recommendations up top. focusGroup (optional) biases
+// the recommendations toward an under-trained muscle group.
+function openSwapToday(focusGroup){
+  const content = document.getElementById('adhocContent');
+  if(!content) return;
+  _adhocSwapMode = true;
+  _swapCountToward = true;                     // default: a swap replaces today, so count it
+  window._adhocCountsTowardPath = true;
+  const titleEl = document.getElementById('adhocModTitle');
+  const subEl   = document.getElementById('adhocModSub');
+  if(titleEl) titleEl.textContent = "Swap Today's Workout";
+  if(subEl)   subEl.textContent   = 'Pick any session to do instead. Suggestions for your under-trained areas are up top.';
+
+  // Reset filters
+  _adhocSearch = '';
+  _adhocFilter = 'all';
+  _adhocHiitFormat = 'all';
+  _adhocExpanded = {};
+  const searchInput = document.getElementById('adhocSearch');
+  if(searchInput) searchInput.value = '';
+  document.querySelectorAll('#adhocFilter .chip').forEach((c, i) => c.classList.toggle('active', i === 0));
+  document.querySelectorAll('#adhocHiitFormatFilter .chip').forEach((c, i) => c.classList.toggle('active', i === 0));
+  _syncAdhocFormatRowVisibility();
+
+  const toggleRow = document.getElementById('adhocSwapToggleRow');
+  if(toggleRow) toggleRow.style.display = 'flex';
+  _refreshSwapToggle();
+  _renderSwapRecs(typeof focusGroup === 'string' ? focusGroup : null);
+
+  _renderAdhocList();
+  document.getElementById('adhocMod').classList.add('open');
+}
+
+function _toggleSwapCount(){
+  _swapCountToward = !_swapCountToward;
+  window._adhocCountsTowardPath = _swapCountToward;
+  _refreshSwapToggle();
+}
+function _refreshSwapToggle(){
+  const btn = document.getElementById('adhocSwapToggleBtn');
+  if(!btn) return;
+  btn.textContent = _swapCountToward ? 'On' : 'Off';
+  btn.style.background = _swapCountToward ? 'var(--accent)' : 'var(--surface3)';
+  btn.style.color      = _swapCountToward ? '#000' : 'var(--text2)';
+}
+
+// Build "do this instead" recommendations from muscle balance. Merges strength
+// (ULF/PPL) + HIIT recs, skips ones that can't be launched cleanly, biases an
+// optional focus group to the front.
+function _getSwapRecommendations(maxN, focusGroup){
+  if(typeof calcMuscleImbalance !== 'function' || typeof getAddOnRecommendations !== 'function') return [];
+  const balance = calcMuscleImbalance(4);
+  // Names done in the last 14 days get penalized so fresh options surface.
+  const recent = new Set();
+  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 14);
+  completedSessions.forEach(s => {
+    const d = s.date instanceof Date ? s.date : new Date(s.date);
+    if(d >= cutoff && s.day) recent.add(s.day);
+  });
+  const strength = getAddOnRecommendations('ULF', balance, recent, 5) || [];
+  const hiit     = getAddOnRecommendations('HIIT', balance, recent, 5) || [];
+  const merged = [...strength, ...hiit].filter(r => _recToSpec(r));
+  // Bias: recs that target the requested focus group score-bump to the top.
+  merged.sort((a, b) => {
+    const af = focusGroup && a.focusGroups && a.focusGroups.includes(focusGroup) ? 1 : 0;
+    const bf = focusGroup && b.focusGroups && b.focusGroups.includes(focusGroup) ? 1 : 0;
+    if(af !== bf) return bf - af;
+    return (b.score - a.score) || (a.duration - b.duration);
+  });
+  const seen = new Set(), out = [];
+  for(const r of merged){ if(seen.has(r.name)) continue; seen.add(r.name); out.push(r); if(out.length >= (maxN || 4)) break; }
+  return out;
+}
+// Map a recommendation to a startAdhocWorkout spec (only cleanly-launchable progs).
+function _recToSpec(rec){
+  if(!rec) return null;
+  if(rec.prog === 'HIIT') return { type:'hiit', name: rec.name };
+  if(rec.prog === 'ULF')  return { type:'ulf',  day:  rec.name };
+  if(rec.prog === 'PPL')  return { type:'ppl',  day:  rec.name };
+  return null;
+}
+function _startRecSwap(prog, name){
+  const spec = _recToSpec({ prog: prog, name: name });
+  if(spec) startAdhocWorkout(spec);
+}
+function _renderSwapRecs(focusGroup){
+  const el = document.getElementById('adhocRecs');
+  if(!el) return;
+  const recs = _getSwapRecommendations(3, focusGroup);
+  if(!recs.length){ el.style.display = 'none'; el.innerHTML = ''; return; }
+  const esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const escAttr = s => String(s == null ? '' : s).replace(/'/g, "\\'");
+  const progIcon = { HIIT:'⚡', ULF:'🏋️', PPL:'🏋️' };
+  el.innerHTML = `
+    <div style="font-size:10px;font-weight:800;color:var(--accent2);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;">💡 Recommended for you</div>
+    ${recs.map(r => `
+      <div onclick="_startRecSwap('${escAttr(r.prog)}','${escAttr(r.name)}')"
+        style="display:flex;align-items:center;gap:12px;padding:11px 12px;background:rgba(200,255,0,0.06);border:1px solid rgba(200,255,0,0.25);border-radius:10px;margin-bottom:6px;cursor:pointer;">
+        <div style="font-size:18px;flex-shrink:0;">${progIcon[r.prog] || '🎯'}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:700;">${esc(r.name)}</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:1px;line-height:1.3;">${esc(r.reason)}</div>
+        </div>
+        <div style="color:var(--accent);font-size:14px;flex-shrink:0;">›</div>
+      </div>`).join('')}
+    <div style="font-size:11px;color:var(--text2);margin:8px 2px 4px;">Or pick anything from the library:</div>`;
+  el.style.display = 'block';
 }
 
 function setAdhocSearch(q){
@@ -18818,7 +18971,16 @@ function _renderAdhocList(){
 // in one place so the picker only needs to emit a {type, ...} spec.
 function startAdhocWorkout(spec){
   document.getElementById('adhocMod').classList.remove('open');
-  window._currentSessionIsAdhoc = true;
+  // "Swap today" mode may request this session count toward the Path week
+  // (saved non-adhoc). When the flag isn't set, behaviour is unchanged: the
+  // session is an "extra" (adhoc), exactly like the Add-Extra picker.
+  const _countToward = (window._adhocCountsTowardPath === true);
+  const _wasSwap = (typeof _adhocSwapMode !== 'undefined' && _adhocSwapMode);
+  window._currentSessionIsAdhoc = !_countToward;
+  window._adhocCountsTowardPath = false; // reset after consuming
+  if(_wasSwap && typeof showToast === 'function'){
+    showToast(_countToward ? '🔄 Swapped — counts toward your week' : '🔄 Swapped — logged as an extra', 2200);
+  }
   if(spec.type === 'ulf'){
     startSessionULF(spec.day);
   } else if(spec.type === 'ppl'){
