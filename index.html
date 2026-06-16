@@ -17071,29 +17071,29 @@ function _renderDailyFocusCard(){
       ctaLabel = 'Edit note';
     }
   }
-  // For "start"-type focuses, reflect completion. Once today's path workout is
-  // logged, the card must not keep inviting "Start workout" — previously it
-  // only admitted it was done on tap (a toast), so the card itself still read
-  // as a pending action. Flip to a clearly-done state.
+  // "start"-type focus is now TIP-ONLY. The "Today's Path Workout" card owns
+  // the single Start action, so this card no longer duplicates it with its own
+  // "Start workout" button (or a hidden tap-to-start). Note/RPE focuses stay
+  // tappable with their CTA. When the day's workout is logged, give the start
+  // tip a small done flourish — but still no button.
+  const interactive = action !== 'start';
   let focusDone = false;
   if(action === 'start' && typeof _isTodayFocusWorkoutDone === 'function' && _isTodayFocusWorkoutDone()){
     focusDone = true;
     sub = '✅ Today\'s workout is logged — great work!';
-    ctaLabel = '✓ Done';
   }
-  const _ctaColor = focusDone ? 'var(--green)' : 'var(--accent)';
-  const _ctaBg    = focusDone ? 'rgba(76,255,145,0.12)' : 'rgba(200,255,0,0.1)';
+  const _cardStyle = `margin:12px 16px 0;background:var(--surface2);border:0.5px solid var(--border);border-radius:14px;padding:13px 14px;display:flex;align-items:center;gap:12px;cursor:${interactive ? 'pointer' : 'default'};`;
   let html = `
-    <div onclick="_dailyFocusTap('${action}')" style="margin:12px 16px 0;background:var(--surface2);border:0.5px solid var(--border);border-radius:14px;padding:13px 14px;display:flex;align-items:center;gap:12px;cursor:pointer;">
+    <div ${interactive ? `onclick="_dailyFocusTap('${action}')" ` : ''}style="${_cardStyle}">
       <div style="font-size:22px;flex-shrink:0;">${focusDone ? '✅' : f[0]}</div>
       <div style="flex:1;min-width:0;">
         <div style="font-size:10px;font-weight:800;color:var(--accent2);text-transform:uppercase;letter-spacing:1.5px;">Today's focus</div>
         <div style="font-size:13px;font-weight:700;color:var(--text);margin-top:1px;">${f[1]}</div>
         <div style="font-size:11px;color:var(--text2);margin-top:1px;line-height:1.35;">${sub}</div>
       </div>
-      ${ctaLabel
-        ? `<div style="flex-shrink:0;font-size:11px;font-weight:700;color:${_ctaColor};background:${_ctaBg};border-radius:8px;padding:6px 10px;white-space:nowrap;">${ctaLabel}</div>`
-        : `<div style="flex-shrink:0;color:var(--text2);font-size:16px;opacity:0.5;">›</div>`}
+      ${interactive && ctaLabel
+        ? `<div style="flex-shrink:0;font-size:11px;font-weight:700;color:var(--accent);background:rgba(200,255,0,0.1);border-radius:8px;padding:6px 10px;white-space:nowrap;">${ctaLabel}</div>`
+        : ``}
     </div>`;
   // Independent today's-note line so a saved note is readable on any day —
   // not only when the rotating "note" focus happens to be showing (the note
@@ -17954,7 +17954,21 @@ function renderTodayWithPath() {
   // start the missed workout. Today's planned workout (if any) still
   // renders below; both can coexist.
   const catchUp = _getPathCatchUpSuggestion();
-  if(catchUp){
+  // Hide the catch-up card when it would just duplicate today's own workout
+  // card. On an incomplete core day, today's scheduled session IS the next in
+  // rotation — the same workout the catch-up suggests — so the "Today's Path
+  // Workout" card below already presents it with a Start button. Showing both
+  // means two identical "Start <workout>" buttons. Still show catch-up on
+  // rest / add-on days, or once today's workout is done (then it's a genuine
+  // nudge to fit in an extra make-up session, not a duplicate).
+  let _catchUpDup = false;
+  if(catchUp && todayInfo && todayInfo.coreWorkout){
+    const _todayDone = typeof hasCorePathWorkoutBeenCompletedToday === 'function'
+      && hasCorePathWorkoutBeenCompletedToday(todayInfo.coreWorkout);
+    const _todayDay = typeof getNextPathDay === 'function' ? getNextPathDay(todayInfo.coreWorkout) : null;
+    if(!_todayDone && _todayDay && _todayDay === catchUp.suggestedDay) _catchUpDup = true;
+  }
+  if(catchUp && !_catchUpDup){
     const exCount = (catchUp.exercises || []).length;
     const missedLabel = catchUp.missed === 1
       ? '1 missed session'
