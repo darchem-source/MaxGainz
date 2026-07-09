@@ -5490,8 +5490,26 @@ function updateSessUI(){
         document.getElementById('currWtUnit').textContent=unit+' last session';
       }
     } else if(editInfo.status === 'deload'){
-      // Long layoff — preset to deload weight, enable editing
-      if(editInfo.suggestedWeight) ex.weight = editInfo.suggestedWeight;
+      // Long layoff — preset the deload weight. Two rules keep this honest:
+      // (1) deload from the LAST LOGGED weight — the same baseline the
+      //     getLiftState coach cue uses — not the rep-adjusted estimate,
+      //     which compounds two adjustments (75kg history → rep-adjust 84.3
+      //     → ×0.85 = 71.6 while the coach line said 62.5).
+      // (2) snap to the exercise's equipment steps so the preset physically
+      //     exists in the gym (17.5 kg/hand, not 17.4).
+      // deloadPct tiers here match getLiftState's G_gapDeload exactly
+      // (<6w 15%, <8w 20%, else 25%), so preset === coach-line number.
+      const dlSteps = getWeightSteps(ex, equipOverride[curIdx]);
+      if(editInfo.lastWeight > 0){
+        ex.weight = snapToSteps(editInfo.lastWeight * (1 - editInfo.deloadPct), dlSteps);
+      } else if(editInfo.suggestedWeight){
+        // suggestedWeight is ALREADY deloaded — just snap it, don't re-deload.
+        ex.weight = snapToSteps(editInfo.suggestedWeight, dlSteps);
+      }
+      // Re-render the coach cue AFTER presetting: its Apply button is guarded
+      // by (suggested !== ex.weight), so now that the preset matches the cue
+      // the redundant Apply button disappears.
+      renderLastTimeRef(ex);
       _setWeightAdjEditable(true);
       document.getElementById('currWt').textContent=ex.weight||'–';
       document.getElementById('currWtUnit').textContent=unit+' suggested';
