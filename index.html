@@ -6618,7 +6618,12 @@ function pickCoreCircuit(){
   return shuffle(picks);
 }
 
-function isCoreCircuit(ex){return ex.coreCircuit===true;}
+// An exercise is the core-circuit placeholder if it carries the explicit flag
+// (ULF/PPL programme definitions) OR is named 'Abdominal Work' — the canonical
+// placeholder name. The name check makes every producer path (exercise picker,
+// swap-in, custom programme days, legacy stored sessions) expand into the
+// 3-exercise rotating circuit without each needing to remember the flag.
+function isCoreCircuit(ex){return !!ex && (ex.coreCircuit===true || ex.name==='Abdominal Work');}
 
 function renderCoreCircuit(ex){
   const rounds=ex.sets;
@@ -10687,7 +10692,22 @@ function openSwap(idx){
 
 function swapIn(idx,name){
   if(idx>=0&&sessExs[idx]){
-    sessExs[idx].name=name;
+    const ex = sessExs[idx];
+    ex.name=name;
+    if(name === 'Abdominal Work'){
+      // Swapping IN the core-circuit placeholder — normalize the slot to the
+      // canonical circuit shape so it expands into the 3-exercise circuit.
+      ex.coreCircuit = true; ex.bw = true; ex.weight = 0;
+      ex.reps = '10–15'; ex.muscles = ['core'];
+      if(typeof ex.sets !== 'number' || !ex.sets) ex.sets = 3;
+      if(!coreCircuitExs.length && typeof pickCoreCircuit === 'function'){
+        coreCircuitExs = pickCoreCircuit();
+      }
+    } else if(ex.coreCircuit){
+      // Swapping AWAY from the placeholder — the slot is a regular exercise
+      // now; drop the flag or it would keep rendering as a circuit.
+      delete ex.coreCircuit;
+    }
     // If swapping the currently active Garry's floor exercise, update just the name
     // in the running timer card without restarting the countdown
     if(idx === curIdx){
@@ -12163,6 +12183,23 @@ function sessAddExercise(){
 const _BW_EQUIP = new Set(['Bodyweight','None','Pull-up bar','Ab wheel','Parallel bars/Floor','Parallel bars','Rings']);
 
 function addExToSession(name){
+  // 'Abdominal Work' is the core-circuit placeholder (same as in ULF/PPL
+  // days): it expands into a rotating 3-exercise circuit, not a regular
+  // logged lift. Push the canonical numeric shape the programme definitions
+  // use — previously the generic EXDB path below pushed it without the
+  // coreCircuit flag, so it rendered as an empty regular exercise.
+  if(name === 'Abdominal Work'){
+    sessExs.push({name, sets:3, reps:'10–15', weight:0, muscles:['core'], bw:true, coreCircuit:true});
+    // Pick this session's circuit if none exists yet. pickCoreCircuit() is
+    // recency-aware (avoids the last few sessions' core moves), so each
+    // session's add gets a fresh trio. If the session already picked one
+    // (ULF/PPL starts always do), keep it — circuit state is per-session.
+    if(!coreCircuitExs.length && typeof pickCoreCircuit === 'function'){
+      coreCircuitExs = pickCoreCircuit();
+    }
+    updateSessUI();
+    return;
+  }
   const found=EXDB.find(e=>e.name===name);
   // bw: explicit flag OR detected from equipment string (covers EXDB entries missing the flag)
   const isBW = found ? (!!found.bw || _BW_EQUIP.has(found.equip)) : false;
