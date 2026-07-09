@@ -9716,8 +9716,14 @@ function stopRest(){
   if(_restNumEl) _restNumEl.textContent='0';
   if(_restFillEl) _restFillEl.style.width='0%';
 
-  // Mark that rest was manually stopped (prevents restart in markSet)
-  window._restStoppedManually = true;
+  // NOTE: stopRest() must NOT set window._restStoppedManually = true here.
+  // It used to, which required every caller to immediately reset it to false
+  // — and any caller that forgot silently suppressed the NEXT set's rest
+  // timer. The worst leak: natural rest completion (updateRestTimer →
+  // showRestAlert → stopRest) left the flag true, so the set logged after a
+  // fully-waited-out rest never got a rest timer ("no rest after the second
+  // set"). Every remaining legitimate flow wants the next rest to start;
+  // callers that need suppression must set the flag explicitly themselves.
 }
 
 function skipRest(){
