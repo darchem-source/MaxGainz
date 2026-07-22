@@ -5076,7 +5076,7 @@ const BARBELL_STEPS = BARBELL_PLATES.reduce((acc,p)=>{
 
 const DB_STEPS = [2.5,5,7.5,10,12.5,15,17.5,20,22.5,25,27.5,30]; // dumbbell per hand
 const CABLE_STEPS = [2.5,5,7.5,10,12.5,15,17.5,20,22.5,25,27.5,30,32.5,35]; // standard cable up to 35kg
-const CABLE_STEPS_WIDE = [2.5,5,7.5,10,12.5,15,17.5,20,22.5,25,27.5,30,32.5,35,37.5,40,42.5,45,47.5,50,52.5,55,57.5,60,62.5,65,67.5,70]; // Lat Pulldown up to 70kg
+const CABLE_STEPS_WIDE = [2.5,5,7.5,10,12.5,15,17.5,20,22.5,25,27.5,30,32.5,35,37.5,40,42.5,45,47.5,50,52.5,55,57.5,60,62.5,65,67.5,70,72.5,75,77.5,80,82.5,85,87.5,90,92.5,95,97.5,100]; // heavy cable stacks (pulldowns, rows) up to 100kg
 const LEG_MACHINE_STEPS = [10,15,20,25,30,35,40,45,50,55,60,65,70,75,80,90,100,110,120,130,140,150,160,170,180,200]; // all machines: 5kg steps
 const BW_EXTRA_STEPS = [0,2.5,5,7.5,10,12.5,15,17.5,20,22.5,25,30,35,40,45,50]; // added weight on BW exercises
 
@@ -5086,7 +5086,9 @@ function getWeightSteps(ex, equipOverride) {
   if (equip === 'dumbbell') return DB_STEPS;
   if (equip === 'cable') {
     const nm=(ex.name||'').toLowerCase();
-    if(nm.includes('pulldown')||nm.includes('pulldowns')) return CABLE_STEPS_WIDE;
+    // Heavy cable stacks: pulldown AND row machines run to ~90-100kg,
+    // unlike light accessory cables (flys, raises, pushdowns) capped at 35.
+    if(nm.includes('pulldown')||nm.includes('row')) return CABLE_STEPS_WIDE;
     return CABLE_STEPS;
   }
   if (equip === 'machine') {
