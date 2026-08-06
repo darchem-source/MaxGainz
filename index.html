@@ -6029,8 +6029,19 @@ function getLiftState(input){
     const raw = oneRM / (1 + target/30);
     const adj = steps.length ? snapToSteps(raw, steps) : Math.round(raw*10)/10;
     out.diag.repAdjustedWeight = adj;
-    out.rule='H_repShift'; out.action='hold'; out.suggested=adj;
-    out.reason = `Rep target is now ${target} — ${adj}kg matches your last effort.`;
+    out.rule='H_repShift'; out.action='hold';
+    // Rusty gate: 2–4 weeks off (4+ already gap-deloaded in rule G). The
+    // rep-math can "translate" a strong last session into MORE weight
+    // (15/15/15 at 70kg with today's target 13 → "75kg matches your last
+    // effort") — bad coaching after a layoff. Never suggest above the last
+    // logged weight off a 2+ week-old session; lighter equivalents pass.
+    if(weeksAway != null && weeksAway >= 2 && adj > baseline){
+      out.suggested = baseline;
+      out.reason = `${Math.round(weeksAway)}w since last time — hold at ${baseline}kg and re-groove before moving up.`;
+    } else {
+      out.suggested = adj;
+      out.reason = `Rep target is now ${target} — ${adj}kg matches your last effort.`;
+    }
     return out; // rep-shift ignores RPE & periodization
   }
 
@@ -6122,6 +6133,16 @@ function getLiftState(input){
     }
   }
 
+  // 7. Rusty gate (PRE only): 2–4 weeks since this exercise was last done
+  // (4+ already gap-deloaded in rule G). An increase earned by a stale
+  // session isn't earned anymore — rules A/B (all sets at top) and the
+  // low-RPE upgrade would otherwise still say "add weight" after a 3-week
+  // layoff. Downgrade to a hold at the last logged weight.
+  if(thisSession === null && weeksAway != null && weeksAway >= 2 && out.action === 'increase'){
+    out.action='hold'; out.suggested=baseline; out.confidence='medium';
+    out.reason = `${Math.round(weeksAway)}w since last time — hold at ${baseline}kg first; add weight once you've re-grooved.`;
+  }
+
   return out;
 }
 
@@ -6195,6 +6216,14 @@ function getWeightEditability(exName, targetReps){
     if(Math.round(lastAvgReps) !== targetReps){
       const oneRM = calc1RM(history.weight, lastAvgReps);
       repAdjustedWeight = oneRM / (1 + targetReps / 30); // caller snaps to equipment steps
+      // Rusty cap: 2+ weeks since this exercise (the 4+ week case deloads
+      // below) — never PRESET a heavier weight than last logged off a stale
+      // session. Nulling falls back to the lock-to-last-weight path, which
+      // matches getLiftState's rusty hold-at-baseline coach cue exactly.
+      // Lighter rep-equivalents (higher target reps) still pass through.
+      if(weeksExact >= 2 && repAdjustedWeight > history.weight){
+        repAdjustedWeight = null;
+      }
     }
   }
 
