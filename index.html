@@ -5584,7 +5584,8 @@ function updateSessUI(){
   }
   renderMiniPlateViz();
   const plateBtn = document.getElementById('plateCalcTrigger');
-  if(plateBtn) plateBtn.style.display = (!isTimedExercise(ex) && !ex.bw) ? 'block' : 'none';
+  // Barbell-only: plates make no sense for dumbbells/kettlebells/stacks.
+  if(plateBtn) plateBtn.style.display = _isPlateLoaded(ex) ? 'block' : 'none';
 
   // Show superset info if current exercise is part of a superset
   const supersetInfoDiv = document.getElementById('supersetInfo');
@@ -14305,15 +14306,29 @@ function loadHIITTemplate(name){
 let _barWeight = parseInt(lsGetRaw('plateBarWt', '20'));
 const PLATES_KG = [25, 20, 15, 10, 5, 2.5, 1.25]; // standard plates
 
+// Plate-calculator visibility: ONLY barbell-style, plate-loaded exercises.
+// Fixed dumbbells, kettlebells, cable stacks, pin-loaded machines, bands and
+// bodyweight moves have nothing to load plate-by-plate, so the calculator
+// (and its per-side math) is meaningless for them. Single predicate shared
+// by the Plate guide button, the mini plate graphic, and openPlateCalc so
+// the three can never disagree again.
+function _isPlateLoaded(ex){
+  if(!ex || ex.bw) return false;
+  if(typeof isTimedExercise === 'function' && isTimedExercise(ex)) return false;
+  // Name guard covers exercises with no EX_META entry (picker-added, custom)
+  // that would otherwise fall back to getEquipType's 'barbell' default —
+  // e.g. Goblet Squats, Kettlebell Swings, Dumbbell Pullovers.
+  const nm = (ex.name||'').toLowerCase();
+  if(/dumbbell|kettlebell|goblet|cable|machine|band|pulldown|pushdown/.test(nm)) return false;
+  const eq = getEquipType(ex);
+  if(eq === 'both') return (equipOverride[curIdx] || 'barbell') === 'barbell';
+  return eq === 'barbell';
+}
+
 function openPlateCalc(){
-  // Only open if it's a barbell-friendly exercise (skip BW)
+  // Barbell-only: dumbbells/cables/machines have no plates to load.
   const ex = sessExs[curIdx];
-  if(!ex || ex.bw) return;
-  // Use bar=0 for dumbbells/cables
-  const lower = ex.name.toLowerCase();
-  if(lower.includes('dumbbell') || lower.includes('cable') || lower.includes('machine') || lower.includes('lat pulldown') || lower.includes('leg press') || lower.includes('leg curl') || lower.includes('leg extension')){
-    _barWeight = 0;
-  }
+  if(!_isPlateLoaded(ex)) return;
   document.getElementById('plateCalcMod').classList.add('open');
   renderPlateCalc();
 }
@@ -14431,11 +14446,11 @@ function renderMiniPlateViz(){
   if(!el) return;
   const ex = sessExs[curIdx];
 
-  // Hide for BW, timed, or non-barbell exercises
-  if(!ex || ex.bw){ el.style.display='none'; return; }
-  const lower = ex.name.toLowerCase();
-  const isNonBarbell = lower.includes('dumbbell')||lower.includes('cable')||lower.includes('machine')||lower.includes('lat pulldown')||lower.includes('leg press')||lower.includes('leg curl')||lower.includes('leg extension');
-  if(isNonBarbell){ el.style.display='none'; return; }
+  // Hide for anything that isn't a plate-loaded barbell movement. The old
+  // name-substring blocklist missed dumbbell exercises whose names lack the
+  // word (Hammer Curls, Lateral Raises, Goblet Squats, kettlebell moves…) —
+  // the shared predicate uses the real equipment classification instead.
+  if(!_isPlateLoaded(ex)){ el.style.display='none'; return; }
 
   const wt = parseFloat(document.getElementById('currWt').textContent);
   if(!wt || wt<=0){ el.style.display='none'; return; }
