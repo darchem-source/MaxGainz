@@ -304,6 +304,25 @@ eq('measure: ignores zero/negative values', _measureDelta([{date:'2026-01-01', c
 eq('measure: change rounds to 0.1', _measureDelta([{date:'2026-01-01', chest:100.04},{date:'2026-02-01', chest:101.07}], 'chest').change, 1);
 ok('measure: tolerates null/undefined entries', _measureDelta([null, undefined, {date:'2026-01-01', chest:100}], 'chest').count===1);
 
+// ── exercise demo clips: _exVideoEntry / _exVideoPickSex ──
+var VMAP = {'Bench Press':'barbell-bench-press', 'Plank':'front-plank|f', 'Dips':'dips|m'};
+eq('video: exact hit', _exVideoEntry('Bench Press', VMAP).slug, 'barbell-bench-press');
+eq('video: exact hit g=mf', _exVideoEntry('Bench Press', VMAP).g, 'mf');
+eq('video: case-insensitive hit', _exVideoEntry('bench press', VMAP).slug, 'barbell-bench-press');
+eq('video: miss → null', _exVideoEntry('Nonexistent', VMAP), null);
+eq('video: empty name → null', _exVideoEntry('', VMAP), null);
+eq('video: null map → null', _exVideoEntry('Bench Press', null), null);
+eq('video: female-only parse', _exVideoEntry('Plank', VMAP).g, 'f');
+eq('video: male-only parse', _exVideoEntry('Dips', VMAP).g, 'm');
+eq('video: female-only slug strips |f suffix', _exVideoEntry('Plank', VMAP).slug, 'front-plank');
+eq('video: male-only slug strips |m suffix', _exVideoEntry('Dips', VMAP).slug, 'dips');
+eq('video: pick mf+male', _exVideoPickSex('mf','male'), 'male');
+eq('video: pick mf+female', _exVideoPickSex('mf','female'), 'female');
+eq('video: pick m-only ignores female pref', _exVideoPickSex('m','female'), 'male');
+eq('video: pick f-only ignores male pref', _exVideoPickSex('f','male'), 'female');
+eq('video: pick invalid g → null', _exVideoPickSex('','male'), null);
+eq('video: pick mf+garbage pref → male', _exVideoPickSex('mf', undefined), 'male');
+
 JSON.stringify(fails);
 """
 
@@ -326,7 +345,7 @@ def gate_invariants(js):
                'getMaxWeeklySessions', 'calcWeekStreak', 'getLongestWeekStreak', '_localYMD',
                '_sessionKey', '_mergeSessions', '_validateSession',
                'getLiftState', '_leanFor', 'snapToSteps', 'stepWeight', 'calc1RM', 'parseRepTarget',
-               '_comebackEvents', '_measureDelta']:
+               '_comebackEvents', '_measureDelta', '_exVideoEntry', '_exVideoPickSex']:
         src = extract_decl(js, fn)
         if not src:
             print(f'  ✗ could not extract function {fn}'); return False
@@ -343,16 +362,40 @@ def gate_invariants(js):
     print('  ✓ all XP / rank / week-key invariants hold')
     return True
 
+def gate_videomap(js):
+    """Validate the real EX_VIDEO_MAP literal: value format, unique non-empty
+    keys, and a sane entry count. Catches malformed hand-edits (space in a
+    slug, missing quote, duplicated key) that the JS parse gate can't."""
+    m = re.search(r'const EX_VIDEO_MAP = \{(.*?)\n\};', js, re.S)
+    if not m:
+        print('  ✗ EX_VIDEO_MAP literal not found'); return False
+    body = m.group(1)
+    entries = re.findall(r"'((?:[^'\\]|\\.)+)':\s*'((?:[^'\\]|\\.)+)',", body)
+    if len(entries) < 90:
+        print(f'  ✗ EX_VIDEO_MAP has only {len(entries)} entries (expected >= 90)'); return False
+    bad = [(k, v) for k, v in entries if not re.fullmatch(r'[a-z0-9-]+(\|[mf])?', v)]
+    if bad:
+        for k, v in bad[:5]: print(f'  ✗ malformed map value: {k!r}: {v!r}')
+        return False
+    keys = [k for k, _ in entries]
+    dupes = {k for k in keys if keys.count(k) > 1}
+    if dupes:
+        print(f'  ✗ duplicate map keys: {sorted(dupes)[:5]}'); return False
+    print(f'  ✓ EX_VIDEO_MAP well-formed ({len(entries)} entries, unique keys)')
+    return True
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/2] parse')
+    print('[1/3] parse')
     p = gate_parse(js)
-    print('[2/2] invariants')
+    print('[2/3] invariants')
     inv = gate_invariants(js)
+    print('[3/3] video map')
+    vm = gate_videomap(js)
     print()
-    if p and inv:
+    if p and inv and vm:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 

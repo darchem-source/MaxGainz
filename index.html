@@ -1321,13 +1321,13 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 </div>
 
 <!-- FORM GUIDE MODAL -->
-<div class="modal-ov" id="formGuideMod" onclick="if(event.target===this)this.classList.remove('open')">
+<div class="modal-ov" id="formGuideMod" onclick="if(event.target===this)closeFormGuide()">
   <div class="modal" style="max-height:80vh;overflow-y:auto;">
     <div class="modal-handle"></div>
     <div style="font-size:19px;font-weight:800;margin-bottom:4px;" id="formGuideTitle">Form Guide</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:14px;" id="formGuideSub"></div>
     <div id="formGuideContent"></div>
-    <button class="btn-p" style="width:100%;margin-top:12px;" onclick="document.getElementById('formGuideMod').classList.remove('open')">Got it</button>
+    <button class="btn-p" style="width:100%;margin-top:12px;" onclick="closeFormGuide()">Got it</button>
   </div>
 </div>
 
@@ -3224,6 +3224,12 @@ function attachLongPress(el, callback, opts){
       drag.modal.style.transform = 'translateY(110%)';
       const ov = drag.overlay, mo = drag.modal;
       setTimeout(() => {
+        // Stop any playing media in the dismissed sheet — display:none does
+        // NOT pause a looping <video>, so a swipe-closed form guide would
+        // keep buffering off-screen forever without this.
+        ov.querySelectorAll('video').forEach(v => {
+          try{ v.pause(); v.removeAttribute('src'); v.load(); }catch(e){}
+        });
         ov.classList.remove('open');
         // Reset for next open (slideUp animation re-runs cleanly)
         mo.style.transform = '';
@@ -3604,7 +3610,8 @@ async function cloudSaveProfile() {
       countdownStyle: userPreferences.countdownStyle || 'beeps',
       runnerLevel:  localStorage.getItem('userRunnerLevel')  || 'intermediate',
       trackRPE:     !!userPreferences.trackRPE,
-      periodize:    !!userPreferences.periodize
+      periodize:    !!userPreferences.periodize,
+      demoSex:      userPreferences.demoSex === 'female' ? 'female' : 'male'
     }
   });
   // Try to upsert — will silently fail if notes column doesn't exist yet
@@ -3744,6 +3751,10 @@ async function cloudLoadAll() {
             if (blob.prefs.periodize !== undefined) {
               userPreferences.periodize = !!blob.prefs.periodize;
               localStorage.setItem('maxgainz_periodize', userPreferences.periodize ? '1' : '0');
+            }
+            if (blob.prefs.demoSex === 'male' || blob.prefs.demoSex === 'female') {
+              userPreferences.demoSex = blob.prefs.demoSex;
+              localStorage.setItem('userDemoSex', blob.prefs.demoSex);
             }
           }
           if (blob.userPath) {
@@ -4254,6 +4265,7 @@ function _buildExportPayload(){
       weightUnit:   lsReadRaw('userWeightUnit')   || 'kg',
       audioEnabled: lsReadRaw('userAudioEnabled') === '1',
       runnerLevel:  lsReadRaw('userRunnerLevel')  || 'intermediate',
+      demoSex:      lsReadRaw('userDemoSex') === 'female' ? 'female' : 'male',
     },
     // Optional UI state
     progSections:  lsRead('maxgainz_progSections', {}),
@@ -4382,6 +4394,7 @@ function applyImportPayload(payload){
   if(p.speedUnit)    { localStorage.setItem('userSpeedUnit',    p.speedUnit);    userPreferences.speedUnit    = p.speedUnit; }
   if(p.runnerLevel)  { localStorage.setItem('userRunnerLevel',  p.runnerLevel);  userPreferences.runnerLevel  = p.runnerLevel; }
   if(p.weightUnit)   { localStorage.setItem('userWeightUnit',   p.weightUnit);   userPreferences.weightUnit   = p.weightUnit; }
+  if(p.demoSex === 'male' || p.demoSex === 'female'){ localStorage.setItem('userDemoSex', p.demoSex); userPreferences.demoSex = p.demoSex; }
   if(p.audioEnabled !== undefined){
     userPreferences.audioEnabled = !!p.audioEnabled;
     localStorage.setItem('userAudioEnabled', userPreferences.audioEnabled ? '1' : '0');
@@ -13604,6 +13617,221 @@ function shouldShowFormGuidePulse(name){
   return !getSeenFormGuideExercises().includes(name);
 }
 
+// ── EXERCISE DEMO CLIPS ──
+// Looping form-demo videos from free-exercise-db-with-videos (amiinwani),
+// hotlinked from its public R2 CDN. Curated name→slug map; exercises without
+// a mapped clip render the form guide exactly as before (no video section).
+// Map values: 'slug' = male+female clips exist; 'slug|m' / 'slug|f' = only one.
+const EX_VIDEO_BASE = 'https://pub-585d42eb1aa64a67aedf483ec328d3fe.r2.dev/';
+const EX_VIDEO_MAP = {
+  'Abductor Machine': 'lever-seated-hip-abduction',
+  'Arnold Press': 'dumbbell-arnold-press',
+  'Barbell Curls': 'barbell-curl',
+  'Barbell Row': 'barbell-underhand-bent-over-row',
+  'Battle Ropes': 'battling-ropes',
+  'Bench Press': 'barbell-bench-press',
+  'Bent Over Barbell Row': 'barbell-underhand-bent-over-row',
+  'Bent-Over Row Burst': 'dumbbell-bent-over-row',
+  'Bicycle Crunch': '45-degree-bycicle-twisting-crunch',
+  'Burpees': 'burpee',
+  'Cable Crossover': 'cable-standing-fly-crossover-fly',
+  'Cable Crunch': 'cable-kneeling-crunch',
+  'Cable Curl': 'cable-standing-inner-curl',
+  'Cable Lateral Raise': 'cable-lateral-raise',
+  'Cable Row': 'cable-straight-back-seated-row-v-grip',
+  'Calf Raises': 'lever-standing-calf-raise',
+  'Chest-Supported Row': 'dumbbell-incline-row',
+  'Chin-Ups': 'reverse-grip-pull-up',
+  'Close Grip Bench': 'barbell-close-grip-bench-press|m',
+  'Concentration Curl': 'dumbbell-concentration-curl',
+  'Crunch': 'crunch-floor-female|f',
+  'Decline Bench Press': 'barbell-decline-bench-press',
+  'Diamond Push-Ups': 'close-grip-push-ups',
+  'Dips': 'chest-dips',
+  'Donkey Calf Raise': 'donkey-calf-raise',
+  'Donkey Kicks': 'band-one-leg-kickback-bent-position',
+  'Dumbbell Bench Press': 'dumbbell-lying-hammer-press',
+  'Dumbbell Bicep Curls': 'dumbbell-biceps-curl',
+  'Dumbbell Curl': 'dumbbell-biceps-curl',
+  'Dumbbell Lunges': 'dumbbell-lunge',
+  'Dumbbell Romanian Deadlift': 'dumbbell-stiff-leg-deadlift',
+  'Dumbbell Row': 'dumbbell-bent-over-row',
+  'Dumbbell Rows': 'dumbbell-bent-over-row',
+  'Dumbbell Shoulder Press': 'dumbbell-bench-seated-press',
+  'EZ Bar Curl': 'ez-barbell-biceps-curl',
+  'Flutter Kicks': 'lying-scissor-kick-female|f',
+  'Front Squat': 'barbell-front-chest-squat',
+  'Glute Bridge': 'hip-raise-bridge|f',
+  'Glute Bridge Hold': 'hip-raise-bridge|f',
+  'Glute Bridges': 'hip-raise-bridge|f',
+  'Glute Kickback': 'lever-standing-rear-kick',
+  'Goblet Squat': 'dumbbell-goblet-squat',
+  'Goblet Squats': 'dumbbell-goblet-squat',
+  'Hack Squat': 'sled-hack-squat',
+  'Hanging Leg Raise': 'hanging-straight-leg-raise',
+  'Incline Bench Press': 'barbell-incline-bench-press',
+  'Incline Dumbbell Curl': 'dumbbell-incline-curl',
+  'Incline Dumbbell Press': 'dumbbell-incline-bench-press',
+  'Incline Press': 'barbell-incline-bench-press',
+  'Inverted Rows': 'inverted-row-between-chairs',
+  'Jog': 'running',
+  'Jump Rope': 'jump-rope',
+  'Jumping Jacks': 'jumping-jack',
+  'Lat Pulldown': 'cable-pulldown',
+  'Lat Pulldown Burst': 'cable-pulldown',
+  'Lateral Raises': 'dumbbell-lateral-raise',
+  'Leg Curls': 'lever-lying-leg-curl',
+  'Leg Extensions': 'lever-leg-extension',
+  'Leg Press': 'lever-horizontal-leg-press',
+  'Leg Raises': 'lying-floor-leg-raise',
+  'Lunges': 'dumbbell-lunge',
+  'Overhead Press': 'military-press',
+  'Overhead Tricep Extension': 'dumbbell-seated-triceps-extension',
+  'Pec Deck': 'lever-pec-deck-fly',
+  'Plank': 'front-plank-female|f',
+  'Plyo Step-Ups': 'jump-step-up',
+  'Preacher Curl': 'dumbbell-seated-preacher-curl',
+  'Pull-Ups': 'chin-ups-pull-ups',
+  'Pulldowns': 'cable-pulldown',
+  'Push-Ups': 'push-ups',
+  'Push-Ups (weighted)': 'push-ups',
+  'Reverse Crunch': 'reverse-crunch-female|f',
+  'Reverse Fly': 'cable-crossover-reverse-fly',
+  'Russian Twists': 'seated-twist-straight-arm|f',
+  'Seated Calf Raise': 'lever-seated-calf-raise',
+  'Seated Dumbbell Press': 'dumbbell-bench-seated-press',
+  'Shrugs': 'barbell-shrug',
+  'Side Plank': 'side-bridge-side-plank',
+  'Side Plank (Left)': 'side-bridge-side-plank',
+  'Side Plank (Right)': 'side-bridge-side-plank',
+  'Sit-Ups': 'sit-ups',
+  'Skull Crushers': 'ez-barbell-lying-triceps-extension',
+  'Sprint': 'running',
+  'Squat': 'classic-barbell-squat',
+  'Standing One-Arm Cable Curl': 'cable-one-arm-curl',
+  'Stiff-Leg Deadlift': 'barbell-straight-leg-deadlift',
+  'Straight Arm Pulldown': 'cable-straight-arm-pulldown',
+  'T-Bar Row': 'lever-t-bar-row',
+  'TRX Rows': 'inverted-row-with-straps',
+  'Tricep Pushdown': 'cable-triceps-pushdown',
+  'Triceps Extension': 'dumbbell-seated-triceps-extension',
+  'Triceps Pushdowns': 'cable-triceps-pushdown',
+  'Upright Row': 'barbell-upright-row-wide-grip',
+  'V-Ups': 'v-up',
+  'Walking Lunges': 'dumbbell-lunge',
+};
+
+// Pure: resolve an exercise name to {slug, g} ('mf'|'m'|'f') or null.
+// Exact key match first, then case-insensitive.
+function _exVideoEntry(name, map){
+  if(!name || !map) return null;
+  let raw = map[name];
+  if(raw === undefined){
+    const low = String(name).toLowerCase();
+    for(const k in map){ if(k.toLowerCase() === low){ raw = map[k]; break; } }
+  }
+  if(typeof raw !== 'string' || !raw) return null;
+  const parts = raw.split('|');
+  const slug = parts[0];
+  if(!slug) return null;
+  const g = parts[1] === 'm' ? 'm' : parts[1] === 'f' ? 'f' : 'mf';
+  return { slug, g };
+}
+// Pure: which clip sex to use given availability g ('mf'|'m'|'f') and the
+// user's preference ('male'|'female'). Falls back to whichever exists.
+function _exVideoPickSex(g, pref){
+  if(g === 'm') return 'male';
+  if(g === 'f') return 'female';
+  if(g === 'mf') return pref === 'female' ? 'female' : 'male';
+  return null;
+}
+
+function _demoSexPref(){
+  return (typeof userPreferences === 'object' && userPreferences && userPreferences.demoSex === 'female') ? 'female' : 'male';
+}
+// Build the video block html for the form guide, or '' when no clip is mapped.
+function _exVideoBlockHtml(name){
+  const entry = _exVideoEntry(name, EX_VIDEO_MAP);
+  if(!entry) return '';
+  const sex = _exVideoPickSex(entry.g, _demoSexPref());
+  if(!sex) return '';
+  const src = `${EX_VIDEO_BASE}exercise-videos/${sex}/${entry.slug}.mp4`;
+  const poster = `${EX_VIDEO_BASE}exercise-posters/${sex}/${entry.slug}.jpg`;
+  // ♂/♀ toggle only when both clips exist.
+  const toggle = entry.g === 'mf' ? `
+    <div style="position:absolute;top:8px;right:8px;display:flex;gap:6px;">
+      <button id="fgSexM" onclick="setDemoSex('male')" style="border:none;border-radius:9px;padding:8px 14px;font-size:13px;font-weight:800;cursor:pointer;background:${sex==='male'?'var(--accent)':'rgba(0,0,0,0.55)'};color:${sex==='male'?'#000':'#fff'};">♂</button>
+      <button id="fgSexF" onclick="setDemoSex('female')" style="border:none;border-radius:9px;padding:8px 14px;font-size:13px;font-weight:800;cursor:pointer;background:${sex==='female'?'var(--accent)':'rgba(0,0,0,0.55)'};color:${sex==='female'?'#000':'#fff'};">♀</button>
+    </div>` : '';
+  return `
+    <div id="fgVideoWrap" data-slug="${entry.slug}" data-g="${entry.g}" data-sex="${sex}" style="position:relative;border-radius:12px;overflow:hidden;margin-bottom:14px;background:#000;">
+      <video id="fgVideo" src="${src}" poster="${poster}" muted loop autoplay playsinline webkit-playsinline preload="metadata"
+        onerror="_fgVideoError()"
+        style="width:100%;aspect-ratio:16/9;display:block;object-fit:cover;"></video>
+      ${toggle}
+    </div>`;
+}
+// Video load failed. If both sexes exist and we haven't retried yet, fall back
+// to the OTHER sex's clip once (a bad per-sex file must not permanently hide
+// the demo — the toggle lives inside the wrap, so hiding it would strand the
+// user with no way back). Only after the retry also fails do we hide the wrap.
+function _fgVideoError(){
+  const wrap = document.getElementById('fgVideoWrap');
+  const v = document.getElementById('fgVideo');
+  if(!wrap || !v){ if(wrap) wrap.style.display = 'none'; return; }
+  // Ignore the phantom error fired by closeFormGuide's src removal.
+  if(!v.getAttribute('src')) return;
+  const g = wrap.getAttribute('data-g');
+  const cur = wrap.getAttribute('data-sex');
+  if(g === 'mf' && !wrap.getAttribute('data-retried')){
+    wrap.setAttribute('data-retried', '1');
+    const other = cur === 'male' ? 'female' : 'male';
+    const slug = wrap.getAttribute('data-slug');
+    wrap.setAttribute('data-sex', other);
+    v.src = `${EX_VIDEO_BASE}exercise-videos/${other}/${slug}.mp4`;
+    v.poster = `${EX_VIDEO_BASE}exercise-posters/${other}/${slug}.jpg`;
+    v.muted = true;
+    try{ v.play().catch(()=>{}); }catch(e){}
+    return;
+  }
+  wrap.style.display = 'none';
+}
+// Toggle male/female demo clips — persists as a synced preference and swaps
+// the playing clip in place.
+function setDemoSex(sex){
+  if(sex !== 'male' && sex !== 'female') return;
+  const changed = !(typeof userPreferences === 'object' && userPreferences && userPreferences.demoSex === sex);
+  if(typeof userPreferences === 'object' && userPreferences) userPreferences.demoSex = sex;
+  try{ localStorage.setItem('userDemoSex', sex); }catch(e){}
+  // Only sync when the value actually changed — this toggle is tap-happy and
+  // each cloudSaveProfile serializes the full profile blob.
+  if(changed && typeof cloudSaveProfile === 'function') cloudSaveProfile();
+  const wrap = document.getElementById('fgVideoWrap');
+  const v = document.getElementById('fgVideo');
+  if(!wrap || !v) return;
+  const slug = wrap.getAttribute('data-slug');
+  if(!slug) return;
+  // Manual toggle: un-hide a wrap a previous load error hid, and grant the
+  // error handler a fresh one-shot retry budget.
+  wrap.style.display = '';
+  wrap.removeAttribute('data-retried');
+  wrap.setAttribute('data-sex', sex);
+  v.src = `${EX_VIDEO_BASE}exercise-videos/${sex}/${slug}.mp4`;
+  v.poster = `${EX_VIDEO_BASE}exercise-posters/${sex}/${slug}.jpg`;
+  v.muted = true;
+  try{ v.play().catch(()=>{}); }catch(e){}
+  const bM = document.getElementById('fgSexM'), bF = document.getElementById('fgSexF');
+  if(bM){ bM.style.background = sex==='male' ? 'var(--accent)' : 'rgba(0,0,0,0.55)'; bM.style.color = sex==='male' ? '#000' : '#fff'; }
+  if(bF){ bF.style.background = sex==='female' ? 'var(--accent)' : 'rgba(0,0,0,0.55)'; bF.style.color = sex==='female' ? '#000' : '#fff'; }
+}
+// Close the form guide AND stop the clip (pause + drop src so buffering ends).
+function closeFormGuide(){
+  const v = document.getElementById('fgVideo');
+  if(v){ try{ v.pause(); v.removeAttribute('src'); v.load(); }catch(e){} }
+  const m = document.getElementById('formGuideMod');
+  if(m) m.classList.remove('open');
+}
+
 function openFormGuide(){
   const ex = sessExs[curIdx];
   if(!ex) return;
@@ -13620,8 +13848,10 @@ function openFormGuide(){
   document.getElementById('formGuideSub').textContent = dbEx ? dbEx.equip + ' · ' + dbEx.muscles.join(', ') : 'Form cues';
   
   const content = document.getElementById('formGuideContent');
+  // Demo clip (when mapped) sits at the top of the sheet, above "Why this lift".
+  const videoHtml = (typeof _exVideoBlockHtml === 'function') ? _exVideoBlockHtml(ex.name) : '';
   if(dbEx){
-    let html = '';
+    let html = videoHtml;
     if(dbEx.benefits){
       html += `<div style="background:rgba(200,255,0,0.08);border:0.5px solid rgba(200,255,0,0.25);border-radius:10px;padding:10px 12px;margin-bottom:14px;">
         <div style="font-size:10px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:4px;">⭐ WHY THIS LIFT</div>
@@ -13642,9 +13872,13 @@ function openFormGuide(){
     }
     content.innerHTML = html;
   } else {
-    content.innerHTML = '<div style="text-align:center;padding:24px 12px;color:var(--text2);font-size:13px;">No form guide available for this exercise yet.</div>';
+    content.innerHTML = videoHtml + '<div style="text-align:center;padding:24px 12px;color:var(--text2);font-size:13px;">No form guide available for this exercise yet.</div>';
   }
   document.getElementById('formGuideMod').classList.add('open');
+  // Kick playback once visible — some browsers won't autoplay a video that
+  // was inserted while its container was display:none.
+  const fgv = document.getElementById('fgVideo');
+  if(fgv){ fgv.muted = true; try{ fgv.play().catch(()=>{}); }catch(e){} }
 }
 
 // ── EXERCISE NOTES ──
@@ -21277,7 +21511,9 @@ let userPreferences = {
   trackRPE:     localStorage.getItem('maxgainz_trackRPE') === '1',
   // Opt-in light periodization (default OFF) — a rolling 4-week
   // accumulate→intensify→recover rhythm that softens borderline increases.
-  periodize:    localStorage.getItem('maxgainz_periodize') === '1'
+  periodize:    localStorage.getItem('maxgainz_periodize') === '1',
+  // Demo-clip preference for the form guide (♂/♀ toggle on the video).
+  demoSex:      localStorage.getItem('userDemoSex') === 'female' ? 'female' : 'male'
 };
 
 // ── BUNDLED COUNTDOWN VOICE ──
