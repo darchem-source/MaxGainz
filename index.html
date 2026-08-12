@@ -1552,7 +1552,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
     </div>
     <div class="rep-custom-row">
       <input type="number" class="rep-custom-inp" id="repCustom" placeholder="Custom #" min="1" max="100" onkeydown="if(event.key==='Enter')confirmReps()">
-      <button class="btn-p" style="padding:12px 20px;" onclick="confirmReps()">Log ✓</button>
+      <button class="btn-p" id="repLogBtn" style="padding:12px 20px;" onclick="confirmReps()">Log ✓</button>
     </div>
   </div>
 </div>
@@ -7047,6 +7047,15 @@ function openCoreRoundLog(roundIdx){
     </div>`).join('');
   // Hide the weight section
   document.querySelector('#repMod .wadj-btn')&&(document.querySelector('#repMod div[style*="margin-bottom:14px"]')&&(document.querySelector('#repMod div[style*="margin-bottom:14px"]').style.display='none'));
+  // Round mode: the custom-rep number input is meaningless — confirmReps
+  // ignores it for rounds (completion is Done/Partial/Failed per exercise).
+  // It only ever showed a stale prefill from the last regular set, which
+  // read as an unexplained number next to the Log button. Hide it, let the
+  // button fill the row, and relabel it. Also hide the RPE row that a
+  // previous set-log may have left visible.
+  const _rcInp=document.getElementById('repCustom'); if(_rcInp) _rcInp.style.display='none';
+  const _rcBtn=document.getElementById('repLogBtn'); if(_rcBtn){ _rcBtn.textContent='Log round ✓'; _rcBtn.style.flex='1'; }
+  const _rcRpe=document.getElementById('repRpeRow'); if(_rcRpe) _rcRpe.style.display='none';
   pendingRepSetIdx=roundIdx;
   pendingIsCoreRound=true;
   document.getElementById('repMod').classList.add('open');
@@ -8799,6 +8808,10 @@ function openRepInput(setIdx){
   }
   document.getElementById('repGrid').innerHTML=nums.map(n=>`<div class="rep-btn ${n===defaultReps?'sel':''}" onclick="selectRep(${n},this)">${n}</div>`).join('');
   document.getElementById('repCustom').value=defaultReps||'';
+  // Restore the pieces round-mode (openCoreRoundLog) hides/relabels — the
+  // modal element is shared between the two flows.
+  document.getElementById('repCustom').style.display='';
+  const _rlBtn=document.getElementById('repLogBtn'); if(_rlBtn){ _rlBtn.textContent='Log ✓'; _rlBtn.style.flex=''; }
   // Per-set weight: use last completed set's weight, fall back to exercise weight
   let sw;
   if(setIdx>0){
