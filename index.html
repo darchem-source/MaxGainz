@@ -1814,6 +1814,45 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
   </div>
 </div>
 
+<!-- FINISH OPTIONS (cooldown chooser) -->
+<div class="modal-ov" id="finishOptionsMod" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal" style="max-width:340px;">
+    <div class="modal-handle"></div>
+    <div style="font-size:17px;font-weight:800;margin-bottom:4px;">Finish session?</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:16px;">Wind down with a guided stretch for the muscles you just trained (about 5 minutes), or save straight away.</div>
+    <button onclick="startCooldown()" style="width:100%;background:var(--accent);border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:800;color:#000;cursor:pointer;margin-bottom:8px;">🧘 Cooldown first (~5 min)</button>
+    <button onclick="document.getElementById('finishOptionsMod').classList.remove('open');finishSession();" style="width:100%;background:var(--green);border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:800;color:#000;cursor:pointer;margin-bottom:8px;">🏁 Finish now</button>
+    <button onclick="document.getElementById('finishOptionsMod').classList.remove('open')" style="width:100%;background:transparent;border:0.5px solid var(--border);border-radius:12px;padding:12px;font-size:13px;font-weight:700;color:var(--text2);cursor:pointer;">Keep training</button>
+  </div>
+</div>
+
+<!-- COOLDOWN PLAYER (no overlay-tap close — ending is an explicit choice) -->
+<div class="modal-ov" id="cooldownMod">
+  <div class="modal" style="max-width:380px;">
+    <!-- no .modal-handle: swipe-dismiss would leave the cooldown timer running
+         hidden and auto-finish the session later — ending is button-only -->
+    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:2px;">
+      <div style="font-size:11px;font-weight:800;color:var(--accent2);text-transform:uppercase;letter-spacing:1.5px;">🧘 Cooldown</div>
+      <div id="cooldownProg" style="font-size:12px;color:var(--text2);font-weight:700;">1 / 6</div>
+    </div>
+    <div id="cooldownName" style="font-size:18px;font-weight:800;margin-bottom:10px;">Stretch</div>
+    <div id="cooldownVideoWrap" style="position:relative;border-radius:12px;overflow:hidden;background:#000;margin-bottom:12px;">
+      <video id="cooldownVideo" muted loop autoplay playsinline webkit-playsinline preload="metadata"
+        onerror="_cooldownVideoError(this)"
+        style="width:100%;aspect-ratio:16/9;display:block;object-fit:cover;"></video>
+    </div>
+    <div style="text-align:center;margin-bottom:14px;">
+      <div id="cooldownTimer" style="font-size:44px;font-weight:900;color:var(--accent);font-family:monospace;line-height:1;">45s</div>
+      <div style="font-size:11px;color:var(--text2);margin-top:4px;">Breathe slow — no bouncing</div>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button id="cooldownSkipBtn" onclick="skipCooldownStretch()" style="flex:1;background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:13px;font-size:14px;font-weight:700;color:var(--text);cursor:pointer;">Skip →</button>
+      <button onclick="endCooldownAndFinish()" style="flex:1;background:var(--green);border:none;border-radius:12px;padding:13px;font-size:14px;font-weight:800;color:#000;cursor:pointer;">🏁 Finish</button>
+    </div>
+    <button onclick="exitCooldownToTraining()" style="width:100%;margin-top:8px;background:transparent;border:none;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;padding:8px;">← Back to training (don't finish)</button>
+  </div>
+</div>
+
 <!-- CELEBRATE ALERT -->
 <div class="celebrate-alert" id="celebrateAlert">
   <!-- Lottie burst (lazy-loaded). Falls back to emoji below if lottie fails. -->
@@ -5278,6 +5317,7 @@ function beginSession(){
 function startSessionULF(day){
   stopRest(); window._restStoppedManually=false; // clean slate before new session
   window._prShownThisSession = new Map(); clearTimeout(window._pulsePendingTimer); window._pulsePendingTimer = null; const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
+  window._sessionFinalized = false;
   sessProgKey = 'ULF'; window._nextProgKey = null;
   const exs=getULFDay(day);
   sessDay=day; sessExs=applyExerciseRotation(exs, day, 'ULF');
@@ -5531,6 +5571,7 @@ function startSession(day,prog){
   window._prShownThisSession = new Map(); clearTimeout(window._pulsePendingTimer); window._pulsePendingTimer = null; const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
   // Programme identity for this session — scopes rotation cycles and is saved
   // on the session. Library callers pre-set window._nextProgKey (consumed here).
+  window._sessionFinalized = false;
   sessProgKey = window._nextProgKey || (prog === PPL ? 'PPL' : null);
   window._nextProgKey = null;
   sessDay=day; sessExs=applyExerciseRotation(prog[day].map(e=>({...e})), day, sessProgKey);
@@ -10445,7 +10486,7 @@ function showCelebrate(){
       const celebBtn = document.getElementById('celebBtn');
       if(isSessionLast){
         celebBtn.textContent = 'OK ✓';
-        celebBtn.onclick = finishSession;
+        celebBtn.onclick = function(){ dismissCelebrate(); confirmFinishSession(); };
       } else {
         celebBtn.textContent = 'Next exercise →';
         celebBtn.onclick = celebrateNext;
@@ -10511,7 +10552,7 @@ function showCelebrate(){
   const celebBtn = document.getElementById('celebBtn');
   if(isSessionLast){
     celebBtn.textContent = 'OK ✓';
-    celebBtn.onclick = finishSession;  // Change onclick to finish instead of advance
+    celebBtn.onclick = function(){ dismissCelebrate(); confirmFinishSession(); };  // Finish via the chooser (cooldown offer)
   } else {
     celebBtn.textContent = 'Next exercise →';
     celebBtn.onclick = celebrateNext;  // Normal advance
@@ -10668,13 +10709,196 @@ function renderSessionExerciseList(){
   listDiv.innerHTML = html || '<div style="color:var(--text2);font-size:11px;text-align:center;">All exercises complete ✓</div>';
 }
 
-// ── FINISH SESSION ──
-// Button-only wrapper that adds a confirmation prompt before finishing, so
-// an accidental tap on the green "🏁 Finish & Save Session" button doesn't
-// end the workout. Programmatic callers (AMRAP/EMOM auto-finish, etc.) keep
-// calling finishSession() directly and skip the prompt.
+// ── FINISH SESSION + OPTIONAL COOLDOWN ──
+// The green finish button opens a chooser: an optional 5-minute guided
+// stretch cooldown targeting the muscle groups this session trained, or
+// finish immediately. Programmatic callers (AMRAP/EMOM auto-finish, etc.)
+// still call finishSession() directly and skip both.
 function confirmFinishSession(){
-  if(!confirm('Finish this session and save your progress?')) return;
+  // AMRAP needs its rounds confirmed while the count is fresh — use the
+  // original confirm flow and skip the cooldown chooser entirely.
+  const _isAMRAP = (typeof HIIT !== 'undefined') && HIIT.some(h => h.name === sessDay && h.amrapMinutes);
+  const m = document.getElementById('finishOptionsMod');
+  if(_isAMRAP || !m){ if(confirm('Finish this session and save your progress?')) finishSession(); return; }
+  m.classList.add('open');
+}
+
+// Stretch library for the cooldown — every entry has a demo clip on the same
+// CDN as the exercise videos. groups = which trained areas the stretch serves.
+const COOLDOWN_STRETCHES = [
+  {name:'Dynamic Chest Stretch', slug:'stretching-dynamic-chest-stretch', g:'mf', groups:['push']},
+  {name:'Overhead Chest Stretch', slug:'stretching-above-head-chest-stretch', g:'mf', groups:['push']},
+  {name:'Rear Deltoid Stretch', slug:'stretching-rear-deltoid-stretch', g:'mf', groups:['push','pull']},
+  {name:'Kneeling Triceps Stretch', slug:'stretching-kneeling-triceps-extension', g:'mf', groups:['push']},
+  {name:'Standing Reach-Up Rotation', slug:'stretching-standing-reach-up-back-rotation-stretch', g:'mf', groups:['push','pull']},
+  {name:'Kneeling Back Rotation Stretch', slug:'stretching-kneeling-back-rotation-stretch', g:'mf', groups:['push','core']},
+  {name:'Kneeling Lat Stretch', slug:'stretching-kneeling-lat-stretch', g:'mf', groups:['pull']},
+  {name:'Seated Bent Over Back Stretch', slug:'stretching-sitting-bent-over-back-stretch', g:'mf', groups:['pull']},
+  {name:'Seated Lower Back Stretch', slug:'stretching-seated-lower-back-stretch', g:'mf', groups:['pull','core']},
+  {name:'Standing Back Rotation Stretch', slug:'stretching-standing-back-rotation-stretch', g:'mf', groups:['pull','core']},
+  {name:'Standing Hamstring Stretch', slug:'stretching-hamstring-stretch', g:'mf', groups:['legs']},
+  {name:'Standing Quadriceps Stretch', slug:'stretching-quadriceps-stretch', g:'mf', groups:['legs']},
+  {name:'Hip Flexor & Quad Stretch', slug:'stretching-hip-flexor-and-quad-stretch', g:'mf', groups:['legs','core']},
+  {name:'Runners Stretch', slug:'stretching-runners-stretch', g:'mf', groups:['legs']},
+  {name:'Standing Adductor Stretch', slug:'stretching-adductor-stretch', g:'mf', groups:['legs']},
+  {name:'Standing Bench Calf Stretch', slug:'stretching-standing-bench-calf-stretch', g:'mf', groups:['legs']},
+  {name:'Seated Calf Stretch', slug:'stretching-seated-calf-stretch', g:'mf', groups:['legs']},
+  {name:'Flexion Leg Sit-Up Stretch', slug:'stretching-flexion-leg-sit-up', g:'mf', groups:['core']},
+  {name:'Seated Twist Stretch', slug:'stretching-seated-twist-straight-arm', g:'mf', groups:['core']},
+  {name:'Iron Cross Stretch', slug:'stretching-iron-cross-stretch', g:'mf', groups:['core','legs']},
+];
+const COOLDOWN_STRETCH_SECS = 45;
+const COOLDOWN_COUNT = 6;
+
+// Pure: pick `count` stretches covering the trained groups, cycling round-
+// robin across the groups for even coverage; unique picks only. seed rotates
+// the starting pick within each group so repeat days vary a little.
+function _buildCooldown(groups, seed, lib, count, weights){
+  const L = Array.isArray(lib) ? lib : [];
+  const n = (typeof count === 'number' && count > 0) ? count : 6;
+  let gs = Array.isArray(groups) ? groups.filter(g => ['push','pull','legs','core'].indexOf(g) >= 0) : [];
+  if(!gs.length) gs = ['push','pull','legs','core'];
+  const s = Math.abs(Math.floor(Number(seed) || 0));
+  const byGroup = {};
+  gs.forEach(g => { byGroup[g] = L.filter(x => x && Array.isArray(x.groups) && x.groups.indexOf(g) >= 0); });
+  // Per-group quotas ∝ trained volume share (equal when no weights supplied),
+  // largest-remainder rounding, every group guaranteed ≥1. A leg-dominant day
+  // gets a leg-dominant cooldown instead of a flat round-robin.
+  const w = {};
+  let wSum = 0;
+  gs.forEach((g, i) => { const v = (weights && typeof weights[g] === 'number' && weights[g] > 0) ? weights[g] : 1; w[g] = v; wSum += v; });
+  const quota = {}, frac = [];
+  let assigned = 0;
+  gs.forEach(g => { const exact = n * w[g] / wSum; quota[g] = Math.max(1, Math.floor(exact)); assigned += quota[g]; frac.push([exact - Math.floor(exact), g]); });
+  frac.sort((a, b) => b[0] - a[0]);
+  for(let i = 0; assigned < n && i < frac.length; i++){ quota[frac[i][1]]++; assigned++; }
+  const out = [], used = new Set(), idx = {};
+  gs.forEach(g => { idx[g] = (byGroup[g] || []).length ? s % byGroup[g].length : 0; });
+  const sorted = gs.slice().sort((a, b) => w[b] - w[a]);
+  for(const g of sorted){
+    const pool = byGroup[g] || [];
+    let taken = 0;
+    for(let k = 0; k < pool.length && taken < quota[g] && out.length < n; k++){
+      const cand = pool[(idx[g] + k) % pool.length];
+      if(!used.has(cand.slug)){ used.add(cand.slug); out.push(cand); taken++; }
+    }
+  }
+  // Top up from the whole library when the targeted pools ran dry, so a
+  // push-only day still gets a full-length cooldown.
+  for(let k = 0; out.length < n && k < L.length; k++){
+    const cand = L[(s + k) % L.length];
+    if(cand && cand.slug && !used.has(cand.slug)){ used.add(cand.slug); out.push(cand); }
+  }
+  return out;
+}
+
+// Which broad groups did this session actually train? Sets logged → those
+// exercises; nothing logged yet → every planned exercise.
+function _sessionTrainedGroups(){
+  const weights = {};
+  const add = (name) => {
+    const sp = (typeof getSplits === 'function') ? getSplits(name) : null;
+    if(sp) sp.forEach(x => { if(x && x.f >= 0.3) weights[x.cat] = (weights[x.cat] || 0) + x.f; });
+  };
+  let any = false;
+  sessExs.forEach((ex, i) => { if((setsDone[i]||[]).length > 0){ add(ex.name); any = true; } });
+  if(!any) sessExs.forEach(ex => add(ex.name));
+  return { groups: Object.keys(weights), weights };
+}
+
+let _cooldownState = null; // {list, idx, startMs}
+function startCooldown(){
+  const fm = document.getElementById('finishOptionsMod');
+  if(fm) fm.classList.remove('open');
+  // The user has decided to finish — silence any still-running workout timers
+  // (EMOM dings, AMRAP countdown speech, rest timer) before the stretches.
+  if(typeof stopAmrapEmomTimers === 'function') stopAmrapEmomTimers();
+  if(typeof stopRest === 'function') stopRest();
+  const now = new Date();
+  const dayIdx = Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 86400000);
+  const trained = _sessionTrainedGroups();
+  const list = _buildCooldown(trained.groups, dayIdx, COOLDOWN_STRETCHES, COOLDOWN_COUNT, trained.weights);
+  const m = document.getElementById('cooldownMod');
+  if(!list.length || !m){ finishSession(); return; }
+  // Wall-clock anchored (like the session timer): stretch index derives from
+  // elapsed real time, so a locked screen can't freeze the countdown.
+  _cooldownState = { list, idx: 0, startMs: Date.now() };
+  m.classList.add('open');
+  _renderCooldownStretch();
+  startTimer('cooldown', _cooldownTick, 500);
+}
+function _cooldownTick(){
+  if(!_cooldownState) return;
+  const elapsed = (Date.now() - _cooldownState.startMs) / 1000;
+  const idx = Math.floor(elapsed / COOLDOWN_STRETCH_SECS);
+  if(idx >= _cooldownState.list.length){ endCooldownAndFinish(); return; }
+  if(idx !== _cooldownState.idx){ _cooldownState.idx = idx; _renderCooldownStretch(); }
+  const remain = COOLDOWN_STRETCH_SECS - Math.floor(elapsed % COOLDOWN_STRETCH_SECS);
+  const t = document.getElementById('cooldownTimer');
+  if(t) t.textContent = Math.max(0, remain) + 's';
+}
+function skipCooldownStretch(){
+  if(!_cooldownState) return;
+  // Jump the wall-clock anchor to the start of the next stretch.
+  const elapsed = (Date.now() - _cooldownState.startMs) / 1000;
+  const intoStretch = elapsed % COOLDOWN_STRETCH_SECS;
+  _cooldownState.startMs -= (COOLDOWN_STRETCH_SECS - intoStretch) * 1000;
+  _cooldownTick();
+}
+// Escape hatch: abandon the cooldown WITHOUT saving — back to the session.
+function exitCooldownToTraining(){
+  if(typeof stopTimer === 'function') stopTimer('cooldown');
+  _cooldownState = null;
+  const v = document.getElementById('cooldownVideo');
+  if(v){ try{ v.pause(); v.removeAttribute('src'); v.load(); }catch(e){} }
+  const m = document.getElementById('cooldownMod');
+  if(m) m.classList.remove('open');
+}
+function _renderCooldownStretch(){
+  const st = _cooldownState && _cooldownState.list[_cooldownState.idx];
+  if(!st) return;
+  const nameEl = document.getElementById('cooldownName');
+  const progEl = document.getElementById('cooldownProg');
+  const timerEl = document.getElementById('cooldownTimer');
+  if(nameEl) nameEl.textContent = st.name;
+  if(progEl) progEl.textContent = (_cooldownState.idx + 1) + ' / ' + _cooldownState.list.length;
+  if(timerEl) timerEl.textContent = COOLDOWN_STRETCH_SECS + 's';
+  // On the final stretch, "Skip" would end the session — say so honestly.
+  const skipBtn = document.getElementById('cooldownSkipBtn');
+  if(skipBtn) skipBtn.textContent = (_cooldownState.idx >= _cooldownState.list.length - 1) ? '✓ Done' : 'Skip →';
+  const wrap = document.getElementById('cooldownVideoWrap');
+  const v = document.getElementById('cooldownVideo');
+  if(wrap){ wrap.style.display = ''; wrap.removeAttribute('data-retried'); }
+  if(v){
+    const sex = (typeof _exVideoPickSex === 'function') ? (_exVideoPickSex(st.g || 'mf', (typeof _demoSexPref === 'function') ? _demoSexPref() : 'male') || 'male') : 'male';
+    v.src = `${EX_VIDEO_BASE}exercise-videos/${sex}/${st.slug}.mp4`;
+    v.poster = `${EX_VIDEO_BASE}exercise-posters/${sex}/${st.slug}.jpg`;
+    v.muted = true;
+    try{ v.play().catch(()=>{}); }catch(e){}
+  }
+}
+// Failed clip: retry the other sex once, then hide the player (timer runs on).
+function _cooldownVideoError(v){
+  const wrap = document.getElementById('cooldownVideoWrap');
+  if(!v || !v.getAttribute('src')) return; // phantom fire from src removal
+  if(wrap && !wrap.getAttribute('data-retried')){
+    wrap.setAttribute('data-retried', '1');
+    const other = v.src.indexOf('/male/') >= 0 ? 'female' : 'male';
+    v.src = v.src.replace(/\/(male|female)\//, '/' + other + '/');
+    v.muted = true;
+    try{ v.play().catch(()=>{}); }catch(e){}
+    return;
+  }
+  if(wrap) wrap.style.display = 'none';
+}
+function endCooldownAndFinish(){
+  if(!_cooldownState) return; // already ended (double-tap / stacked path)
+  if(typeof stopTimer === 'function') stopTimer('cooldown');
+  _cooldownState = null;
+  const v = document.getElementById('cooldownVideo');
+  if(v){ try{ v.pause(); v.removeAttribute('src'); v.load(); }catch(e){} }
+  const m = document.getElementById('cooldownMod');
+  if(m) m.classList.remove('open');
   finishSession();
 }
 
@@ -10686,10 +10910,24 @@ function finishSession(){
     return;
   }
   window._amrapConfirmed = false; // reset for next session
-  
+  // Reentrancy guard (sits AFTER the AMRAP branch — that path legitimately
+  // re-enters). Kills double-saves from any stacked finish path, e.g. the
+  // celebrate alert + a still-running cooldown.
+  if(window._sessionFinalized) return;
+  window._sessionFinalized = true;
+
   try{
   // console.log('finishSession: step 1 - cleanup');
   clearInterval(sessInterval);stopRest();dismissCelebrate();releaseWakeLock();stopAmrapEmomTimers();
+  // Cooldown teardown — whatever path finished the session, no timer survives.
+  if(typeof stopTimer === 'function') stopTimer('cooldown');
+  _cooldownState = null;
+  const _cdv = document.getElementById('cooldownVideo');
+  if(_cdv){ try{ _cdv.pause(); _cdv.removeAttribute('src'); _cdv.load(); }catch(e){} }
+  const _cdm = document.getElementById('cooldownMod');
+  if(_cdm) _cdm.classList.remove('open');
+  const _fom = document.getElementById('finishOptionsMod');
+  if(_fom) _fom.classList.remove('open');
   // console.log('finishSession: step 2 - calc volume. sessTimeSec=', sessTimeSec, 'sessExs.length=', sessExs.length);
   const dMin=Math.max(1,Math.round(sessTimeSec/60));
   let volume=0;
@@ -11515,7 +11753,7 @@ function _hiitIconFor(w){
 }
 
 function startHIIT(idx){
-  sessProgKey = 'hiit'; window._nextProgKey = null;
+  window._sessionFinalized = false; sessProgKey = 'hiit'; window._nextProgKey = null;
   const w=HIIT[idx];
   if(!w) return;
   window._prShownThisSession = new Map(); clearTimeout(window._pulsePendingTimer); window._pulsePendingTimer = null; const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
@@ -12593,7 +12831,7 @@ function deleteCustomProgramme(idx){
 }
 
 function startCustomSubSession(progIdx,subIdx){
-  sessProgKey = 'custom'; window._nextProgKey = null;
+  window._sessionFinalized = false; sessProgKey = 'custom'; window._nextProgKey = null;
   const prog=customWorkouts[progIdx];
   const sub=prog.subcategories[subIdx];
   sessDay=sub.name;
@@ -14397,7 +14635,7 @@ function deleteCustomHIIT(idx){
 }
 
 function startCustomHIIT(idx){
-  sessProgKey = 'hiit'; window._nextProgKey = null;
+  window._sessionFinalized = false; sessProgKey = 'hiit'; window._nextProgKey = null;
   const w = customHIITs[idx];
   if(!w) return;
   // Add to the HIIT array temporarily so all the existing session logic finds it
@@ -14615,7 +14853,7 @@ function renderHIITTemplates(){
 }
 
 function runHIITTemplate(name){
-  sessProgKey = 'hiit'; window._nextProgKey = null;
+  window._sessionFinalized = false; sessProgKey = 'hiit'; window._nextProgKey = null;
   const tpl = HIIT_TEMPLATES.find(t => t.name === name);
   if(!tpl){ showToast('⚠️ Template not found'); return; }
   // Build a HIIT object from the template — same shape saveCustomHIIT

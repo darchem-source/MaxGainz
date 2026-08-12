@@ -336,6 +336,23 @@ eq('rotate: null pools → null', _rotatePick('Leg Curls', 1, null), null);
 eq('rotate: empty pool → null', _rotatePick('X', 1, {X: []}), null);
 eq('rotate: garbage cycle → original', _rotatePick('Leg Curls', undefined, RPOOLS), null);
 
+// ── cooldown: _buildCooldown(groups, seed, lib, count) ──
+var CLIB = [
+  {name:'P1',slug:'p1',groups:['push']},{name:'P2',slug:'p2',groups:['push']},
+  {name:'L1',slug:'l1',groups:['legs']},{name:'L2',slug:'l2',groups:['legs']},
+  {name:'C1',slug:'c1',groups:['core']},{name:'B1',slug:'b1',groups:['pull']},
+  {name:'X1',slug:'x1',groups:['core','legs']},
+];
+eq('cooldown: returns requested count', _buildCooldown(['push','legs'], 0, CLIB, 4).length, 4);
+ok('cooldown: unique picks', (function(){ var r=_buildCooldown(['push','legs'],0,CLIB,4), s=new Set(r.map(x=>x.slug)); return s.size===r.length; })());
+ok('cooldown: covers requested groups', (function(){ var r=_buildCooldown(['push','legs'],0,CLIB,4); return r.some(x=>x.groups.includes('push')) && r.some(x=>x.groups.includes('legs')); })());
+eq('cooldown: deterministic (same seed)', JSON.stringify(_buildCooldown(['push','legs'],3,CLIB,4)), JSON.stringify(_buildCooldown(['push','legs'],3,CLIB,4)));
+eq('cooldown: empty groups → all-group fallback still fills', _buildCooldown([], 0, CLIB, 4).length, 4);
+eq('cooldown: unknown groups filtered → fallback', _buildCooldown(['cardio'], 0, CLIB, 3).length, 3);
+ok('cooldown: lib smaller than count → all unique, no hang', (function(){ var r=_buildCooldown(['push'],0,CLIB,10); var s=new Set(r.map(x=>x.slug)); return r.length<=CLIB.length && s.size===r.length; })());
+eq('cooldown: empty lib → empty', _buildCooldown(['push'], 0, [], 6).length, 0);
+ok('cooldown: seed rotates start', (function(){ var a=_buildCooldown(['push'],0,CLIB,1)[0].slug, b=_buildCooldown(['push'],1,CLIB,1)[0].slug; return a!==b; })());
+
 JSON.stringify(fails);
 """
 
@@ -358,7 +375,8 @@ def gate_invariants(js):
                'getMaxWeeklySessions', 'calcWeekStreak', 'getLongestWeekStreak', '_localYMD',
                '_sessionKey', '_mergeSessions', '_validateSession',
                'getLiftState', '_leanFor', 'snapToSteps', 'stepWeight', 'calc1RM', 'parseRepTarget',
-               '_comebackEvents', '_measureDelta', '_exVideoEntry', '_exVideoPickSex', '_rotatePick']:
+               '_comebackEvents', '_measureDelta', '_exVideoEntry', '_exVideoPickSex', '_rotatePick',
+               '_buildCooldown']:
         src = extract_decl(js, fn)
         if not src:
             print(f'  ✗ could not extract function {fn}'); return False
@@ -395,6 +413,15 @@ def gate_videomap(js):
     if dupes:
         print(f'  ✗ duplicate map keys: {sorted(dupes)[:5]}'); return False
     print(f'  ✓ EX_VIDEO_MAP well-formed ({len(entries)} entries, unique keys)')
+    # COOLDOWN_STRETCHES literal: slug format + unique slugs + sane count
+    cm = re.search(r'const COOLDOWN_STRETCHES = \[(.*?)\n\];', js, re.S)
+    if not cm:
+        print('  ✗ COOLDOWN_STRETCHES literal not found'); return False
+    slugs = re.findall(r"slug:'([^']+)'", cm.group(1))
+    cbad = [s for s in slugs if not re.fullmatch(r'[a-z0-9-]+', s)]
+    if cbad or len(slugs) < 12 or len(set(slugs)) != len(slugs):
+        print(f'  ✗ COOLDOWN_STRETCHES invalid (n={len(slugs)}, bad={cbad[:3]}, dupes={len(slugs)-len(set(slugs))})'); return False
+    print(f'  ✓ COOLDOWN_STRETCHES well-formed ({len(slugs)} stretches)')
     return True
 
 def main():
