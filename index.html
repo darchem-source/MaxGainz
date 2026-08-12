@@ -148,11 +148,22 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 #cooldownMod.cooldown-fs #cooldownRotateHint { text-align:center; font-size:12px; color:var(--text2); margin-bottom:8px; }
 @media (orientation: landscape) {
   #cooldownMod.cooldown-fs #cooldownRotateHint { display:none !important; }
-  /* Compact chrome in landscape so the video gets the height */
-  #cooldownMod.cooldown-fs #cooldownName { font-size:15px !important; margin-bottom:4px !important; }
-  #cooldownMod.cooldown-fs #cooldownTimer { font-size:28px !important; }
-  #cooldownMod.cooldown-fs .cooldown-timer-block { margin-bottom:8px !important; }
-  #cooldownMod.cooldown-fs .cooldown-timer-block > div:last-child { display:none; }
+  /* Landscape = side-pane layout: the 16:9 video fills the LEFT ~70% at full
+     viewport height; name, progress, countdown and controls stack in a RIGHT
+     pane — so rotating genuinely gives the clip the whole screen height. */
+  #cooldownMod.cooldown-fs .modal {
+    display:grid;
+    grid-template-columns: minmax(0, 1fr) clamp(220px, 30%, 360px);
+    grid-template-rows: auto auto 1fr auto auto;
+    column-gap:16px;
+  }
+  #cooldownMod.cooldown-fs #cooldownVideoWrap { grid-column:1; grid-row:1 / 6; height:100%; margin-bottom:0 !important; }
+  #cooldownMod.cooldown-fs #cooldownHeader { grid-column:2; grid-row:1; }
+  #cooldownMod.cooldown-fs #cooldownName { grid-column:2; grid-row:2; }
+  #cooldownMod.cooldown-fs .cooldown-timer-block { grid-column:2; grid-row:3; align-self:center; margin-bottom:0 !important; }
+  #cooldownMod.cooldown-fs #cooldownTimer { font-size:56px !important; }
+  #cooldownMod.cooldown-fs .cooldown-actions { grid-column:2; grid-row:4; flex-direction:column; }
+  #cooldownMod.cooldown-fs .cooldown-back { grid-column:2; grid-row:5; }
 }
 @media (orientation: portrait) {
   #cooldownMod.cooldown-fs #cooldownRotateHint { display:block; }
@@ -1866,7 +1877,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
   <div class="modal" style="max-width:380px;">
     <!-- no .modal-handle: swipe-dismiss would leave the cooldown timer running
          hidden and auto-finish the session later — ending is button-only -->
-    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:2px;">
+    <div id="cooldownHeader" style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:2px;">
       <div style="font-size:11px;font-weight:800;color:var(--accent2);text-transform:uppercase;letter-spacing:1.5px;">🧘 Cooldown</div>
       <div id="cooldownProg" style="font-size:12px;color:var(--text2);font-weight:700;">1 / 6</div>
     </div>
@@ -1883,11 +1894,11 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
       <div id="cooldownTimer" style="font-size:44px;font-weight:900;color:var(--accent);font-family:monospace;line-height:1;">45s</div>
       <div style="font-size:11px;color:var(--text2);margin-top:4px;">Breathe slow — no bouncing</div>
     </div>
-    <div style="display:flex;gap:8px;">
+    <div class="cooldown-actions" style="display:flex;gap:8px;">
       <button id="cooldownSkipBtn" onclick="skipCooldownStretch()" style="flex:1;background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:13px;font-size:14px;font-weight:700;color:var(--text);cursor:pointer;">Skip →</button>
       <button onclick="endCooldownAndFinish()" style="flex:1;background:var(--green);border:none;border-radius:12px;padding:13px;font-size:14px;font-weight:800;color:#000;cursor:pointer;">🏁 Finish</button>
     </div>
-    <button onclick="exitCooldownToTraining()" style="width:100%;margin-top:8px;background:transparent;border:none;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;padding:8px;">← Back to training (don't finish)</button>
+    <button class="cooldown-back" onclick="exitCooldownToTraining()" style="width:100%;margin-top:8px;background:transparent;border:none;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;padding:8px;">← Back to training (don't finish)</button>
   </div>
 </div>
 
