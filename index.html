@@ -123,6 +123,41 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 .modal-handle:hover { background:var(--text2); }
 .modal-handle:active { cursor:grabbing; background:var(--text2); }
 .modal-dragging { transition:none !important; }
+/* ── COOLDOWN FULLSCREEN ──
+   CSS-driven "fullscreen" (works on iPhone Safari/PWA where the element
+   Fullscreen API doesn't exist); the native API is layered on opportunistically
+   for Android/desktop. Clips are 16:9 landscape — in portrait we letterbox and
+   hint the user to rotate; all info (name, progress, timer, controls) stays on
+   screen in both orientations. */
+/* NOTE: the cooldown modal's elements are styled INLINE (house pattern), so
+   every colliding declaration here needs !important to actually win. */
+#cooldownMod.cooldown-fs { align-items:stretch; background:#000; backdrop-filter:none; }
+#cooldownMod.cooldown-fs .modal {
+  max-width:none !important; width:100%; max-height:none; border-radius:0;
+  height:100vh; height:100dvh;
+  background:#000; animation:none; display:flex; flex-direction:column;
+  padding:calc(env(safe-area-inset-top, 0px) + 10px)
+          max(16px, env(safe-area-inset-right, 0px))
+          calc(env(safe-area-inset-bottom, 0px) + 10px)
+          max(16px, env(safe-area-inset-left, 0px));
+  overflow:hidden;
+}
+#cooldownMod.cooldown-fs #cooldownVideoWrap { flex:1; min-height:0; border-radius:0 !important; margin-bottom:8px !important; background:#000; }
+#cooldownMod.cooldown-fs #cooldownVideo { width:100%; height:100%; aspect-ratio:auto !important; object-fit:contain !important; }
+#cooldownRotateHint { display:none; }
+#cooldownMod.cooldown-fs #cooldownRotateHint { text-align:center; font-size:12px; color:var(--text2); margin-bottom:8px; }
+@media (orientation: landscape) {
+  #cooldownMod.cooldown-fs #cooldownRotateHint { display:none !important; }
+  /* Compact chrome in landscape so the video gets the height */
+  #cooldownMod.cooldown-fs #cooldownName { font-size:15px !important; margin-bottom:4px !important; }
+  #cooldownMod.cooldown-fs #cooldownTimer { font-size:28px !important; }
+  #cooldownMod.cooldown-fs .cooldown-timer-block { margin-bottom:8px !important; }
+  #cooldownMod.cooldown-fs .cooldown-timer-block > div:last-child { display:none; }
+}
+@media (orientation: portrait) {
+  #cooldownMod.cooldown-fs #cooldownRotateHint { display:block; }
+  #cooldownMod.cooldown-fs #cooldownTimer { font-size:56px !important; }
+}
 /* ── SPLASH SCREEN ── */
 .splash { position:fixed; inset:0; background:#000; z-index:9998; display:flex; flex-direction:column; align-items:center; justify-content:center; transition:opacity 0.8s ease; cursor:pointer; }
 .splash.fade-out { opacity:0; pointer-events:none; }
@@ -1838,10 +1873,13 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
     <div id="cooldownName" style="font-size:18px;font-weight:800;margin-bottom:10px;">Stretch</div>
     <div id="cooldownVideoWrap" style="position:relative;border-radius:12px;overflow:hidden;background:#000;margin-bottom:12px;">
       <video id="cooldownVideo" muted loop autoplay playsinline webkit-playsinline preload="metadata"
-        onerror="_cooldownVideoError(this)"
-        style="width:100%;aspect-ratio:16/9;display:block;object-fit:cover;"></video>
+        onerror="_cooldownVideoError(this)" onclick="toggleCooldownFullscreen()"
+        style="width:100%;aspect-ratio:16/9;display:block;object-fit:cover;cursor:pointer;"></video>
+      <button id="cooldownFsBtn" onclick="toggleCooldownFullscreen()" aria-label="Toggle fullscreen"
+        style="position:absolute;top:8px;right:8px;border:none;border-radius:9px;padding:8px 12px;font-size:15px;font-weight:800;cursor:pointer;background:rgba(0,0,0,0.55);color:#fff;line-height:1;">⛶</button>
     </div>
-    <div style="text-align:center;margin-bottom:14px;">
+    <div id="cooldownRotateHint">📱 Rotate your phone for a bigger view — clips are landscape</div>
+    <div class="cooldown-timer-block" style="text-align:center;margin-bottom:14px;">
       <div id="cooldownTimer" style="font-size:44px;font-weight:900;color:var(--accent);font-family:monospace;line-height:1;">45s</div>
       <div style="font-size:11px;color:var(--text2);margin-top:4px;">Breathe slow — no bouncing</div>
     </div>
@@ -10849,11 +10887,49 @@ function skipCooldownStretch(){
 function exitCooldownToTraining(){
   if(typeof stopTimer === 'function') stopTimer('cooldown');
   _cooldownState = null;
+  _cooldownExitFs();
   const v = document.getElementById('cooldownVideo');
   if(v){ try{ v.pause(); v.removeAttribute('src'); v.load(); }catch(e){} }
   const m = document.getElementById('cooldownMod');
   if(m) m.classList.remove('open');
 }
+
+// ── Cooldown fullscreen ──
+// CSS-driven full-viewport mode (iPhone Safari has no element Fullscreen API),
+// with native fullscreen layered on opportunistically for Android/desktop.
+// Clips are 16:9 landscape: fullscreen letterboxes them (object-fit contain)
+// and, in portrait, shows a "rotate your phone" hint. Name, progress, timer
+// and controls stay on screen in both orientations.
+function toggleCooldownFullscreen(){
+  const m = document.getElementById('cooldownMod');
+  if(!m) return;
+  const on = !m.classList.contains('cooldown-fs');
+  m.classList.toggle('cooldown-fs', on);
+  const btn = document.getElementById('cooldownFsBtn');
+  if(btn) btn.textContent = on ? '✕' : '⛶';
+  try{
+    if(on && m.requestFullscreen) m.requestFullscreen().catch(()=>{});
+    else if(!on && document.fullscreenElement) document.exitFullscreen().catch(()=>{});
+  }catch(e){}
+}
+// Leave fullscreen (both CSS mode and native) — used by every cooldown exit.
+function _cooldownExitFs(){
+  const m = document.getElementById('cooldownMod');
+  if(m) m.classList.remove('cooldown-fs');
+  const btn = document.getElementById('cooldownFsBtn');
+  if(btn) btn.textContent = '⛶';
+  try{ if(document.fullscreenElement) document.exitFullscreen().catch(()=>{}); }catch(e){}
+}
+// System-level exits (Esc, back gesture) drop the CSS mode too. Inert on iOS
+// (the event never fires there), which is exactly what we want.
+document.addEventListener('fullscreenchange', () => {
+  const m = document.getElementById('cooldownMod');
+  if(m && !document.fullscreenElement && m.classList.contains('cooldown-fs')){
+    m.classList.remove('cooldown-fs');
+    const btn = document.getElementById('cooldownFsBtn');
+    if(btn) btn.textContent = '⛶';
+  }
+});
 function _renderCooldownStretch(){
   const st = _cooldownState && _cooldownState.list[_cooldownState.idx];
   if(!st) return;
@@ -10889,12 +10965,16 @@ function _cooldownVideoError(v){
     try{ v.play().catch(()=>{}); }catch(e){}
     return;
   }
+  // The ⛶ toggle lives inside the wrap — leaving fullscreen before hiding it
+  // keeps the user out of an exit-less full-black layout.
+  if(typeof _cooldownExitFs === 'function') _cooldownExitFs();
   if(wrap) wrap.style.display = 'none';
 }
 function endCooldownAndFinish(){
   if(!_cooldownState) return; // already ended (double-tap / stacked path)
   if(typeof stopTimer === 'function') stopTimer('cooldown');
   _cooldownState = null;
+  _cooldownExitFs();
   const v = document.getElementById('cooldownVideo');
   if(v){ try{ v.pause(); v.removeAttribute('src'); v.load(); }catch(e){} }
   const m = document.getElementById('cooldownMod');
@@ -10926,6 +11006,7 @@ function finishSession(){
   if(_cdv){ try{ _cdv.pause(); _cdv.removeAttribute('src'); _cdv.load(); }catch(e){} }
   const _cdm = document.getElementById('cooldownMod');
   if(_cdm) _cdm.classList.remove('open');
+  if(typeof _cooldownExitFs === 'function') _cooldownExitFs();
   const _fom = document.getElementById('finishOptionsMod');
   if(_fom) _fom.classList.remove('open');
   // console.log('finishSession: step 2 - calc volume. sessTimeSec=', sessTimeSec, 'sessExs.length=', sessExs.length);
