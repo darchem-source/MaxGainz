@@ -7006,9 +7006,15 @@ function renderCoreCircuit(ex){
       // "each" to drive the per-side flow. Using single quotes on the
       // onclick attribute so JSON.stringify's double quotes don't collide.
       const timerBtn = e.isTimer ? `<button onclick='startCircuitTimer(${JSON.stringify(e.name)},${JSON.stringify(e.reps)})' style="background:transparent;border:0.5px solid var(--accent2);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:700;color:var(--accent2);cursor:pointer;white-space:nowrap;">⏱ Timer</button>` : '';
+      // Tap the exercise name → its demo clip / form guide (only when there is
+      // actually something to show — no dead-end taps).
+      const hasGuide = (typeof _hasExerciseGuide === 'function') && _hasExerciseGuide(e.name);
+      const nameCell = hasGuide
+        ? `<div onclick='openFormGuideFor(${JSON.stringify(e.name)})' style="flex:1;font-size:13px;font-weight:600;cursor:pointer;">${i+1}. ${e.name} <span style="font-size:10px;color:var(--accent);opacity:0.8;">▶</span></div>`
+        : `<div style="flex:1;font-size:13px;font-weight:600;">${i+1}. ${e.name}</div>`;
       return `
       <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:0.5px solid var(--border);">
-        <div style="flex:1;font-size:13px;font-weight:600;">${i+1}. ${e.name}</div>
+        ${nameCell}
         <div style="display:flex;align-items:center;gap:6px;">
           ${repDisplay}
           ${typeLabel}
@@ -14424,24 +14430,41 @@ function closeFormGuide(){
   if(m) m.classList.remove('open');
 }
 
-function openFormGuide(){
-  const ex = sessExs[curIdx];
-  if(!ex) return;
-  // Find matching exercise in database (fuzzy)
-  const lower = ex.name.toLowerCase();
+// Fuzzy EXDB lookup by exercise name — exact match first, then a loose
+// first-two-words match (pre-existing behaviour, extracted for reuse).
+function _findEXDBEntry(name){
+  const lower = String(name || '').toLowerCase();
+  if(!lower) return null;
   let dbEx = EXDB.find(e => e.name.toLowerCase() === lower);
   if(!dbEx){
-    // Try matching first 2 words
     const firstTwo = lower.split(' ').slice(0,2).join(' ');
     dbEx = EXDB.find(e => e.name.toLowerCase().includes(firstTwo) || lower.includes(e.name.toLowerCase().split(' ').slice(0,2).join(' ')));
   }
-  
-  document.getElementById('formGuideTitle').textContent = ex.name;
+  return dbEx || null;
+}
+// Is there anything worth showing for this exercise (a demo clip or a guide)?
+function _hasExerciseGuide(name){
+  if(typeof _exVideoEntry === 'function' && _exVideoEntry(name, EX_VIDEO_MAP)) return true;
+  return !!_findEXDBEntry(name);
+}
+
+function openFormGuide(){
+  const ex = sessExs[curIdx];
+  if(!ex) return;
+  openFormGuideFor(ex.name);
+}
+// Open the form-guide sheet (demo clip + cues) for ANY exercise name — used by
+// the session card button and by tappable circuit-exercise rows.
+function openFormGuideFor(name){
+  if(!name) return;
+  const dbEx = _findEXDBEntry(name);
+
+  document.getElementById('formGuideTitle').textContent = name;
   document.getElementById('formGuideSub').textContent = dbEx ? dbEx.equip + ' · ' + dbEx.muscles.join(', ') : 'Form cues';
-  
+
   const content = document.getElementById('formGuideContent');
   // Demo clip (when mapped) sits at the top of the sheet, above "Why this lift".
-  const videoHtml = (typeof _exVideoBlockHtml === 'function') ? _exVideoBlockHtml(ex.name) : '';
+  const videoHtml = (typeof _exVideoBlockHtml === 'function') ? _exVideoBlockHtml(name) : '';
   if(dbEx){
     let html = videoHtml;
     if(dbEx.benefits){
