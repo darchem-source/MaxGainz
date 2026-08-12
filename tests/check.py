@@ -323,6 +323,19 @@ eq('video: pick f-only ignores male pref', _exVideoPickSex('f','male'), 'female'
 eq('video: pick invalid g → null', _exVideoPickSex('','male'), null);
 eq('video: pick mf+garbage pref → male', _exVideoPickSex('mf', undefined), 'male');
 
+// ── exercise rotation: _rotatePick(slot, cycle, pools) ──
+var RPOOLS = {'Leg Curls': [{name:'A',reps:'10–15',weight:0,bw:true},{name:'B',reps:'8–12',weight:20}]};
+eq('rotate: unknown slot → null', _rotatePick('Squat', 3, RPOOLS), null);
+eq('rotate: cycle 0 → original (null)', _rotatePick('Leg Curls', 0, RPOOLS), null);
+eq('rotate: cycle 1 → first alt', _rotatePick('Leg Curls', 1, RPOOLS).name, 'A');
+eq('rotate: cycle 2 → second alt', _rotatePick('Leg Curls', 2, RPOOLS).name, 'B');
+eq('rotate: cycle 3 wraps to original', _rotatePick('Leg Curls', 3, RPOOLS), null);
+eq('rotate: cycle 4 wraps to first alt', _rotatePick('Leg Curls', 4, RPOOLS).name, 'A');
+eq('rotate: negative cycle safe', _rotatePick('Leg Curls', -1, RPOOLS) === null || typeof _rotatePick('Leg Curls', -1, RPOOLS) === 'object', true);
+eq('rotate: null pools → null', _rotatePick('Leg Curls', 1, null), null);
+eq('rotate: empty pool → null', _rotatePick('X', 1, {X: []}), null);
+eq('rotate: garbage cycle → original', _rotatePick('Leg Curls', undefined, RPOOLS), null);
+
 JSON.stringify(fails);
 """
 
@@ -345,7 +358,7 @@ def gate_invariants(js):
                'getMaxWeeklySessions', 'calcWeekStreak', 'getLongestWeekStreak', '_localYMD',
                '_sessionKey', '_mergeSessions', '_validateSession',
                'getLiftState', '_leanFor', 'snapToSteps', 'stepWeight', 'calc1RM', 'parseRepTarget',
-               '_comebackEvents', '_measureDelta', '_exVideoEntry', '_exVideoPickSex']:
+               '_comebackEvents', '_measureDelta', '_exVideoEntry', '_exVideoPickSex', '_rotatePick']:
         src = extract_decl(js, fn)
         if not src:
             print(f'  ✗ could not extract function {fn}'); return False
