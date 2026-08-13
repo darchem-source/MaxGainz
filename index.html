@@ -2856,6 +2856,10 @@ const EXDB=[
   {name:'Sumo Squat',cat:'legs',muscles:['legs','glutes'],diff:1,equip:'Dumbbells',sets:'3–4',reps:'10–15',benefits:'Wide stance loads glutes and inner thighs the narrow squat skips',cues:['Feet wide, toes turned out 30–45°','Push the knees out over the toes','Sit straight down with the chest tall','Drive through the heels to stand'],joints:['hip','knee'],alts:['Goblet Squats','Sumo Deadlift','Leg Press']},
   {name:'Tricep Kickbacks',cat:'arms',muscles:['triceps'],diff:1,equip:'Dumbbells',sets:'3–4',reps:'12–15',benefits:'Peak-contraction triceps isolation — light load, brutal squeeze',cues:['Hinge forward with a flat back','Pin the upper arms to your ribs','Only the forearms move','Hold the lockout for a beat'],joints:['elbow'],alts:['Triceps Pushdowns','Overhead Tricep Extension','Skull Crushers']},
   {name:'Wrist Curls',cat:'arms',muscles:['forearms'],diff:1,equip:'Dumbbells',sets:'3',reps:'15–20',benefits:'Direct forearm and grip work — a steadier hold on every pull',cues:['Forearms flat on the bench, palms up','Wrists hang just past the edge','Let the hands fully open at the bottom','Curl the knuckles up and squeeze'],joints:['wrist'],alts:['Farmer Carry','Hammer Curls','Shrugs']},
+  // Rotation-pool depth imports (each ships with a demo clip)
+  {name:'Seated Leg Curl',cat:'legs',muscles:['legs'],diff:1,equip:'Machine',sets:'3–4',reps:'10–15',benefits:'Hamstring isolation with constant tension from a stronger seated position',cues:['Pad just above the heels','Curl through the full range','Pause at peak flexion','Resist the return'],joints:['knee'],alts:['Leg Curls','Stability Ball Leg Curl','Nordic Curl']},
+  {name:'Kneeling Leg Curl',cat:'legs',muscles:['legs'],diff:2,equip:'Machine',sets:'3',reps:'8–12',benefits:'Single-leg hamstring curl — fixes left/right strength gaps',cues:['Square the hips against the pad','Curl one heel to the glute','No twisting through the torso','Slow eccentric'],joints:['knee'],alts:['Leg Curls','Seated Leg Curl']},
+  {name:'Band Hip Abduction',cat:'legs',muscles:['glutes','legs'],diff:1,equip:'Resistance band',sets:'3',reps:'15–20 each side',benefits:'Glute-med strength for hip stability — knee health insurance',cues:['Band around ankles or knees','Stand tall, core braced','Drive the leg out to the side','Control the return'],joints:['hip'],alts:['Abductor Machine','Lateral Band Walks']},
 ];
 
 // ── SUPABASE CONFIG ──
@@ -5305,7 +5309,7 @@ const EX_META = {
   'Leg Press':{equip:'machine'},'Leg Curl':{equip:'machine'},'Leg Extension':{equip:'machine'},
   'Leg Curls':{equip:'machine'},'Leg Extensions':{equip:'machine'},
   'Calf Raises':{equip:'machine'},'Glute-Ham Raise':{equip:'machine'},
-  'Hack Squat':{equip:'machine'},'Seated Calf Raise':{equip:'machine'},
+  'Hack Squat':{equip:'machine'},'Seated Leg Curl':{equip:'machine'},'Kneeling Leg Curl':{equip:'machine'},'Seated Calf Raise':{equip:'machine'},
   'Donkey Calf Raise':{equip:'machine'},'Machine Lateral Raise':{equip:'machine'},
   'Leg Press (Single Leg)':{equip:'machine'},'Adductor Machine':{equip:'machine'},
   'Abductor Machine':{equip:'machine'},'Back Extension (45°)':{equip:'machine'},
@@ -5317,7 +5321,7 @@ const EX_META = {
   'Toes-to-Bar':{equip:'bw'},'V-Ups':{equip:'bw'},'Hanging Knee Raises':{equip:'bw'},
   'Hollow Hold':{equip:'bw'},'Flutter Kicks':{equip:'bw'},'Bicycle Crunch':{equip:'bw'},
   'Single-Leg Glute Bridge':{equip:'bw'},'Donkey Kicks':{equip:'bw'},
-  'Reverse Lunge with Knee Drive':{equip:'bw'},'Diamond Push-Ups':{equip:'bw'},
+  'Reverse Lunge with Knee Drive':{equip:'bw'},'Diamond Push-Ups':{equip:'bw'},'Band Hip Abduction':{equip:'bw'},
 };
 
 function getEquipType(ex) {
@@ -5524,7 +5528,7 @@ const EX_ROTATION_POOLS = {
   'Hanging Leg Raise': [{name:'Hanging Knee Raises',reps:'10–15',weight:0,bw:true},{name:'Toes-to-Bar',reps:'5–10',weight:0,bw:true},{name:'V-Ups',reps:'12–15',weight:0,bw:true}],
   'Lat Pulldown': [{name:'Reverse-Grip Pulldown',reps:'8–12',weight:40}],
   'Lateral Raises': [{name:'Cable Lateral Raise',reps:'12–15',weight:7.5},{name:'Machine Lateral Raise',reps:'12–15',weight:15},{name:'Front Raises',reps:'10–15',weight:7.5}],
-  'Leg Curls': [{name:'Stability Ball Leg Curl',reps:'10–15',weight:0,bw:true}],
+  'Leg Curls': [{name:'Stability Ball Leg Curl',reps:'10–15',weight:0,bw:true},{name:'Seated Leg Curl',reps:'10–15',weight:50},{name:'Kneeling Leg Curl',reps:'8–12',weight:25}],
   'Lunges': [{name:'Walking Lunges',reps:'10–12',weight:25},{name:'Bulgarian Split Squats',reps:'8–12',weight:25},{name:'Reverse Lunge with Knee Drive',reps:'10–12 each side',weight:0,bw:true}],
   'Plank': [{name:'Side Plank',reps:'30–45s',weight:0,bw:true},{name:'Plank Shoulder Taps',reps:'20–30',weight:0,bw:true},{name:'Reverse Plank',reps:'20–40s',weight:0,bw:true}],
   'Pull-Ups': [{name:'Chin-Ups',reps:'6–10',weight:0,bw:true},{name:'Band-Assisted Pull-Ups',reps:'5–10',weight:0,bw:true}],
@@ -14189,6 +14193,7 @@ const EX_VIDEO_MAP = {
   'Arnold Press': 'dumbbell-arnold-press',
   'Back Extension (45°)': '45-degree-hyperextension',
   'Band High Fly': 'band-high-fly',
+  'Band Hip Abduction': 'band-hip-abduction',
   'Band Pull-Through': 'band-pull-through',
   'Band Pushdown': 'band-triceps-pushdown',
   'Band Seated Row': 'band-seated-row',
@@ -14258,6 +14263,7 @@ const EX_VIDEO_MAP = {
   'Jumping Jacks': 'jumping-jack',
   'Kettlebell Deadlift': 'kettlebell-deadlift',
   'Kneeling Lat Stretch': 'stretching-kneeling-lat-stretch',
+  'Kneeling Leg Curl': 'lever-kneeling-leg-curl',
   'Landmine Twist': 'landmine-180',
   'Lat Pulldown Burst': 'cable-pulldown',
   'Lat Pulldown': 'cable-pulldown',
@@ -14287,6 +14293,7 @@ const EX_VIDEO_MAP = {
   'Russian Twists': 'seated-twist-straight-arm|f',
   'Seated Calf Raise': 'lever-seated-calf-raise',
   'Seated Dumbbell Press': 'dumbbell-bench-seated-press',
+  'Seated Leg Curl': 'lever-seated-leg-curl',
   'Shrugs': 'barbell-shrug',
   'Side Bends': 'dumbbell-side-bend',
   'Side Plank (Left)': 'side-bridge-side-plank',
