@@ -2627,6 +2627,39 @@ const LIBRARY_PROGRAMMES = [
       ]},
     ],
   },
+  {
+    id:'machine-foundations', name:'Machine Foundations', short:'Machines',
+    level:'Beginner', goal:'Hypertrophy', daysPerWeek:3, equipment:'Machines + Cables',
+    tags:['hypertrophy','beginner','machines','cables','3-day','gym-intro','low-intimidation'],
+    blurb:'Your first month in a commercial gym, no free weights required. Sit down, set the pin, train.',
+    description:'Three fixed-path sessions a week — push, pull, then legs and core. Every movement runs on a selectorized machine or a cable stack, so the path is guided, no spotter is needed, and you can push a set hard without worrying about dropping anything. Learn the pattern and the pump first; add one pin (5kg) once you hit the top of the rep range on every set.',
+    schedule:[
+      { day:'Machines A — Push', badge:'badge-u', exercises:[
+        {name:'Machine Chest Press',sets:4,reps:'8–12',weight:30,muscles:['chest','triceps','shoulders'],type:'Primary'},
+        {name:'Incline Machine Press',sets:3,reps:'10–12',weight:25,muscles:['chest','shoulders'],type:'Compound'},
+        {name:'Machine Seated Dip',sets:3,reps:'10–12',weight:30,muscles:['triceps','chest'],type:'Main Assistance'},
+        {name:'Machine Lateral Raise',sets:3,reps:'12–15',weight:15,muscles:['shoulders'],type:'Main Assistance'},
+        {name:'Pec Deck',sets:3,reps:'12–15',weight:25,muscles:['chest'],type:'Accessory'},
+        {name:'Triceps Pushdowns',sets:3,reps:'12–15',weight:20,muscles:['triceps'],type:'Accessory'}
+      ]},
+      { day:'Machines B — Pull', badge:'badge-u', exercises:[
+        {name:'Lat Pulldown',sets:4,reps:'8–12',weight:35,muscles:['back','biceps'],type:'Primary'},
+        {name:'Machine High Row',sets:3,reps:'10–12',weight:30,muscles:['back','biceps'],type:'Compound'},
+        {name:'Cable Row',sets:3,reps:'10–12',weight:35,muscles:['back','biceps'],type:'Main Assistance'},
+        {name:'Machine Rear Delt Fly',sets:3,reps:'12–15',weight:15,muscles:['shoulders','back'],type:'Main Assistance'},
+        {name:'Machine Shrug',sets:3,reps:'12–15',weight:40,muscles:['back'],type:'Accessory'},
+        {name:'Machine Preacher Curl',sets:3,reps:'10–15',weight:15,muscles:['biceps'],type:'Accessory'}
+      ]},
+      { day:'Machines C — Legs & Core', badge:'badge-l', exercises:[
+        {name:'Leg Press',sets:4,reps:'10–12',weight:60,muscles:['legs','glutes'],type:'Primary'},
+        {name:'Leg Extensions',sets:3,reps:'12–15',weight:30,muscles:['legs'],type:'Main Assistance'},
+        {name:'Seated Leg Curl',sets:3,reps:'10–15',weight:30,muscles:['legs'],type:'Main Assistance'},
+        {name:'Machine Hip Extension',sets:3,reps:'12–15 each side',weight:20,muscles:['glutes','legs'],type:'Accessory'},
+        {name:'Seated Calf Raise',sets:3,reps:'15–20',weight:40,muscles:['legs'],type:'Accessory'},
+        {name:'Machine Crunch',sets:3,reps:'12–15',weight:25,muscles:['core'],type:'Accessory'}
+      ]},
+    ],
+  },
 ];
 
 // Library helpers
@@ -2910,6 +2943,13 @@ const EXDB=[
   {name:'Band Rear Delt Row',cat:'pull',muscles:['shoulders','back'],diff:1,equip:'Resistance band',sets:'3',reps:'15–20',benefits:'High-elbow row that builds rear delts and undoes desk-chair posture',cues:['Band anchored at chest height, arms straight to start','Pull with the elbows high and wide','Squeeze the rear delts, not the traps','Light tension, slow return'],joints:['shoulder','elbow'],alts:['Face Pulls','Reverse Fly','Band Pull-Aparts']},
   {name:'Band Standing Calf Raise',cat:'legs',muscles:['legs','calves'],diff:1,equip:'Resistance band',sets:'3–4',reps:'15–20',benefits:'Loadable calf work at home — the band puts resistance where the machine would',cues:['Stand on the band, hold the ends up at the shoulders','Rise onto the balls of the feet','Pause a beat at the very top','Lower slowly into a full stretch'],joints:['ankle'],alts:['Calf Raises','Seated Calf Raise','Donkey Calf Raise']},
   {name:'Feet-Elevated Glute Bridge',cat:'legs',muscles:['glutes','legs','core'],diff:1,equip:'Bodyweight',sets:'3–4',reps:'12–20',benefits:'Longer range than the floor bridge — more glute and hamstring, still zero kit',cues:['Heels up on a chair or sofa, shoulders on the floor','Drive through the heels, never the toes','Squeeze the glutes hard at the top','Lower until the hips hover — no resting between reps'],joints:['hip','knee'],alts:['Glute Bridges','Hip Thrusts','Band Pull-Through']},
+  // Machine Foundations imports
+  {name:'Machine High Row',cat:'pull',muscles:['back','biceps'],diff:1,equip:'Machine',sets:'3–4',reps:'10–12',benefits:'Chest-supported angled row — builds upper back thickness with zero lower back strain',cues:['Chest firm against the pad','Drive the elbows down and back','Squeeze the shoulder blades together','Return to a full stretch each rep'],joints:['shoulder','elbow'],alts:['Cable Row','Chest-Supported Row','T-Bar Row']},
+  {name:'Machine Hip Extension',cat:'legs',muscles:['glutes','legs'],diff:1,equip:'Machine',sets:'3',reps:'12–15 each side',benefits:'Direct glute loading one leg at a time — easy to learn and easy to progress',cues:['Hold the handles, torso upright','Drive the leg back from the glute','Squeeze hard at full extension','Do not arch the lower back'],joints:['hip'],alts:['Glute Kickback','Glute Bridges','Hip Thrusts']},
+  {name:'Machine Preacher Curl',cat:'arms',muscles:['biceps'],diff:1,equip:'Machine',sets:'3',reps:'10–15',benefits:'The pad kills all swinging — pure bicep tension through a full stretch',cues:['Armpits over the top of the pad','Curl until the handles reach the chin','Lower until the arms are almost straight','Never let the weight slam down'],joints:['elbow'],alts:['Preacher Curl','Cable Curl','Barbell Curls']},
+  {name:'Machine Rear Delt Fly',cat:'pull',muscles:['shoulders','back'],diff:1,equip:'Machine',sets:'3–4',reps:'12–15',benefits:'Rear delt and mid-back work on a fixed path — posture insurance for desk-bound beginners',cues:['Chest on the pad, seat set to shoulder height','Arms almost straight, lead with the elbows','Open wide and pause for a second','Light weight, no jerking'],joints:['shoulder'],alts:['Reverse Fly','Face Pulls','Band Pull-Aparts']},
+  {name:'Machine Seated Dip',cat:'arms',muscles:['triceps','chest'],diff:1,equip:'Machine',sets:'3–4',reps:'10–12',benefits:'All the tricep loading of a dip with the seat taking your bodyweight — trainable from day one',cues:['Sit tall with the back flat on the pad','Elbows stay tight to your sides','Press down to a full lockout','Let the handles rise slowly'],joints:['shoulder','elbow'],alts:['Bench Dips','Triceps Pushdowns','Dips']},
+  {name:'Machine Shrug',cat:'pull',muscles:['back'],diff:1,equip:'Machine',sets:'3',reps:'12–15',benefits:'Trap loading without a grip limit — the handles hold the weight so the traps fail first',cues:['Stand or sit tall, arms hanging long','Shrug straight up toward the ears','No rolling the shoulders','Hold the top for a second, lower slow'],joints:['shoulder'],alts:['Shrugs','Cable Row','Face Pulls']},
 ];
 
 // ── SUPABASE CONFIG ──
@@ -5359,7 +5399,7 @@ const EX_META = {
   'Leg Press':{equip:'machine'},'Leg Curl':{equip:'machine'},'Leg Extension':{equip:'machine'},
   'Leg Curls':{equip:'machine'},'Leg Extensions':{equip:'machine'},
   'Calf Raises':{equip:'machine'},'Glute-Ham Raise':{equip:'machine'},
-  'Hack Squat':{equip:'machine'},'Seated Leg Curl':{equip:'machine'},'Kneeling Leg Curl':{equip:'machine'},'Seated Calf Raise':{equip:'machine'},
+  'Hack Squat':{equip:'machine'},'Machine Seated Dip':{equip:'machine'},'Machine High Row':{equip:'machine'},'Machine Rear Delt Fly':{equip:'machine'},'Machine Shrug':{equip:'machine'},'Machine Preacher Curl':{equip:'machine'},'Machine Hip Extension':{equip:'machine'},'Seated Leg Curl':{equip:'machine'},'Kneeling Leg Curl':{equip:'machine'},'Seated Calf Raise':{equip:'machine'},
   'Donkey Calf Raise':{equip:'machine'},'Machine Lateral Raise':{equip:'machine'},
   'Leg Press (Single Leg)':{equip:'machine'},'Adductor Machine':{equip:'machine'},
   'Abductor Machine':{equip:'machine'},'Back Extension (45°)':{equip:'machine'},
@@ -14419,7 +14459,13 @@ const EX_VIDEO_MAP = {
   'Lunges': 'dumbbell-lunge',
   'Machine Chest Press': 'lever-lying-chest-press',
   'Machine Crunch': 'lever-seated-crunch-1|m',
+  'Machine High Row': 'lever-high-row',
+  'Machine Hip Extension': 'lever-standing-hip-extension',
   'Machine Lateral Raise': 'lever-lateral-raise',
+  'Machine Preacher Curl': 'lever-preacher-curl',
+  'Machine Rear Delt Fly': 'lever-seated-reverse-fly',
+  'Machine Seated Dip': 'lever-seated-dips',
+  'Machine Shrug': 'lever-shrug',
   'Overhead Press': 'military-press',
   'Overhead Tricep Extension': 'dumbbell-seated-triceps-extension',
   'Pec Deck': 'lever-pec-deck-fly',
