@@ -19897,19 +19897,35 @@ function isHIITSeriesPath() {
 function _rankNextPathDays(cands, recent){
   if(!Array.isArray(cands) || !cands.length) return [];
   const R = Array.isArray(recent) ? recent : [];
+  // r.groups may be an array (equal weight) or {cat: share} where share is
+  // that group's fraction of the session's volume. A MAJOR group (share
+  // ≥0.35) trained <1.5 days ago hard-gates the day below every clean day —
+  // staleness can never outrank fried muscles. Minor overlaps (a deadlift's
+  // pull component on a leg day) only nudge.
+  const shareOf = (r, g) => Array.isArray(r.groups)
+    ? (r.groups.indexOf(g) >= 0 ? 1 : 0)
+    : ((r.groups && typeof r.groups[g] === 'number') ? r.groups[g] : 0);
   return cands.map(c => {
     let score = Math.min(c.sinceDone == null ? 999 : c.sinceDone, 10) * 10;
     const reasons = [];
     if((c.sinceDone == null ? 999 : c.sinceDone) >= 999) reasons.push('not done yet');
     else if(c.sinceDone >= 3) reasons.push(c.sinceDone + ' sessions since last time');
-    let conflict = 0;
+    let hard = false;
     R.forEach(r => {
-      const overlap = (c.groups || []).filter(g => (r.groups || []).indexOf(g) >= 0);
-      if(!overlap.length) return;
-      if(r.daysAgo < 1.5){ conflict += 40 * overlap.length; reasons.push('⚠ ' + overlap.join('/') + ' trained yesterday'); }
-      else if(r.daysAgo < 2.5){ conflict += 15 * overlap.length; }
+      const warned = [];
+      (c.groups || []).forEach(g => {
+        const s = shareOf(r, g);
+        if(s <= 0) return;
+        if(r.daysAgo < 1.5){
+          if(s >= 0.35){ hard = true; warned.push(g); }
+          score -= 60 * s;
+        } else if(r.daysAgo < 2.5){
+          score -= 20 * s;
+        }
+      });
+      if(warned.length) reasons.push('⚠ ' + warned.join('/') + ' trained hard yesterday');
     });
-    score -= conflict;
+    if(hard) score -= 1000; // conflicted tier: below every clean day
     score -= (c.order || 0) * 0.01;
     return { day: c.day, score, reasons };
   }).sort((a, b) => b.score - a.score);
@@ -19941,13 +19957,18 @@ function rankPathDayChoices(programme){
   }
   const now = new Date();
   const recent = hist.slice(-2).map(s => {
-    const groups = new Set();
+    // Weight each group by its share of the session so a lone deadlift's
+    // pull component doesn't count like a full pull day.
+    const w = {};
+    let total = 0;
     Object.keys(s.setLog || {}).forEach(n => {
       const sp = (typeof getSplits === 'function') ? getSplits(n) : null;
-      if(sp) sp.forEach(x => { if(x && x.f >= 0.4) groups.add(x.cat); });
+      if(sp) sp.forEach(x => { if(x && x.f > 0){ w[x.cat] = (w[x.cat] || 0) + x.f; total += x.f; } });
     });
+    const groups = {};
+    Object.keys(w).forEach(g => { groups[g] = total > 0 ? w[g] / total : 0; });
     const d = s.date instanceof Date ? s.date : new Date(s.date);
-    return { groups: [...groups], daysAgo: Math.max(0, (now - d) / 86400000) };
+    return { groups, daysAgo: Math.max(0, (now - d) / 86400000) };
   });
   const cands = dayNames.map((d, i) => ({ day: d, sinceDone: sinceDone[d], order: i, groups: _pathDayGroups(programme, d) }));
   return _rankNextPathDays(cands, recent);
