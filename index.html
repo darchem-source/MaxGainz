@@ -12287,6 +12287,11 @@ function startNonTabataSession(){
 let _hiitSearchQuery = '';
 
 // Back-compat shim — older flows still reference renderProg/renderHIITProg
+function setFitFilter(dim, val){
+  const FF = (typeof window._fitFilters === 'object' && window._fitFilters) || (window._fitFilters = {where:null, exp:null, days:null});
+  FF[dim] = (FF[dim] === val) ? null : val; // tap again to clear
+  renderProgrammeFeed();
+}
 function renderProg(){ renderProgrammeFeed(); }
 function renderHIITProg(){ renderProgrammeFeed(); }
 
@@ -12540,6 +12545,41 @@ function _renderMyProgrammesSection(){
   const byId = {};
   preMade.forEach(item => { if(item.id) byId[item.id] = item; });
   const placed = new Set();
+  // ── FIND YOUR FIT — three-chip guided filter → 1-2 recommendations ──
+  const FF = (typeof window._fitFilters === 'object' && window._fitFilters) || (window._fitFilters = {where:null, exp:null, days:null});
+  const _progMeta = { 'ULF':{level:'Beginner',days:3,home:false}, 'PPL':{level:'Intermediate',days:6,home:false} };
+  (typeof LIBRARY_PROGRAMMES !== 'undefined' ? LIBRARY_PROGRAMMES : []).forEach(p => {
+    _progMeta[p.id] = { level:p.level||'Intermediate', days:p.daysPerWeek||3,
+      home:/home|bodyweight|band|dumbbell/i.test((p.equipment||'') + ' ' + (p.tags||[]).join(' ')) };
+  });
+  const chip = (dim, val, lbl) => `<div class="chip${FF[dim]===val?' active':''}" onclick="setFitFilter('${dim}','${val}')" style="font-size:11px;padding:6px 11px;">${lbl}</div>`;
+  html += subLabel('Find your fit');
+  html += `<div style="margin:0 16px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:14px;padding:12px 14px;">
+    <div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;">
+      <span style="font-size:10px;color:var(--text2);font-weight:700;">WHERE</span>
+      ${chip('where','home','🏠 Home')}${chip('where','gym','🏋️ Gym')}
+      <span style="font-size:10px;color:var(--text2);font-weight:700;margin-left:6px;">LEVEL</span>
+      ${chip('exp','Beginner','New')}${chip('exp','Intermediate','Trained')}${chip('exp','Advanced','Advanced')}
+      <span style="font-size:10px;color:var(--text2);font-weight:700;margin-left:6px;">DAYS</span>
+      ${chip('days','3','2–3')}${chip('days','4','4')}${chip('days','5','5+')}
+    </div>
+    ${(FF.where||FF.exp||FF.days) ? (() => {
+      const scored = Object.keys(_progMeta).filter(id => byId[id]).map(id => {
+        const mt = _progMeta[id];
+        let score = 0, why = [];
+        if(FF.where){ const ok = FF.where==='home' ? mt.home : !mt.home; if(ok){score++; why.push(FF.where==='home'?'works at home':'built for the gym');} else score -= 2; }
+        if(FF.exp){ if(mt.level===FF.exp){score++; why.push(mt.level.toLowerCase()+'-friendly');} else if((FF.exp==='Beginner'&&mt.level==='Advanced')||(FF.exp==='Advanced'&&mt.level==='Beginner')) score -= 2; }
+        if(FF.days){ const want = +FF.days; const ok = want>=5 ? mt.days>=5 : Math.abs(mt.days-want)<=1; if(ok){score++; why.push(mt.days+' days/wk');} else score--; }
+        return {id, score, why};
+      }).filter(x => x.score > 0).sort((a,b) => b.score - a.score).slice(0, 2);
+      return scored.length
+        ? `<div style="margin-top:10px;font-size:10px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:1px;">Recommended for you</div>` +
+          scored.map(s => `<div style="font-size:11px;color:var(--text2);margin-top:4px;">✓ ${s.why.join(' · ')}</div>` ).join('') +
+          scored.map(s => byId[s.id].render()).join('')
+        : `<div style="margin-top:10px;font-size:12px;color:var(--text2);">No perfect match — loosen a filter or browse the shelves below.</div>`;
+    })() : `<div style="margin-top:8px;font-size:11px;color:var(--text2);">Tap a chip or two — we'll pick the programmes that fit.</div>`}
+  </div>`;
+
   html += subLabel('Pre-made · by goal');
   SHELF_DEFS.forEach(s => {
     const members = s.ids.filter(id => byId[id]);
