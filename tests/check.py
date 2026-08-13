@@ -362,8 +362,23 @@ var PHUL_CANDS = [
   {day:'Upper Hypertrophy', sinceDone:1, order:2, groups:['push','pull']},
   {day:'Lower Hypertrophy', sinceDone:4, order:3, groups:['legs','core']},
 ];
-var PHUL_RECENT = [ {groups:['push','pull'], daysAgo:2}, {groups:['legs','core'], daysAgo:1} ];
+var PHUL_RECENT = [ {groups:{push:0.5,pull:0.5}, daysAgo:2}, {groups:{legs:0.7,core:0.15,pull:0.15}, daysAgo:1} ];
 eq('smart: PHUL two-leg-days avoided → Upper Power next', _rankNextPathDays(PHUL_CANDS, PHUL_RECENT)[0].day, 'Upper Power');
+// The reported live bug: a 17-sessions-overdue leg day must STILL lose to a
+// recently-done upper day when legs were the bulk of yesterday's session.
+var LIVE_CANDS = [
+  {day:'Upper Power', sinceDone:2, order:0, groups:['push','pull']},
+  {day:'Lower Power', sinceDone:0, order:1, groups:['legs','core']},
+  {day:'Upper Hypertrophy', sinceDone:1, order:2, groups:['push','pull']},
+  {day:'Lower Hypertrophy', sinceDone:17, order:3, groups:['legs','core']},
+];
+var LIVE_RECENT = [ {groups:{push:0.5,pull:0.5}, daysAgo:2}, {groups:{legs:0.7,core:0.15,pull:0.15}, daysAgo:1} ];
+eq('smart: 17-overdue leg day never beats clean upper day', _rankNextPathDays(LIVE_CANDS, LIVE_RECENT)[0].day, 'Upper Power');
+ok('smart: overdue leg day ranks below BOTH upper days', (function(){
+  var r=_rankNextPathDays(LIVE_CANDS, LIVE_RECENT).map(x=>x.day);
+  return r.indexOf('Lower Hypertrophy') > r.indexOf('Upper Hypertrophy') && r.indexOf('Lower Hypertrophy') > r.indexOf('Upper Power'); })());
+ok('smart: minor pull overlap does not hard-gate upper days', (function(){
+  var top=_rankNextPathDays(LIVE_CANDS, LIVE_RECENT)[0]; return top.score > -500; })());
 ok('smart: fresh leg day demoted below both upper days', (function(){
   var r=_rankNextPathDays(PHUL_CANDS, PHUL_RECENT).map(x=>x.day);
   return r.indexOf('Lower Hypertrophy') > r.indexOf('Upper Hypertrophy'); })());
@@ -375,7 +390,7 @@ eq('smart: written order breaks ties', _rankNextPathDays([
   {day:'B', sinceDone:3, order:1, groups:['pull']}], [])[0].day, 'A');
 eq('smart: empty candidates → empty', _rankNextPathDays([], []).length, 0);
 eq('smart: no recent history → pure staleness', _rankNextPathDays(PHUL_CANDS, [])[0].day, 'Upper Power');
-ok('smart: conflict reason surfaces', _rankNextPathDays(PHUL_CANDS, PHUL_RECENT).find(x=>x.day==='Lower Hypertrophy').reasons.join(' ').indexOf('trained yesterday') >= 0);
+ok('smart: conflict reason surfaces', _rankNextPathDays(PHUL_CANDS, PHUL_RECENT).find(x=>x.day==='Lower Hypertrophy').reasons.join(' ').indexOf('trained hard yesterday') >= 0);
 
 JSON.stringify(fails);
 """
