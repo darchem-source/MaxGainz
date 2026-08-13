@@ -12665,7 +12665,13 @@ function _renderHIITStudioCards(){
     if(FC === 'upper') return f.includes('push') || f.includes('pull');
     return f.includes(FC);
   };
-  const matches = (w) => focusOK(w) && (!q || (w.name && w.name.toLowerCase().includes(q)) || (w.format && w.format.toLowerCase().includes(q)) || (w.desc && w.desc.toLowerCase().includes(q)));
+  const P = (typeof window._hiitPrac === 'string') ? window._hiitPrac : null;
+  const pracOK = (w) => {
+    if(!P) return true;
+    const t = _hiitPracFor(w);
+    return P === 'nojump' ? !!t.noJump : !!t.apartment;
+  };
+  const matches = (w) => focusOK(w) && pracOK(w) && (!q || (w.name && w.name.toLowerCase().includes(q)) || (w.format && w.format.toLowerCase().includes(q)) || (w.desc && w.desc.toLowerCase().includes(q)));
 
   // Custom HIIT card row
   const customHTML = (w, ci) => {
@@ -12803,7 +12809,7 @@ function _renderHIITStudioCards(){
     const builtIns = HIIT.filter(w => s.pick(w) && matches(w)).map(w => ({ kind:'builtin', w }));
     const tpls = (s.key === 'quick' || s.key === 'session')
       ? allTemplates.map((t, ti) => ({ t, ti }))
-          .filter(({ t }) => matchesTpl(t) && focusOK(t) && ((s.key === 'quick') === ((t.duration || 0) <= 15)))
+          .filter(({ t }) => matchesTpl(t) && focusOK(t) && pracOK(t) && ((s.key === 'quick') === ((t.duration || 0) <= 15)))
           .map(({ t, ti }) => ({ kind:'template', w:t, ti }))
       : [];
     const items = [...builtIns, ...tpls].sort((a, x) => (a.w.duration || 0) - (x.w.duration || 0));
@@ -12858,6 +12864,9 @@ function _renderHIITStudioSection(){
       }catch(e){}
       return rec + `<div style="margin:0 16px 8px;display:flex;gap:5px;flex-wrap:wrap;">
         ${fchip('upper','💪 Upper')}${fchip('legs','🦵 Legs')}${fchip('core','🎯 Core')}${fchip('full','🔥 Full body')}
+        ${(() => { const P = (typeof window._hiitPrac === 'string') ? window._hiitPrac : null;
+          const pchip = (val, lbl) => `<div class="chip${P===val?' active':''}" onclick="setHIITPrac('${val}')" style="font-size:11px;padding:6px 11px;">${lbl}</div>`;
+          return pchip('nojump','🚫 No jumping') + pchip('apt','🤫 Apartment-friendly'); })()}
       </div>`;
     })()}
     <div id="hiitStudioCards">${_renderHIITStudioCards()}</div>`;
@@ -12865,6 +12874,73 @@ function _renderHIITStudioSection(){
 function setHIITFocus(val){
   window._hiitFocus = (window._hiitFocus === val) ? null : val;
   renderProgrammeFeed();
+}
+function setHIITPrac(val){
+  window._hiitPrac = (window._hiitPrac === val) ? null : val;
+  renderProgrammeFeed();
+}
+// Authored per-workout practicality tags (conservative — quiet only when
+// genuinely quiet). Workouts not listed (e.g. user customs) fall back to a
+// cautious name scan of their exercises.
+const HIIT_PRACTICALITY = {
+  '20-Min Burner':{noJump:false,apartment:false},
+  '30-Min Total':{noJump:false,apartment:false},
+  'Abs & Obliques – 15 min':{noJump:true,apartment:true},
+  'AMRAP 12 – Upper Body Pump':{noJump:true,apartment:true},
+  'AMRAP 20 – Full Body Blitz':{noJump:false,apartment:false},
+  'AMRAP 25 – Strength Endurance':{noJump:true,apartment:false},
+  'Apartment Friendly':{noJump:true,apartment:true},
+  'Barbell Complex – 5 Rounds':{noJump:false,apartment:false},
+  'Beginner Starter':{noJump:true,apartment:true},
+  'Core & Lower Back – 25 min':{noJump:true,apartment:true},
+  'Core Blaster – 24 min':{noJump:true,apartment:true},
+  'Couch-to-Cardio':{noJump:false,apartment:false},
+  'Dumbbell Complex – 4 Rounds':{noJump:true,apartment:false},
+  'EMOM 15 – Upper Body':{noJump:true,apartment:true},
+  'EMOM 20 – Power Circuit':{noJump:false,apartment:false},
+  'EMOM 30 – Full Body Strength':{noJump:true,apartment:false},
+  'EMOM Strength':{noJump:true,apartment:false},
+  'Finisher · Arm Pump (8 min)':{noJump:true,apartment:true},
+  'Finisher · Conditioning Blast (10 min)':{noJump:false,apartment:false},
+  'Finisher · Core Crusher (6 min)':{noJump:true,apartment:true},
+  'Finisher · Leg Burnout (8 min)':{noJump:true,apartment:true},
+  'Garry\'s Blast - 45 (Chest, Back & Abs)':{noJump:true,apartment:false},
+  'Garry\'s Blast - 60 (Chest, Back & Abs)':{noJump:true,apartment:false},
+  'Garry\'s Blaze - 45 (Glutes & Legs)':{noJump:true,apartment:false},
+  'Garry\'s Bootcamp - 30 (Arms & Abs)':{noJump:true,apartment:false},
+  'Garry\'s Bootcamp - 60 (Total Body)':{noJump:false,apartment:false},
+  'Garry\'s Burn - 45 (Biceps & Triceps)':{noJump:true,apartment:false},
+  'Garry\'s Burn - 60 (Glutes & Legs)':{noJump:false,apartment:false},
+  'Iso-Hold Core Crusher':{noJump:true,apartment:true},
+  'KB/DB Complex – Conditioning':{noJump:true,apartment:false},
+  'Low-Impact · Apartment Cardio (20 min)':{noJump:true,apartment:true},
+  'Low-Impact · Quiet Core & Glutes (18 min)':{noJump:true,apartment:true},
+  'No Equipment Fast':{noJump:false,apartment:false},
+  'Plyo Power 15':{noJump:false,apartment:false},
+  'Pull-Day Conditioning':{noJump:true,apartment:false},
+  'Summer Series · Core Ignite':{noJump:true,apartment:true},
+  'Summer Series · Express Core':{noJump:true,apartment:true},
+  'Summer Series · Full Floor Burn':{noJump:true,apartment:true},
+  'Summer Series · Lower & Core':{noJump:true,apartment:true},
+  'Summer Series · Oblique Cut':{noJump:true,apartment:true},
+  'Summer Series · Tight & Toned':{noJump:true,apartment:true},
+  'Summer Series · Upper & Core Sculpt':{noJump:true,apartment:true},
+  'Tabata Cardio':{noJump:false,apartment:false},
+  'Tabata · Core Inferno':{noJump:true,apartment:true},
+  'Tabata · Full Body Sweat':{noJump:false,apartment:false},
+  'Tabata · Lower Body Burn':{noJump:false,apartment:false},
+  'Tabata · Upper Body Blast':{noJump:true,apartment:true},
+  'Travel WOD':{noJump:false,apartment:false},
+};
+function _hiitPracFor(w){
+  const t = HIIT_PRACTICALITY[w.name];
+  if(t) return t;
+  const names = (w.exercises || []).map(e => e.name || '').concat(
+    (w.blocks || []).flatMap(b => (b.exercises || []).map(e => e.name || '')).concat((w.blocks || []).map(b => b.type || '')));
+  const all = names.join(' ').toLowerCase();
+  const jumpy = /jump|hop|bound|skater|burpee|jack|plyo|tuck/.test(all);
+  const loud = jumpy || /run|sprint|treadmill|battle|slam|shuttle|crawl/.test(all);
+  return { noJump: !jumpy && names.length > 0, apartment: !loud && names.length > 0 };
 }
 
 // Re-export for legacy custom programme detail flow (kept for path-style start route)
