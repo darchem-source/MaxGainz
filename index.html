@@ -12656,7 +12656,16 @@ function _renderHIITStudioCards(){
     { label:'50–60 min', min:46, max:61 },
   ];
   const q = _hiitSearchQuery.trim().toLowerCase();
-  const matches = (w) => !q || (w.name && w.name.toLowerCase().includes(q)) || (w.format && w.format.toLowerCase().includes(q)) || (w.desc && w.desc.toLowerCase().includes(q));
+  // Body-focus chip filter: upper = push/pull-targeting, full = broad (3+ groups).
+  const FC = (typeof window._hiitFocus === 'string') ? window._hiitFocus : null;
+  const focusOK = (w) => {
+    if(!FC) return true;
+    const f = (typeof HIIT_MUSCLE_FOCUS !== 'undefined' && HIIT_MUSCLE_FOCUS[w.name]) || ['push','pull','legs','core'];
+    if(FC === 'full') return f.length >= 3;
+    if(FC === 'upper') return f.includes('push') || f.includes('pull');
+    return f.includes(FC);
+  };
+  const matches = (w) => focusOK(w) && (!q || (w.name && w.name.toLowerCase().includes(q)) || (w.format && w.format.toLowerCase().includes(q)) || (w.desc && w.desc.toLowerCase().includes(q)));
 
   // Custom HIIT card row
   const customHTML = (w, ci) => {
@@ -12779,18 +12788,27 @@ function _renderHIITStudioCards(){
   // For each bracket, combine built-ins + templates and sort by duration
   // so they interleave naturally. Boundary fix: < max (was <=) so a 16min
   // workout lands in the 16-25 bucket only, not in both.
+  // Purpose shelves (branded series first, then coach classes, then by role);
+  // templates interleave by duration; the focus chips filter inside every shelf.
   const allTemplates = (typeof HIIT_TEMPLATES !== 'undefined') ? HIIT_TEMPLATES : [];
-  brackets.forEach(b => {
-    const builtIns = HIIT
-      .filter(w => w.duration >= b.min && w.duration < b.max && matches(w))
-      .map(w => ({ kind:'builtin', w }));
-    const tpls = allTemplates
-      .map((t, ti) => ({ t, ti }))
-      .filter(({ t }) => t.duration >= b.min && t.duration < b.max && matchesTpl(t))
-      .map(({ t, ti }) => ({ kind:'template', w:t, ti }));
+  const isSeries = (w) => w.series === 'summer-series';
+  const isGarrys = (w) => (w.format === "Garry's Style") || /garry/i.test(w.name || '');
+  const shelfDefs = [
+    { key:'series',  label:'🌴 Summer Series', pick:(w) => isSeries(w) },
+    { key:'garrys',  label:"🏃 Garry's classes", pick:(w) => !isSeries(w) && isGarrys(w) },
+    { key:'quick',   label:'⚡ Quick finishers · ≤15 min', pick:(w) => !isSeries(w) && !isGarrys(w) && (w.duration || 0) <= 15 },
+    { key:'session', label:'🔥 Full sessions · 20–60 min', pick:(w) => !isSeries(w) && !isGarrys(w) && (w.duration || 0) > 15 },
+  ];
+  shelfDefs.forEach(s => {
+    const builtIns = HIIT.filter(w => s.pick(w) && matches(w)).map(w => ({ kind:'builtin', w }));
+    const tpls = (s.key === 'quick' || s.key === 'session')
+      ? allTemplates.map((t, ti) => ({ t, ti }))
+          .filter(({ t }) => matchesTpl(t) && focusOK(t) && ((s.key === 'quick') === ((t.duration || 0) <= 15)))
+          .map(({ t, ti }) => ({ kind:'template', w:t, ti }))
+      : [];
     const items = [...builtIns, ...tpls].sort((a, x) => (a.w.duration || 0) - (x.w.duration || 0));
     if(!items.length) return;
-    html += groupHTML(b.label, 'b' + b.min, items, item =>
+    html += groupHTML(s.label, s.key, items, item =>
       item.kind === 'template' ? templateHTML(item.w, item.ti) : builtInHTML(item.w)
     );
   });
@@ -12816,7 +12834,37 @@ function _renderHIITStudioSection(){
       <button onclick="openCreateHIIT()"
         style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:10px 14px;font-size:12px;font-weight:800;color:var(--accent);cursor:pointer;white-space:nowrap;">+ HIIT</button>
     </div>
+    ${(() => {
+      // Body-focus chips — filter every shelf below (HIIT_MUSCLE_FOCUS data).
+      const FC = (typeof window._hiitFocus === 'string') ? window._hiitFocus : null;
+      const fchip = (val, lbl) => `<div class="chip${FC===val?' active':''}" onclick="setHIITFocus('${val}')" style="font-size:11px;padding:6px 11px;">${lbl}</div>`;
+      let rec = '';
+      try{
+        const bal = calcMuscleImbalance(4);
+        const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 14);
+        const recent = new Set(completedSessions.filter(s => new Date(s.date) >= cutoff && s.day).map(s => s.day));
+        const recs = getAddOnRecommendations('HIIT', bal, recent, 2) || [];
+        if(recs.length && bal.hasData){
+          rec = `<div style="margin:0 16px 8px;background:rgba(200,255,0,0.06);border:1px solid rgba(200,255,0,0.25);border-radius:12px;padding:10px 12px;">
+            <div style="font-size:10px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">📊 Recommended for your balance</div>
+            ${recs.map(r => { const i = HIIT.findIndex(w => w.name === r.name); return i >= 0 ? `
+              <div onclick="startHIIT(${i})" style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;">
+                <div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:700;">${r.name}</div>
+                <div style="font-size:11px;color:var(--text2);">${r.reason}</div></div>
+                <div style="color:var(--accent);font-size:13px;flex-shrink:0;">▶</div>
+              </div>` : ''; }).join('')}
+          </div>`;
+        }
+      }catch(e){}
+      return rec + `<div style="margin:0 16px 8px;display:flex;gap:5px;flex-wrap:wrap;">
+        ${fchip('upper','💪 Upper')}${fchip('legs','🦵 Legs')}${fchip('core','🎯 Core')}${fchip('full','🔥 Full body')}
+      </div>`;
+    })()}
     <div id="hiitStudioCards">${_renderHIITStudioCards()}</div>`;
+}
+function setHIITFocus(val){
+  window._hiitFocus = (window._hiitFocus === val) ? null : val;
+  renderProgrammeFeed();
 }
 
 // Re-export for legacy custom programme detail flow (kept for path-style start route)
