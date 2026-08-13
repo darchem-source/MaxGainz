@@ -1861,6 +1861,17 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
   </div>
 </div>
 
+<!-- MUSCLE EXPLORER (heatmap → exercises that train a muscle) -->
+<div class="modal-ov" id="muscleExplorerMod" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal" style="max-width:360px;">
+    <div class="modal-handle"></div>
+    <div id="mexTitle" style="font-size:17px;font-weight:800;margin-bottom:2px;">Muscle</div>
+    <div id="mexSub" style="font-size:12px;color:var(--text2);margin-bottom:12px;"></div>
+    <div id="mexBody" style="max-height:55vh;overflow-y:auto;"></div>
+    <button onclick="document.getElementById('muscleExplorerMod').classList.remove('open')" style="width:100%;margin-top:12px;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;font-size:14px;font-weight:700;color:var(--text2);cursor:pointer;">Close</button>
+  </div>
+</div>
+
 <!-- FINISH OPTIONS (cooldown chooser) -->
 <div class="modal-ov" id="finishOptionsMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal" style="max-width:340px;">
@@ -16503,6 +16514,36 @@ function _muscleHeatColor(vol, peak){
   return                           { fill:'rgba(76,255,145,0.65)',  stroke:'rgba(76,255,145,0.95)' };
 }
 
+// Tap a muscle (heatmap chips / under-trained rows) → every exercise that
+// trains it, demo-clip rows marked ▶ and tappable through to the form guide.
+function openMuscleExplorer(muscle){
+  const label = MUSCLE_LABELS[muscle] || muscle;
+  const rows = [];
+  EXDB.forEach(e => {
+    const fine = (typeof resolveExerciseMuscles === 'function') ? resolveExerciseMuscles(e.name) : [];
+    if(!fine || fine.indexOf(muscle) < 0) return;
+    const clip = (typeof _exVideoEntry === 'function') && !!_exVideoEntry(e.name, EX_VIDEO_MAP);
+    rows.push({ name: e.name, equip: e.equip || '', cat: e.cat || '', clip });
+  });
+  rows.sort((a, b) => (b.clip - a.clip) || a.name.localeCompare(b.name));
+  const t = document.getElementById('mexTitle'), s = document.getElementById('mexSub'), b = document.getElementById('mexBody');
+  const m = document.getElementById('muscleExplorerMod');
+  if(!t || !s || !b || !m) return;
+  t.textContent = label;
+  s.textContent = rows.length + ' exercise' + (rows.length === 1 ? '' : 's') + ' train this muscle · ▶ = demo clip';
+  const esc = x => String(x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  b.innerHTML = rows.length ? rows.map(r => `
+    <div onclick='document.getElementById("muscleExplorerMod").classList.remove("open");openFormGuideFor(${JSON.stringify(r.name)})'
+      style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 2px;border-bottom:0.5px solid var(--border);cursor:pointer;">
+      <div style="min-width:0;">
+        <div style="font-size:13.5px;font-weight:700;">${esc(r.name)}${r.clip ? ' <span style="font-size:10px;color:var(--accent);">▶</span>' : ''}</div>
+        <div style="font-size:11px;color:var(--text2);">${esc(r.equip)}${r.cat ? ' · ' + esc(r.cat) : ''}</div>
+      </div>
+      <div style="color:var(--text2);font-size:14px;flex-shrink:0;">›</div>
+    </div>`).join('') : '<div style="text-align:center;color:var(--text2);font-size:13px;padding:16px 0;">No exercises found.</div>';
+  m.classList.add('open');
+}
+
 const MUSCLE_LABELS = {
   chest:'Chest', shoulders:'Shoulders', rear_delts:'Rear delts', traps:'Traps',
   lats:'Lats', biceps:'Biceps', triceps:'Triceps', abs:'Abs',
@@ -16699,6 +16740,13 @@ function renderMuscleHeatmap(){
     ${winChip(7, 'This week')}${winChip(14, 'Last 2 weeks')}${winChip(28, 'Last 4 weeks')}
   </div>`;
 
+  // Tap-a-muscle chips (browse exercises per muscle)
+  const chips = `
+    <div style="display:flex;flex-wrap:wrap;gap:5px;justify-content:center;margin-top:12px;">
+      ${Object.keys(MUSCLE_LABELS).map(k => `<div class="chip" onclick="openMuscleExplorer('${k}')" style="font-size:10.5px;padding:5px 10px;cursor:pointer;">${MUSCLE_LABELS[k]}</div>`).join('')}
+    </div>
+    <div style="text-align:center;font-size:10px;color:var(--text2);margin-top:6px;">Tap a muscle to browse its exercises &amp; clips</div>`;
+
   // Volume legend
   const legend = `
     <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-top:6px;font-size:10px;color:var(--text2);">
@@ -16721,15 +16769,15 @@ function renderMuscleHeatmap(){
       ${underTrained.map(([m, v]) => {
         const hint = UNDER_TRAINED_HINTS[m] || '';
         const volLabel = v === 0 ? 'no work logged' : fmtVol(v);
-        return `<div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:3px;">${MUSCLE_LABELS[m]} <span style="color:var(--text2);font-weight:400;">— ${volLabel}</span>${hint ? `<div style="font-size:11px;font-weight:400;color:var(--text2);margin-top:1px;">${hint}</div>` : ''}</div>`;
+        return `<div onclick="openMuscleExplorer('${m}')" style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:3px;cursor:pointer;">${MUSCLE_LABELS[m]} <span style="color:var(--text2);font-weight:400;">— ${volLabel}</span> <span style="font-size:10px;color:var(--accent);">browse ›</span>${hint ? `<div style="font-size:11px;font-weight:400;color:var(--text2);margin-top:1px;">${hint}</div>` : ''}</div>`;
       }).join('')}
     </div>` : '';
 
   if(data.total === 0){
-    el.innerHTML = `${toggleHtml}<div style="padding:20px;text-align:center;color:var(--text2);font-size:13px;">No sessions in the last ${_muscleHeatmapWindow} days — start training to see your heatmap.</div>${svg}${legend}`;
+    el.innerHTML = `${toggleHtml}<div style="padding:20px;text-align:center;color:var(--text2);font-size:13px;">No sessions in the last ${_muscleHeatmapWindow} days — start training to see your heatmap.</div>${svg}${legend}${chips}`;
     return;
   }
-  el.innerHTML = `${toggleHtml}${svg}${legend}${topHtml}${underHtml}`;
+  el.innerHTML = `${toggleHtml}${svg}${legend}${chips}${topHtml}${underHtml}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────
