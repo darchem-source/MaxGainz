@@ -422,6 +422,14 @@ def gate_videomap(js):
     if cbad or len(slugs) < 12 or len(set(slugs)) != len(slugs):
         print(f'  ✗ COOLDOWN_STRETCHES invalid (n={len(slugs)}, bad={cbad[:3]}, dupes={len(slugs)-len(set(slugs))})'); return False
     print(f'  ✓ COOLDOWN_STRETCHES well-formed ({len(slugs)} stretches)')
+    wm = re.search(r'const WARMUP_MOVES = \[(.*?)\n\];', js, re.S)
+    if not wm:
+        print('  ✗ WARMUP_MOVES literal not found'); return False
+    ws = re.findall(r"slug:'([^']+)'", wm.group(1))
+    wbad = [s for s in ws if not re.fullmatch(r'[a-z0-9-]+', s)]
+    if wbad or len(ws) < 8 or len(set(ws)) != len(ws):
+        print(f'  ✗ WARMUP_MOVES invalid (n={len(ws)}, bad={wbad[:3]})'); return False
+    print(f'  ✓ WARMUP_MOVES well-formed ({len(ws)} moves)')
     return True
 
 def main():

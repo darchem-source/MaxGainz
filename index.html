@@ -617,8 +617,9 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
           <button class="sc-btn" onclick="addSett()">+</button>
         </div>
         <!-- Warm-up toggle -->
-        <div style="margin-bottom:8px;">
+        <div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;">
           <button onclick="toggleWarmup()" id="warmupBtn" style="background:transparent;border:0.5px solid var(--border);border-radius:8px;padding:5px 12px;font-size:11px;font-weight:700;color:var(--text2);cursor:pointer;">+ Warm-up sets</button>
+          <button onclick="startGuidedWarmup()" style="background:transparent;border:0.5px solid rgba(255,140,66,0.4);border-radius:8px;padding:5px 12px;font-size:11px;font-weight:700;color:var(--orange, #ff8c42);cursor:pointer;">🔥 Guided warm-up (2 min)</button>
         </div>
         <div class="sets-row" id="warmupRow" style="display:none;margin-bottom:8px;"></div>
         <div class="sets-row" id="setsRow"></div>
@@ -1878,7 +1879,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
     <!-- no .modal-handle: swipe-dismiss would leave the cooldown timer running
          hidden and auto-finish the session later — ending is button-only -->
     <div id="cooldownHeader" style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:2px;">
-      <div style="font-size:11px;font-weight:800;color:var(--accent2);text-transform:uppercase;letter-spacing:1.5px;">🧘 Cooldown</div>
+      <div id="cooldownHeadLbl" style="font-size:11px;font-weight:800;color:var(--accent2);text-transform:uppercase;letter-spacing:1.5px;">🧘 Cooldown</div>
       <div id="cooldownProg" style="font-size:12px;color:var(--text2);font-weight:700;">1 / 6</div>
     </div>
     <div id="cooldownName" style="font-size:18px;font-weight:800;margin-bottom:10px;">Stretch</div>
@@ -1896,9 +1897,9 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
     </div>
     <div class="cooldown-actions" style="display:flex;gap:8px;">
       <button id="cooldownSkipBtn" onclick="skipCooldownStretch()" style="flex:1;background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:13px;font-size:14px;font-weight:700;color:var(--text);cursor:pointer;">Skip →</button>
-      <button onclick="endCooldownAndFinish()" style="flex:1;background:var(--green);border:none;border-radius:12px;padding:13px;font-size:14px;font-weight:800;color:#000;cursor:pointer;">🏁 Finish</button>
+      <button id="cooldownFinishBtn" onclick="endCooldownAndFinish()" style="flex:1;background:var(--green);border:none;border-radius:12px;padding:13px;font-size:14px;font-weight:800;color:#000;cursor:pointer;">🏁 Finish</button>
     </div>
-    <button class="cooldown-back" onclick="exitCooldownToTraining()" style="width:100%;margin-top:8px;background:transparent;border:none;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;padding:8px;">← Back to training (don't finish)</button>
+    <button id="cooldownBackBtn" class="cooldown-back" onclick="exitCooldownToTraining()" style="width:100%;margin-top:8px;background:transparent;border:none;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;padding:8px;">← Back to training (don't finish)</button>
   </div>
 </div>
 
@@ -5870,7 +5871,7 @@ function updateSessUI(){
     if(warmupBtnWrap) warmupBtnWrap.style.display = 'none';
   } else {
     if(setCtrlDiv) setCtrlDiv.style.display = 'flex';
-    if(warmupBtnWrap) warmupBtnWrap.style.display = 'block';
+    if(warmupBtnWrap) warmupBtnWrap.style.display = 'flex';
   }
 
   renderBubbles(ex); renderQueue(); updNextBtn();
@@ -10821,6 +10822,20 @@ const COOLDOWN_STRETCHES = [
 ];
 const COOLDOWN_STRETCH_SECS = 45;
 const COOLDOWN_COUNT = 6;
+// Dynamic pre-lift warm-up moves (30s each, 4 picked per session) — motion-
+// based prep rather than static holds; every entry has a demo clip.
+const WARMUP_MOVES = [
+  {name:'Dynamic Chest Stretch', slug:'stretching-dynamic-chest-stretch', g:'mf', groups:['push']},
+  {name:'Band Shoulder Pass-Through', slug:'stretching-band-warm-up-shoulder-stretch', g:'mf', groups:['push','pull']},
+  {name:'Standing Reach-Up Rotation', slug:'stretching-standing-reach-up-back-rotation-stretch', g:'mf', groups:['push','pull']},
+  {name:'Standing Back Rotation', slug:'stretching-standing-back-rotation-stretch', g:'mf', groups:['pull','core']},
+  {name:'Spine Stretch', slug:'stretching-spine-stretch', g:'mf', groups:['pull','core']},
+  {name:'Hip Circles', slug:'stretching-hip-circles-stretch', g:'mf', groups:['legs']},
+  {name:'Standing Knee Raise', slug:'stretching-knee-raise', g:'mf', groups:['legs','core']},
+  {name:'Side Lunge Stretch', slug:'stretching-plyo-side-lunge-stretch', g:'mf', groups:['legs']},
+  {name:'Runners Stretch', slug:'stretching-runners-stretch', g:'mf', groups:['legs']},
+  {name:'Single Leg Stretch', slug:'stretching-single-leg-stretch-bent-knee', g:'mf', groups:['core','legs']},
+];
 
 // Pure: pick `count` stretches covering the trained groups, cycling round-
 // robin across the groups for even coverage; unique picks only. seed rotates
@@ -10878,7 +10893,34 @@ function _sessionTrainedGroups(){
   return { groups: Object.keys(weights), weights };
 }
 
-let _cooldownState = null; // {list, idx, startMs}
+let _cooldownState = null; // {list, idx, startMs, secs, mode}
+// Guided-flow engine: one player, three modes.
+//   'cooldown' — post-session stretches, completing finishes the session
+//   'warmup'   — pre-lift dynamic prep, completing just closes
+//   'recovery' — rest-day mobility flow, completing logs a manual activity
+const _FLOW_TEXT = {
+  cooldown: { head:'🧘 Cooldown', finish:'🏁 Finish', back:"← Back to training (don't finish)" },
+  warmup:   { head:'🔥 Warm-up',  finish:'✓ Done — start lifting', back:'← Skip warm-up' },
+  recovery: { head:'🧘 Mobility Flow', finish:'✓ Finish & log', back:"← Exit (don't log)" },
+};
+function _startGuidedFlow(list, secs, mode){
+  const m = document.getElementById('cooldownMod');
+  if(!list.length || !m) return false;
+  _cooldownState = { list, idx: 0, startMs: Date.now(), secs: secs, mode: mode };
+  const t = _FLOW_TEXT[mode] || _FLOW_TEXT.cooldown;
+  const head = document.getElementById('cooldownHeadLbl');
+  if(head) head.textContent = t.head;
+  const fin = document.getElementById('cooldownFinishBtn');
+  if(fin) fin.textContent = t.finish;
+  const back = document.getElementById('cooldownBackBtn');
+  if(back) back.textContent = t.back;
+  m.classList.add('open');
+  _renderCooldownStretch();
+  // Wall-clock anchored (like the session timer): index derives from elapsed
+  // real time, so a locked screen can't freeze the countdown.
+  startTimer('cooldown', _cooldownTick, 500);
+  return true;
+}
 function startCooldown(){
   const fm = document.getElementById('finishOptionsMod');
   if(fm) fm.classList.remove('open');
@@ -10890,31 +10932,58 @@ function startCooldown(){
   const dayIdx = Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 86400000);
   const trained = _sessionTrainedGroups();
   const list = _buildCooldown(trained.groups, dayIdx, COOLDOWN_STRETCHES, COOLDOWN_COUNT, trained.weights);
-  const m = document.getElementById('cooldownMod');
-  if(!list.length || !m){ finishSession(); return; }
-  // Wall-clock anchored (like the session timer): stretch index derives from
-  // elapsed real time, so a locked screen can't freeze the countdown.
-  _cooldownState = { list, idx: 0, startMs: Date.now() };
-  m.classList.add('open');
-  _renderCooldownStretch();
-  startTimer('cooldown', _cooldownTick, 500);
+  if(!_startGuidedFlow(list, COOLDOWN_STRETCH_SECS, 'cooldown')) finishSession();
+}
+// 2-minute dynamic warm-up matched to today's planned muscle groups.
+function startGuidedWarmup(){
+  const now = new Date();
+  const dayIdx = Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 86400000);
+  const trained = _sessionTrainedGroups();
+  const list = _buildCooldown(trained.groups, dayIdx, WARMUP_MOVES, 4, trained.weights);
+  if(!_startGuidedFlow(list, 30, 'warmup') && typeof showToast === 'function') showToast('No warm-up available', 1500);
+}
+// Rest-day 10-minute guided mobility flow — logs as a manual activity.
+function startMobilityFlow(){
+  const now = new Date();
+  const dayIdx = Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 86400000);
+  const list = _buildCooldown(['push','pull','legs','core'], dayIdx, COOLDOWN_STRETCHES, 10);
+  if(!_startGuidedFlow(list, 60, 'recovery') && typeof showToast === 'function') showToast('No flow available', 1500);
+}
+function _logMobilityFlow(elapsedMs){
+  const mins = Math.max(0, Math.round((Number(elapsedMs) || 0) / 60000));
+  if(mins < 1){
+    if(typeof showToast === 'function') showToast('Flow too short to log — give it at least a minute 🧘', 2400);
+    return;
+  }
+  const xp = Math.min(30, mins * 3); // 3 XP per real minute, capped
+  const sess = { date:new Date(), day:'Mobility Flow', exercises:0, durationMin:mins, volume:0,
+    topLifts:[], setLog:{}, activityType:'mobility', activityEmoji:'🧘', intensity:'easy',
+    manualActivity:true, custom_activity:true, notes:null, xpAwarded:xp };
+  completedSessions.push(sess);
+  completedSessions.sort((a,b) => new Date(a.date) - new Date(b.date));
+  if(typeof awardXP === 'function') awardXP('activity',{xp});
+  if(typeof saveStore === 'function') saveStore(sess, null);
+  if(typeof renderToday === 'function') renderToday();
+  if(typeof showToast === 'function') showToast('🧘 Mobility Flow logged · ' + mins + 'min · +' + xp + ' XP', 2600);
 }
 function _cooldownTick(){
   if(!_cooldownState) return;
+  const secs = _cooldownState.secs || COOLDOWN_STRETCH_SECS;
   const elapsed = (Date.now() - _cooldownState.startMs) / 1000;
-  const idx = Math.floor(elapsed / COOLDOWN_STRETCH_SECS);
+  const idx = Math.floor(elapsed / secs);
   if(idx >= _cooldownState.list.length){ endCooldownAndFinish(); return; }
   if(idx !== _cooldownState.idx){ _cooldownState.idx = idx; _renderCooldownStretch(); }
-  const remain = COOLDOWN_STRETCH_SECS - Math.floor(elapsed % COOLDOWN_STRETCH_SECS);
+  const remain = secs - Math.floor(elapsed % secs);
   const t = document.getElementById('cooldownTimer');
   if(t) t.textContent = Math.max(0, remain) + 's';
 }
 function skipCooldownStretch(){
   if(!_cooldownState) return;
   // Jump the wall-clock anchor to the start of the next stretch.
+  const secs = _cooldownState.secs || COOLDOWN_STRETCH_SECS;
   const elapsed = (Date.now() - _cooldownState.startMs) / 1000;
-  const intoStretch = elapsed % COOLDOWN_STRETCH_SECS;
-  _cooldownState.startMs -= (COOLDOWN_STRETCH_SECS - intoStretch) * 1000;
+  const intoStretch = elapsed % secs;
+  _cooldownState.startMs -= (secs - intoStretch) * 1000;
   _cooldownTick();
 }
 // Escape hatch: abandon the cooldown WITHOUT saving — back to the session.
@@ -10972,7 +11041,7 @@ function _renderCooldownStretch(){
   const timerEl = document.getElementById('cooldownTimer');
   if(nameEl) nameEl.textContent = st.name;
   if(progEl) progEl.textContent = (_cooldownState.idx + 1) + ' / ' + _cooldownState.list.length;
-  if(timerEl) timerEl.textContent = COOLDOWN_STRETCH_SECS + 's';
+  if(timerEl) timerEl.textContent = (_cooldownState.secs || COOLDOWN_STRETCH_SECS) + 's';
   // On the final stretch, "Skip" would end the session — say so honestly.
   const skipBtn = document.getElementById('cooldownSkipBtn');
   if(skipBtn) skipBtn.textContent = (_cooldownState.idx >= _cooldownState.list.length - 1) ? '✓ Done' : 'Skip →';
@@ -11006,9 +11075,19 @@ function _cooldownVideoError(v){
 }
 function endCooldownAndFinish(){
   if(!_cooldownState) return; // already ended (double-tap / stacked path)
+  const mode = _cooldownState.mode || 'cooldown';
+  const _flowElapsed = Date.now() - (_cooldownState.startMs || Date.now());
   if(typeof stopTimer === 'function') stopTimer('cooldown');
   _cooldownState = null;
   _cooldownExitFs();
+  if(mode !== 'cooldown'){
+    const v0 = document.getElementById('cooldownVideo');
+    if(v0){ try{ v0.pause(); v0.removeAttribute('src'); v0.load(); }catch(e){} }
+    const m0 = document.getElementById('cooldownMod');
+    if(m0) m0.classList.remove('open');
+    if(mode === 'recovery') _logMobilityFlow(_flowElapsed);
+    return; // warmup: session simply continues
+  }
   const v = document.getElementById('cooldownVideo');
   if(v){ try{ v.pause(); v.removeAttribute('src'); v.load(); }catch(e){} }
   const m = document.getElementById('cooldownMod');
@@ -18191,6 +18270,7 @@ function _renderActiveRecovery(){
         <div style="font-size:10px;font-weight:800;color:var(--accent2);text-transform:uppercase;letter-spacing:1.2px;">Active recovery</div>
         <div style="font-size:13px;font-weight:700;color:var(--text);margin-top:1px;">${r[1]}</div>
         <div style="font-size:11px;color:var(--text2);margin-top:1px;line-height:1.35;">${r[2]}</div>
+        <button onclick="startMobilityFlow()" style="display:inline-block;margin-top:8px;background:rgba(200,255,0,0.1);border:0.5px solid rgba(200,255,0,0.3);border-radius:8px;padding:6px 12px;font-size:12px;font-weight:800;color:var(--accent);cursor:pointer;">▶ Guided mobility flow (10 min · +30 XP)</button>
       </div>
     </div>`;
 }
