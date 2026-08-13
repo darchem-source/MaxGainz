@@ -2594,6 +2594,39 @@ const LIBRARY_PROGRAMMES = [
       ]},
     ],
   },
+  {
+    id:'home-gainz', name:'Home Gainz', short:'Home Gainz',
+    level:'Beginner', goal:'Hypertrophy', daysPerWeek:3, equipment:'Bodyweight + Band',
+    tags:['hypertrophy','beginner','bodyweight','band','home','3-day','full-body'],
+    blurb:'No rack, no dumbbells, no excuses — one resistance band, the floor, and three days a week.',
+    description:'Three rotating sessions — Push & Core, Pull & Legs, then a Full Body day — built around bodyweight and a single resistance band. Everything anchors to a door, a chair, or the floor; a stability ball is optional and only used on two moves. Progress by working to the top of every rep range, then slowing the eccentric, then shortening the band or moving to the harder variation. Run it A/B/C with a rest day between and repeat.',
+    schedule:[
+      { day:'Home A — Push & Core', badge:'badge-u', exercises:[
+        {name:'Push-Ups',sets:4,reps:'8–15',weight:0,muscles:['chest','triceps','shoulders'],bw:true,type:'Primary'},
+        {name:'Pike Push-Ups',sets:3,reps:'6–12',weight:0,muscles:['shoulders','triceps'],bw:true,type:'Compound'},
+        {name:'Band High Fly',sets:3,reps:'12–20',weight:0,muscles:['chest','shoulders'],bw:true,type:'Main Assistance'},
+        {name:'Band Pushdown',sets:3,reps:'12–20',weight:0,muscles:['triceps'],bw:true,type:'Accessory'},
+        {name:'Stability Ball Sit-Ups',sets:3,reps:'12–20',weight:0,muscles:['core'],bw:true,type:'Accessory'},
+        {name:'Side Plank',sets:3,reps:'20–45s each side',weight:0,muscles:['core'],bw:true,type:'Accessory'}
+      ]},
+      { day:'Home B — Pull & Legs', badge:'badge-l', exercises:[
+        {name:'Bulgarian Split Squats',sets:4,reps:'8–12 each side',weight:0,muscles:['legs','glutes'],bw:true,type:'Primary'},
+        {name:'Band Seated Row',sets:4,reps:'10–15',weight:0,muscles:['back','biceps'],bw:true,type:'Primary'},
+        {name:'Band Kneeling One-Arm Pulldown',sets:3,reps:'10–15 each side',weight:0,muscles:['back','biceps'],bw:true,type:'Main Assistance'},
+        {name:'Band Pull-Through',sets:3,reps:'12–20',weight:0,muscles:['glutes','legs'],bw:true,type:'Main Assistance'},
+        {name:'Stability Ball Leg Curl',sets:3,reps:'10–15',weight:0,muscles:['legs','glutes'],bw:true,type:'Accessory'},
+        {name:'Band Rear Delt Row',sets:3,reps:'15–20',weight:0,muscles:['shoulders','back'],bw:true,type:'Accessory'}
+      ]},
+      { day:'Home C — Full Body', badge:'badge-u', exercises:[
+        {name:'Walking Lunges',sets:4,reps:'10–14 each side',weight:0,muscles:['legs','glutes'],bw:true,type:'Primary'},
+        {name:'Inverted Rows',sets:4,reps:'8–15',weight:0,muscles:['back','biceps','core'],bw:true,type:'Primary'},
+        {name:'Inclined Push-Ups',sets:3,reps:'12–20',weight:0,muscles:['chest','triceps','shoulders'],bw:true,type:'Compound'},
+        {name:'Feet-Elevated Glute Bridge',sets:3,reps:'12–20',weight:0,muscles:['glutes','legs','core'],bw:true,type:'Main Assistance'},
+        {name:'Band Standing Calf Raise',sets:3,reps:'15–20',weight:0,muscles:['legs','calves'],bw:true,type:'Accessory'},
+        {name:'Hollow Hold',sets:3,reps:'20–40s',weight:0,muscles:['core'],bw:true,type:'Accessory'}
+      ]},
+    ],
+  },
 ];
 
 // Library helpers
@@ -2872,6 +2905,11 @@ const EXDB=[
   {name:'Seated Leg Curl',cat:'legs',muscles:['legs'],diff:1,equip:'Machine',sets:'3–4',reps:'10–15',benefits:'Hamstring isolation with constant tension from a stronger seated position',cues:['Pad just above the heels','Curl through the full range','Pause at peak flexion','Resist the return'],joints:['knee'],alts:['Leg Curls','Stability Ball Leg Curl','Nordic Curl']},
   {name:'Kneeling Leg Curl',cat:'legs',muscles:['legs'],diff:2,equip:'Machine',sets:'3',reps:'8–12',benefits:'Single-leg hamstring curl — fixes left/right strength gaps',cues:['Square the hips against the pad','Curl one heel to the glute','No twisting through the torso','Slow eccentric'],joints:['knee'],alts:['Leg Curls','Seated Leg Curl']},
   {name:'Band Hip Abduction',cat:'legs',muscles:['glutes','legs'],diff:1,equip:'Resistance band',sets:'3',reps:'15–20 each side',benefits:'Glute-med strength for hip stability — knee health insurance',cues:['Band around ankles or knees','Stand tall, core braced','Drive the leg out to the side','Control the return'],joints:['hip'],alts:['Abductor Machine','Lateral Band Walks']},
+  // Home Gainz imports
+  {name:'Band Kneeling One-Arm Pulldown',cat:'pull',muscles:['back','biceps'],diff:1,equip:'Resistance band',sets:'3–4',reps:'10–15 each side',benefits:'Vertical pull with no bar and no stack — lat width from a doorway anchor',cues:['Anchor the band high, kneel directly underneath','Start with the arm long and the shoulder relaxed','Drive the elbow down toward the hip','Resist the band all the way back up'],joints:['shoulder','elbow'],alts:['Lat Pulldown','Band-Assisted Pull-Ups','Straight Arm Pulldown']},
+  {name:'Band Rear Delt Row',cat:'pull',muscles:['shoulders','back'],diff:1,equip:'Resistance band',sets:'3',reps:'15–20',benefits:'High-elbow row that builds rear delts and undoes desk-chair posture',cues:['Band anchored at chest height, arms straight to start','Pull with the elbows high and wide','Squeeze the rear delts, not the traps','Light tension, slow return'],joints:['shoulder','elbow'],alts:['Face Pulls','Reverse Fly','Band Pull-Aparts']},
+  {name:'Band Standing Calf Raise',cat:'legs',muscles:['legs','calves'],diff:1,equip:'Resistance band',sets:'3–4',reps:'15–20',benefits:'Loadable calf work at home — the band puts resistance where the machine would',cues:['Stand on the band, hold the ends up at the shoulders','Rise onto the balls of the feet','Pause a beat at the very top','Lower slowly into a full stretch'],joints:['ankle'],alts:['Calf Raises','Seated Calf Raise','Donkey Calf Raise']},
+  {name:'Feet-Elevated Glute Bridge',cat:'legs',muscles:['glutes','legs','core'],diff:1,equip:'Bodyweight',sets:'3–4',reps:'12–20',benefits:'Longer range than the floor bridge — more glute and hamstring, still zero kit',cues:['Heels up on a chair or sofa, shoulders on the floor','Drive through the heels, never the toes','Squeeze the glutes hard at the top','Lower until the hips hover — no resting between reps'],joints:['hip','knee'],alts:['Glute Bridges','Hip Thrusts','Band Pull-Through']},
 ];
 
 // ── SUPABASE CONFIG ──
@@ -5333,7 +5371,7 @@ const EX_META = {
   'Toes-to-Bar':{equip:'bw'},'V-Ups':{equip:'bw'},'Hanging Knee Raises':{equip:'bw'},
   'Hollow Hold':{equip:'bw'},'Flutter Kicks':{equip:'bw'},'Bicycle Crunch':{equip:'bw'},
   'Single-Leg Glute Bridge':{equip:'bw'},'Donkey Kicks':{equip:'bw'},
-  'Reverse Lunge with Knee Drive':{equip:'bw'},'Diamond Push-Ups':{equip:'bw'},'Band Hip Abduction':{equip:'bw'},
+  'Reverse Lunge with Knee Drive':{equip:'bw'},'Diamond Push-Ups':{equip:'bw'},'Band Hip Abduction':{equip:'bw'},'Band Kneeling One-Arm Pulldown':{equip:'bw'},'Band Rear Delt Row':{equip:'bw'},'Feet-Elevated Glute Bridge':{equip:'bw'},'Band Standing Calf Raise':{equip:'bw'},
 };
 
 function getEquipType(ex) {
@@ -14296,10 +14334,13 @@ const EX_VIDEO_MAP = {
   'Back Extension (45°)': '45-degree-hyperextension',
   'Band High Fly': 'band-high-fly',
   'Band Hip Abduction': 'band-hip-abduction',
+  'Band Kneeling One-Arm Pulldown': 'band-kneeling-one-arm-pulldown',
   'Band Pull-Through': 'band-pull-through',
   'Band Pushdown': 'band-triceps-pushdown',
+  'Band Rear Delt Row': 'band-standing-rear-delt-row|m',
   'Band Seated Row': 'band-seated-row',
   'Band Shoulder Pass-Through': 'stretching-band-warm-up-shoulder-stretch',
+  'Band Standing Calf Raise': 'band-standing-calf-raise',
   'Band-Assisted Pull-Ups': 'band-assisted-pull-up',
   'Barbell Curls': 'barbell-curl',
   'Barbell Row': 'barbell-underhand-bent-over-row',
@@ -14339,6 +14380,7 @@ const EX_VIDEO_MAP = {
   'Dumbbell Stiff-Leg Deadlift': 'single-dumbbell-stiff-leg-deadlift',
   'Elliptical': 'elliptical',
   'EZ Bar Curl': 'ez-barbell-biceps-curl',
+  'Feet-Elevated Glute Bridge': 'rear-decline-bridge',
   'Flutter Kicks': 'lying-scissor-kick-female|f',
   'Front Raises': 'dumbbell-front-raise',
   'Front Squat': 'barbell-front-chest-squat',
