@@ -5592,17 +5592,28 @@ function applyExerciseRotation(exs, dayName, progKey, cycleOffset){
   if(!Array.isArray(exs) || !exs.length) return exs;
   if(typeof userPreferences === 'object' && userPreferences && userPreferences.rotateExercises === false) return exs;
   const cycle = _dayCycleCount(dayName, progKey) + (Number(cycleOffset) || 0);
-  if(cycle <= 0) return exs;
+  // Recovery week (opt-in periodization, week 4 of the block): accessory
+  // slots prefer their lightest (bodyweight/band) pool alternate — same
+  // deterministic inputs everywhere, so previews and launches agree.
+  const _bw = (typeof userPreferences === 'object' && userPreferences && userPreferences.periodize &&
+               typeof _currentBlockWeek === 'function' && typeof _leanFor === 'function') ? _currentBlockWeek() : null;
+  const recoveryWk = (_bw != null) && _leanFor(_bw) === 'neutral';
+  if(cycle <= 0 && !recoveryWk) return exs;
   const names = new Set(exs.map(e => e && e.name));
   return exs.map(ex => {
     if(!ex || ex.coreCircuit) return ex;
     const pool = EX_ROTATION_POOLS[ex.name];
     if(!Array.isArray(pool) || !pool.length) return ex;
-    // Scan forward from the cycle's pick to the first non-colliding option.
-    // Position 0 of the rotation is the original exercise itself.
-    let alt = null;
+    // Recovery week: the lightest pool member wins (if it doesn't collide).
+    let alt = null, recPick = false;
+    if(recoveryWk){
+      const light = pool.find(p => p && p.bw && !names.has(p.name));
+      if(light){ alt = light; recPick = true; }
+    }
+    // Otherwise scan forward from the cycle's pick to the first non-colliding
+    // option. Position 0 of the rotation is the original exercise itself.
     const n = pool.length + 1;
-    for(let k = 0; k < n; k++){
+    if(!alt) for(let k = 0; k < n; k++){
       const idx = ((cycle + k) % n + n) % n;
       if(idx === 0){ alt = null; break; }            // wrapped to the original
       const cand = pool[idx - 1];
@@ -5622,6 +5633,7 @@ function applyExerciseRotation(exs, dayName, progKey, cycleOffset){
     // Muscles from EXDB when known (keeps balance analytics honest).
     const dbEx = (typeof EXDB !== 'undefined') ? EXDB.find(e => e.name === alt.name) : null;
     const out = { ...ex, name: alt.name, reps: reps, weight: w, _rotated: true };
+    if(recPick) out._recoveryPick = true;
     if(dbEx && Array.isArray(dbEx.muscles)) out.muscles = dbEx.muscles.slice();
     if(alt.bw) out.bw = true; else delete out.bw;
     if(!out.bw && typeof snapToSteps === 'function' && typeof getWeightSteps === 'function' && out.weight > 0){
@@ -5762,7 +5774,7 @@ function updateSessUI(){
     document.getElementById('currMeta').textContent=ex.reps+' · '+ex.emomNote;
     document.getElementById('setCountLbl').textContent=ex.sets+' sets planned';
   } else {
-    document.getElementById('currMeta').textContent=ex.sets+' sets · '+ex.reps+(ex._rotated?' · 🔄 variation':'')+(ex.note?' · '+ex.note:'');
+    document.getElementById('currMeta').textContent=ex.sets+' sets · '+ex.reps+(ex._recoveryPick?' · 🌿 recovery pick':ex._rotated?' · 🔄 variation':'')+(ex.note?' · '+ex.note:'');
     document.getElementById('setCountLbl').textContent=ex.sets+' sets planned';
   }
 
@@ -8789,8 +8801,8 @@ function initCurrCardLongPress(){
   });
 }
 
-function addSett(){const ex=sessExs[curIdx];ex.sets=Math.min(ex.sets+1,10);document.getElementById('setCountLbl').textContent=ex.sets+' sets planned';document.getElementById('currMeta').textContent=ex.sets+' sets · '+ex.reps+(ex._rotated?' · 🔄 variation':'')+(ex.note?' · '+ex.note:'');renderBubbles(ex);updNextBtn();}
-function removeSett(){const ex=sessExs[curIdx];if(ex.sets<=1)return;ex.sets--;document.getElementById('setCountLbl').textContent=ex.sets+' sets planned';document.getElementById('currMeta').textContent=ex.sets+' sets · '+ex.reps+(ex._rotated?' · 🔄 variation':'')+(ex.note?' · '+ex.note:'');renderBubbles(ex);updNextBtn();}
+function addSett(){const ex=sessExs[curIdx];ex.sets=Math.min(ex.sets+1,10);document.getElementById('setCountLbl').textContent=ex.sets+' sets planned';document.getElementById('currMeta').textContent=ex.sets+' sets · '+ex.reps+(ex._recoveryPick?' · 🌿 recovery pick':ex._rotated?' · 🔄 variation':'')+(ex.note?' · '+ex.note:'');renderBubbles(ex);updNextBtn();}
+function removeSett(){const ex=sessExs[curIdx];if(ex.sets<=1)return;ex.sets--;document.getElementById('setCountLbl').textContent=ex.sets+' sets planned';document.getElementById('currMeta').textContent=ex.sets+' sets · '+ex.reps+(ex._recoveryPick?' · 🌿 recovery pick':ex._rotated?' · 🔄 variation':'')+(ex.note?' · '+ex.note:'');renderBubbles(ex);updNextBtn();}
 
 // ── REP INPUT (with set weight edit + correction of past sets) ──
 function openRepInput(setIdx){
