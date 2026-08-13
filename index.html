@@ -12499,6 +12499,7 @@ function _renderMyProgrammesSection(){
   // and assign a level so they slot in alongside the curated entries.
   const preMade = [
     {
+      id: 'ULF',
       sortKey: _levelRank('Beginner'),
       render: () => renderBuiltIn('ULF', ULF,
         'Beginner · Upper · Lower · Full Body — 3 days',
@@ -12506,6 +12507,7 @@ function _renderMyProgrammesSection(){
         'Each session targets a different focus area on a Mon/Wed/Fri-style rotation: upper-body push and pull on day 1, lower-body squats and posterior chain on day 2, full-body compounds on day 3. Adequate rest between sessions makes this a sustainable starting template — beginner-friendly volume, intermediate-capable progression.')
     },
     {
+      id: 'PPL',
       sortKey: _levelRank('Intermediate'),
       render: () => renderBuiltIn('PPL', PPL,
         'Intermediate · Push · Pull · Legs — 3 or 6 days',
@@ -12516,6 +12518,7 @@ function _renderMyProgrammesSection(){
   if(typeof LIBRARY_PROGRAMMES !== 'undefined'){
     LIBRARY_PROGRAMMES.forEach(p => {
       preMade.push({
+        id: p.id,
         sortKey: _levelRank(p.level),
         render: () => renderLibrary(p)
       });
@@ -12526,8 +12529,46 @@ function _renderMyProgrammesSection(){
   // entries follow in their declared order).
   preMade.sort((a, b) => a.sortKey - b.sortKey);
 
-  html += subLabel('Pre-made');
-  preMade.forEach(item => { html += item.render(); });
+  // ── Pre-made, shelved by WHO THEY'RE FOR (persona), not by name.
+  // Cards keep their existing expandable render; shelves are collapsed
+  // headers with counts so the tab opens calm instead of as a wall.
+  const SHELF_DEFS = [
+    {k:'starter', label:'🌱 Just getting started', sub:'Guided and low-barrier — pick one and go', ids:['machine-foundations','home-gainz','db-home-fb','greyskull']},
+    {k:'strong',  label:'🏆 Get strong', sub:'The barbell school — add weight every week', ids:['sl5x5','starting-strength','madcow-5x5','gzclp','531-bbb']},
+    {k:'muscle',  label:'💪 Build muscle', sub:'Volume splits for size', ids:['ULF','PPL','phul','phat','arnold-split','bro-split']},
+  ];
+  const byId = {};
+  preMade.forEach(item => { if(item.id) byId[item.id] = item; });
+  const placed = new Set();
+  html += subLabel('Pre-made · by goal');
+  SHELF_DEFS.forEach(s => {
+    const members = s.ids.filter(id => byId[id]);
+    if(!members.length) return;
+    members.forEach(id => placed.add(id));
+    const sk = 'shelf_' + s.k;
+    html += `<div style="margin:0 16px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:14px;overflow:hidden;">
+      <div onclick="togDay('${sk}')" style="padding:13px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:800;">${s.label} <span style="font-size:11px;color:var(--text2);font-weight:600;">· ${members.length}</span></div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px;">${s.sub}</div>
+        </div>
+        <div style="color:var(--text2);font-size:13px;" id="arr-${sk}">▼</div>
+      </div>
+      <div id="dd-${sk}" style="display:none;padding:0 0 6px;">${members.map(id => byId[id].render()).join('')}</div>
+    </div>`;
+  });
+  // Anything not shelved (future additions) stays reachable.
+  const rest = preMade.filter(item => item.id && !placed.has(item.id));
+  if(rest.length){
+    const sk = 'shelf_more';
+    html += `<div style="margin:0 16px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:14px;overflow:hidden;">
+      <div onclick="togDay('${sk}')" style="padding:13px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;">
+        <div style="flex:1;"><div style="font-size:14px;font-weight:800;">✨ More programmes <span style="font-size:11px;color:var(--text2);font-weight:600;">· ${rest.length}</span></div></div>
+        <div style="color:var(--text2);font-size:13px;" id="arr-${sk}">▼</div>
+      </div>
+      <div id="dd-${sk}" style="display:none;padding:0 0 6px;">${rest.map(item => item.render()).join('')}</div>
+    </div>`;
+  }
 
   // ── Your Custom ──
   if(customWorkouts.length){
