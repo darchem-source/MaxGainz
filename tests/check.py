@@ -353,6 +353,30 @@ ok('cooldown: lib smaller than count → all unique, no hang', (function(){ var 
 eq('cooldown: empty lib → empty', _buildCooldown(['push'], 0, [], 6).length, 0);
 ok('cooldown: seed rotates start', (function(){ var a=_buildCooldown(['push'],0,CLIB,1)[0].slug, b=_buildCooldown(['push'],1,CLIB,1)[0].slug; return a!==b; })());
 
+// ── smart next-path-day ranking ──
+// The real-world PHUL case: Tue Upper Hyp, Wed Lower Power → Thu must NOT be
+// another leg day; stale Upper Power should win.
+var PHUL_CANDS = [
+  {day:'Upper Power', sinceDone:5, order:0, groups:['push','pull']},
+  {day:'Lower Power', sinceDone:0, order:1, groups:['legs','core']},
+  {day:'Upper Hypertrophy', sinceDone:1, order:2, groups:['push','pull']},
+  {day:'Lower Hypertrophy', sinceDone:4, order:3, groups:['legs','core']},
+];
+var PHUL_RECENT = [ {groups:['push','pull'], daysAgo:2}, {groups:['legs','core'], daysAgo:1} ];
+eq('smart: PHUL two-leg-days avoided → Upper Power next', _rankNextPathDays(PHUL_CANDS, PHUL_RECENT)[0].day, 'Upper Power');
+ok('smart: fresh leg day demoted below both upper days', (function(){
+  var r=_rankNextPathDays(PHUL_CANDS, PHUL_RECENT).map(x=>x.day);
+  return r.indexOf('Lower Hypertrophy') > r.indexOf('Upper Hypertrophy'); })());
+eq('smart: never-done day wins outright', _rankNextPathDays([
+  {day:'A', sinceDone:2, order:0, groups:['push']},
+  {day:'B', sinceDone:999, order:1, groups:['pull']}], [])[0].day, 'B');
+eq('smart: written order breaks ties', _rankNextPathDays([
+  {day:'A', sinceDone:3, order:0, groups:['push']},
+  {day:'B', sinceDone:3, order:1, groups:['pull']}], [])[0].day, 'A');
+eq('smart: empty candidates → empty', _rankNextPathDays([], []).length, 0);
+eq('smart: no recent history → pure staleness', _rankNextPathDays(PHUL_CANDS, [])[0].day, 'Upper Power');
+ok('smart: conflict reason surfaces', _rankNextPathDays(PHUL_CANDS, PHUL_RECENT).find(x=>x.day==='Lower Hypertrophy').reasons.join(' ').indexOf('trained yesterday') >= 0);
+
 JSON.stringify(fails);
 """
 
@@ -376,7 +400,7 @@ def gate_invariants(js):
                '_sessionKey', '_mergeSessions', '_validateSession',
                'getLiftState', '_leanFor', 'snapToSteps', 'stepWeight', 'calc1RM', 'parseRepTarget',
                '_comebackEvents', '_measureDelta', '_exVideoEntry', '_exVideoPickSex', '_rotatePick',
-               '_buildCooldown']:
+               '_buildCooldown', '_rankNextPathDays']:
         src = extract_decl(js, fn)
         if not src:
             print(f'  ✗ could not extract function {fn}'); return False
