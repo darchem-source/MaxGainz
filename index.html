@@ -11159,6 +11159,12 @@ function _renderCooldownStretch(){
   if(skipBtn) skipBtn.textContent = (_cooldownState.idx >= _cooldownState.list.length - 1) ? '✓ Done' : 'Skip →';
   const wrap = document.getElementById('cooldownVideoWrap');
   const v = document.getElementById('cooldownVideo');
+  if(!EX_VIDEO_BASE){
+    // Video source offline — timer-only layout, no doomed network requests.
+    if(wrap) wrap.style.display = 'none';
+    if(v){ try{ v.pause(); v.removeAttribute('src'); }catch(e){} }
+    return;
+  }
   if(wrap){ wrap.style.display = ''; wrap.removeAttribute('data-retried'); }
   if(v){
     const sex = (typeof _exVideoPickSex === 'function') ? (_exVideoPickSex(st.g || 'mf', (typeof _demoSexPref === 'function') ? _demoSexPref() : 'male') || 'male') : 'male';
@@ -14582,7 +14588,17 @@ function shouldShowFormGuidePulse(name){
 // hotlinked from its public R2 CDN. Curated name→slug map; exercises without
 // a mapped clip render the form guide exactly as before (no video section).
 // Map values: 'slug' = male+female clips exist; 'slug|m' / 'slug|f' = only one.
-const EX_VIDEO_BASE = 'https://pub-585d42eb1aa64a67aedf483ec328d3fe.r2.dev/';
+// The demo-clip dataset this app used (free-exercise-db-with-videos by
+// amiinwani) was taken offline by its author around Aug 2026: the GitHub
+// repo is deleted, the hosted demo shows "Shut Down", and the public R2
+// bucket that served every clip now returns 401 for everyone. The media was
+// never ours/self-hosted, so the clips are simply gone. A null base disables
+// all video loading cleanly — no doomed requests, retry loops or black
+// panels at the gym; warm-up, cooldown and form guides lay out instantly in
+// text/timer-only form. To re-enable, point this at a mirror that uses the
+// same layout: exercise-videos/{male|female}/{slug}.mp4 and
+// exercise-posters/{male|female}/{slug}.jpg
+const EX_VIDEO_BASE = null; // was: 'https://pub-585d42eb1aa64a67aedf483ec328d3fe.r2.dev/'
 const EX_VIDEO_MAP = {
   'Abductor Machine': 'lever-seated-hip-abduction',
   'Adductor Machine': 'lever-seated-hip-adduction',
@@ -14762,6 +14778,7 @@ function _demoSexPref(){
 }
 // Build the video block html for the form guide, or '' when no clip is mapped.
 function _exVideoBlockHtml(name){
+  if(!EX_VIDEO_BASE) return ''; // video source offline — text cues only
   const entry = _exVideoEntry(name, EX_VIDEO_MAP);
   if(!entry) return '';
   const sex = _exVideoPickSex(entry.g, _demoSexPref());
