@@ -144,6 +144,12 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 }
 #cooldownMod.cooldown-fs #cooldownVideoWrap { flex:1; min-height:0; border-radius:0 !important; margin-bottom:8px !important; background:#000; }
 #cooldownMod.cooldown-fs #cooldownVideo { width:100%; height:100%; aspect-ratio:auto !important; object-fit:contain !important; }
+/* 2-frame crossfade demo (self-hosted public-domain images): frame A static,
+   frame B fades in/out on a loop to suggest the movement arc. */
+.xfade-wrap { position:relative; border-radius:12px; overflow:hidden; background:#111; }
+.xfade-wrap img { width:100%; aspect-ratio:850/567; object-fit:cover; display:block; }
+.xfade-wrap .xf-b { position:absolute; inset:0; animation:xfadeB 2.4s ease-in-out infinite; }
+@keyframes xfadeB { 0%,40% {opacity:0;} 50%,90% {opacity:1;} 100% {opacity:0;} }
 #cooldownRotateHint { display:none; }
 #cooldownMod.cooldown-fs #cooldownRotateHint { text-align:center; font-size:12px; color:var(--text2); margin-bottom:8px; }
 @media (orientation: landscape) {
@@ -1906,6 +1912,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
     </div>
     <div id="cooldownName" style="font-size:18px;font-weight:800;margin-bottom:10px;">Stretch</div>
     <div id="cooldownVideoWrap" style="position:relative;border-radius:12px;overflow:hidden;background:#000;margin-bottom:12px;">
+      <div id="cooldownXfade" style="display:none;"></div>
       <video id="cooldownVideo" muted loop autoplay playsinline webkit-playsinline preload="metadata"
         onerror="_cooldownVideoError(this)" onclick="toggleCooldownFullscreen()"
         style="width:100%;aspect-ratio:16/9;display:block;object-fit:cover;cursor:pointer;"></video>
@@ -10933,6 +10940,36 @@ const COOLDOWN_STRETCHES = [
   {name:'Iron Cross Stretch', slug:'stretching-iron-cross-stretch', g:'mf', groups:['core','legs']},
 ];
 const COOLDOWN_STRETCH_SECS = 45;
+
+// Old stretch slug -> free-exercise-db id (same self-hosted image scheme).
+const STRETCH_MEDIA_MAP = {
+  'stretching-above-head-chest-stretch': 'Overhead_Stretch',
+  'stretching-adductor-stretch': 'Adductor',
+  'stretching-band-warm-up-shoulder-stretch': 'Shoulder_Stretch',
+  'stretching-dynamic-chest-stretch': 'Dynamic_Chest_Stretch',
+  'stretching-flexion-leg-sit-up': 'Bent-Knee_Hip_Raise',
+  'stretching-hamstring-stretch': 'Hamstring_Stretch',
+  'stretching-hip-circles-stretch': 'Standing_Hip_Circles',
+  'stretching-hip-flexor-and-quad-stretch': 'Intermediate_Hip_Flexor_and_Quad_Stretch',
+  'stretching-iron-cross-stretch': 'Iron_Crosses_stretch',
+  'stretching-knee-raise': 'Front_Leg_Raises',
+  'stretching-kneeling-back-rotation-stretch': 'Cat_Stretch',
+  'stretching-kneeling-lat-stretch': 'Overhead_Lat',
+  'stretching-kneeling-triceps-extension': 'Overhead_Triceps',
+  'stretching-plyo-side-lunge-stretch': 'Intermediate_Groin_Stretch',
+  'stretching-quadriceps-stretch': 'Quad_Stretch',
+  'stretching-rear-deltoid-stretch': 'Shoulder_Stretch',
+  'stretching-runners-stretch': 'Runners_Stretch',
+  'stretching-seated-calf-stretch': 'Seated_Calf_Stretch',
+  'stretching-seated-lower-back-stretch': 'Chair_Lower_Back_Stretch',
+  'stretching-seated-twist-straight-arm': 'Dancers_Stretch',
+  'stretching-single-leg-stretch-bent-knee': 'Leg-Up_Hamstring_Stretch',
+  'stretching-sitting-bent-over-back-stretch': 'Upper_Back-Leg_Grab',
+  'stretching-spine-stretch': 'Spinal_Stretch',
+  'stretching-standing-back-rotation-stretch': 'Torso_Rotation',
+  'stretching-standing-bench-calf-stretch': 'Standing_Gastrocnemius_Calf_Stretch',
+  'stretching-standing-reach-up-back-rotation-stretch': 'Windmills',
+};
 const COOLDOWN_COUNT = 6;
 // Dynamic pre-lift warm-up moves (30s each, 4 picked per session) — motion-
 // based prep rather than static holds; every entry has a demo clip.
@@ -11159,19 +11196,19 @@ function _renderCooldownStretch(){
   if(skipBtn) skipBtn.textContent = (_cooldownState.idx >= _cooldownState.list.length - 1) ? '✓ Done' : 'Skip →';
   const wrap = document.getElementById('cooldownVideoWrap');
   const v = document.getElementById('cooldownVideo');
-  if(!EX_VIDEO_BASE){
-    // Video source offline — timer-only layout, no doomed network requests.
+  const xf = document.getElementById('cooldownXfade');
+  if(v) v.style.display = 'none'; // legacy <video> unused in the image era
+  const mid = (typeof STRETCH_MEDIA_MAP === 'object' && STRETCH_MEDIA_MAP[st.slug]) || null;
+  if(!mid){
     if(wrap) wrap.style.display = 'none';
-    if(v){ try{ v.pause(); v.removeAttribute('src'); }catch(e){} }
+    if(xf) xf.innerHTML = '';
     return;
   }
-  if(wrap){ wrap.style.display = ''; wrap.removeAttribute('data-retried'); }
-  if(v){
-    const sex = (typeof _exVideoPickSex === 'function') ? (_exVideoPickSex(st.g || 'mf', (typeof _demoSexPref === 'function') ? _demoSexPref() : 'male') || 'male') : 'male';
-    v.src = `${EX_VIDEO_BASE}exercise-videos/${sex}/${st.slug}.mp4`;
-    v.poster = `${EX_VIDEO_BASE}exercise-posters/${sex}/${st.slug}.jpg`;
-    v.muted = true;
-    try{ v.play().catch(()=>{}); }catch(e){}
+  if(wrap) wrap.style.display = '';
+  if(xf){
+    xf.className = 'xfade-wrap';
+    xf.style.display = 'block';
+    xf.innerHTML = `<img src="${EX_MEDIA_BASE}${mid}/0.jpg" alt="" class="xf-a"><img src="${EX_MEDIA_BASE}${mid}/1.jpg" alt="" class="xf-b">`;
   }
 }
 // Failed clip: retry the other sex once, then hide the player (timer runs on).
@@ -14599,153 +14636,163 @@ function shouldShowFormGuidePulse(name){
 // same layout: exercise-videos/{male|female}/{slug}.mp4 and
 // exercise-posters/{male|female}/{slug}.jpg
 const EX_VIDEO_BASE = null; // was: 'https://pub-585d42eb1aa64a67aedf483ec328d3fe.r2.dev/'
+// Self-hosted demo media (public-domain free-exercise-db frames, mirrored
+// into this repo under exercise-media/). Relative base works on Netlify,
+// local http.server, and inside the service-worker cache.
+const EX_MEDIA_BASE = 'exercise-media/';
+// Ids that ALSO have a real video loop at exercise-media/{id}/loop.mp4
+// (wger.de CC-BY-SA overlay). Empty until the overlay ships; renderers
+// automatically prefer loop.mp4 over the 2-frame crossfade when listed.
+const EX_MEDIA_LOOPS = new Set([]);
 const EX_VIDEO_MAP = {
-  'Abductor Machine': 'lever-seated-hip-abduction',
-  'Adductor Machine': 'lever-seated-hip-adduction',
-  'Arnold Press': 'dumbbell-arnold-press',
-  'Back Extension (45°)': '45-degree-hyperextension',
-  'Band High Fly': 'band-high-fly',
-  'Band Hip Abduction': 'band-hip-abduction',
-  'Band Kneeling One-Arm Pulldown': 'band-kneeling-one-arm-pulldown',
-  'Band Pull-Through': 'band-pull-through',
-  'Band Pushdown': 'band-triceps-pushdown',
-  'Band Rear Delt Row': 'band-standing-rear-delt-row|m',
-  'Band Seated Row': 'band-seated-row',
-  'Band Shoulder Pass-Through': 'stretching-band-warm-up-shoulder-stretch',
-  'Band Standing Calf Raise': 'band-standing-calf-raise',
-  'Band-Assisted Pull-Ups': 'band-assisted-pull-up',
-  'Barbell Curls': 'barbell-curl',
-  'Barbell Row': 'barbell-underhand-bent-over-row',
-  'Battle Ropes': 'battling-ropes',
-  'Bench Dips': 'bench-dips',
-  'Bench Press': 'barbell-bench-press',
-  'Bent Over Barbell Row': 'barbell-underhand-bent-over-row',
-  'Bent-Over Row Burst': 'dumbbell-bent-over-row',
-  'Bicycle Crunch': '45-degree-bycicle-twisting-crunch',
-  'Burpees': 'burpee',
-  'Cable Crossover': 'cable-standing-fly-crossover-fly',
-  'Cable Crunch': 'cable-kneeling-crunch',
-  'Cable Curl': 'cable-standing-inner-curl',
-  'Cable Lateral Raise': 'cable-lateral-raise',
-  'Cable Row': 'cable-straight-back-seated-row-v-grip',
-  'Calf Raises': 'lever-standing-calf-raise',
-  'Calf Stretch': 'stretching-standing-bench-calf-stretch',
-  'Chest-Supported Row': 'dumbbell-incline-row',
-  'Chin-Ups': 'reverse-grip-pull-up',
-  'Close Grip Bench': 'barbell-close-grip-bench-press|m',
-  'Concentration Curl': 'dumbbell-concentration-curl',
-  'Crunch': 'crunch-floor-female|f',
-  'Decline Bench Press': 'barbell-decline-bench-press',
-  'Diamond Push-Ups': 'close-grip-push-ups',
-  'Dips': 'chest-dips',
-  'Donkey Calf Raise': 'donkey-calf-raise',
-  'Donkey Kicks': 'band-one-leg-kickback-bent-position',
-  'Dumbbell Bench Press': 'dumbbell-lying-hammer-press',
-  'Dumbbell Bicep Curls': 'dumbbell-biceps-curl',
-  'Dumbbell Curl': 'dumbbell-biceps-curl',
-  'Dumbbell Fly': 'dumbbell-fly',
-  'Dumbbell Lunges': 'dumbbell-lunge',
-  'Dumbbell Romanian Deadlift': 'dumbbell-stiff-leg-deadlift',
-  'Dumbbell Row': 'dumbbell-bent-over-row',
-  'Dumbbell Rows': 'dumbbell-bent-over-row',
-  'Dumbbell Shoulder Press': 'dumbbell-bench-seated-press',
-  'Dumbbell Stiff-Leg Deadlift': 'single-dumbbell-stiff-leg-deadlift',
-  'Elliptical': 'elliptical',
-  'EZ Bar Curl': 'ez-barbell-biceps-curl',
-  'Feet-Elevated Glute Bridge': 'rear-decline-bridge',
-  'Flutter Kicks': 'lying-scissor-kick-female|f',
-  'Front Raises': 'dumbbell-front-raise',
-  'Front Squat': 'barbell-front-chest-squat',
-  'Glute Bridge Hold': 'hip-raise-bridge|f',
-  'Glute Bridge': 'hip-raise-bridge|f',
-  'Glute Bridges': 'hip-raise-bridge|f',
-  'Glute Kickback': 'lever-standing-rear-kick',
-  'Goblet Squat': 'dumbbell-goblet-squat',
-  'Goblet Squats': 'dumbbell-goblet-squat',
-  'Hack Squat': 'sled-hack-squat',
-  'Hanging Knee Raises': 'hanging-leg-hip-raise',
-  'Hanging Leg Raise': 'hanging-straight-leg-raise',
-  'Hip Flexor Stretch': 'stretching-hip-flexor-and-quad-stretch',
-  'Incline Bench Press': 'barbell-incline-bench-press',
-  'Incline Dumbbell Curl': 'dumbbell-incline-curl',
-  'Incline Dumbbell Press': 'dumbbell-incline-bench-press',
-  'Incline Fly': 'dumbbell-incline-fly',
-  'Incline Machine Press': 'lever-incline-hammer-chest-press',
-  'Incline Press': 'barbell-incline-bench-press',
-  'Inclined Push-Ups': 'incline-push-ups',
-  'Inverted Rows': 'inverted-row-between-chairs',
-  'Jog': 'running',
-  'Jump Rope': 'jump-rope',
-  'Jumping Jacks': 'jumping-jack',
-  'Kettlebell Deadlift': 'kettlebell-deadlift',
-  'Kneeling Lat Stretch': 'stretching-kneeling-lat-stretch',
-  'Kneeling Leg Curl': 'lever-kneeling-leg-curl',
-  'Landmine Twist': 'landmine-180',
-  'Lat Pulldown Burst': 'cable-pulldown',
-  'Lat Pulldown': 'cable-pulldown',
-  'Lateral Raises': 'dumbbell-lateral-raise',
-  'Leg Curls': 'lever-lying-leg-curl',
-  'Leg Extensions': 'lever-leg-extension',
-  'Leg Press': 'lever-horizontal-leg-press',
-  'Leg Raises': 'lying-floor-leg-raise',
-  'Lunges': 'dumbbell-lunge',
-  'Machine Chest Press': 'lever-lying-chest-press',
-  'Machine Crunch': 'lever-seated-crunch-1|m',
-  'Machine High Row': 'lever-high-row',
-  'Machine Hip Extension': 'lever-standing-hip-extension',
-  'Machine Lateral Raise': 'lever-lateral-raise',
-  'Machine Preacher Curl': 'lever-preacher-curl',
-  'Machine Rear Delt Fly': 'lever-seated-reverse-fly',
-  'Machine Seated Dip': 'lever-seated-dips',
-  'Machine Shrug': 'lever-shrug',
-  'Overhead Press': 'military-press',
-  'Overhead Tricep Extension': 'dumbbell-seated-triceps-extension',
-  'Pec Deck': 'lever-pec-deck-fly',
-  'Plank': 'front-plank-female|f',
-  'Plyo Step-Ups': 'jump-step-up',
-  'Preacher Curl': 'dumbbell-seated-preacher-curl',
-  'Pull-Ups': 'chin-ups-pull-ups',
-  'Pulldowns': 'cable-pulldown',
-  'Push-Ups (weighted)': 'push-ups',
-  'Push-Ups': 'push-ups',
-  'Reverse Crunch': 'reverse-crunch-female|f',
-  'Reverse Fly': 'cable-crossover-reverse-fly',
-  'Reverse-Grip Pulldown': 'cable-bar-lateral-pulldown-reverse-grip',
-  'Romanian Deadlift': 'barbell-straight-leg-deadlift',
-  'Russian Twists': 'seated-twist-straight-arm|f',
-  'Seated Calf Raise': 'lever-seated-calf-raise',
-  'Seated Dumbbell Press': 'dumbbell-bench-seated-press',
-  'Seated Leg Curl': 'lever-seated-leg-curl',
-  'Shrugs': 'barbell-shrug',
-  'Side Bends': 'dumbbell-side-bend',
-  'Side Plank (Left)': 'side-bridge-side-plank',
-  'Side Plank (Right)': 'side-bridge-side-plank',
-  'Side Plank': 'side-bridge-side-plank',
-  'Sissy Squat': 'weighted-sissy-squat',
-  'Sit-Ups': 'sit-ups',
-  'Skull Crushers': 'ez-barbell-lying-triceps-extension',
-  'Smith Shoulder Press': 'smith-seated-shoulder-press',
-  'Sprint': 'running',
-  'Squat': 'classic-barbell-squat',
-  'Stability Ball Leg Curl': 'leg-curl-on-stability-ball|f',
-  'Stability Ball Sit-Ups': 'sit-up-on-exercise-ball',
-  'Standing Hamstring Stretch': 'stretching-hamstring-stretch',
-  'Standing One-Arm Cable Curl': 'cable-one-arm-curl',
-  'Standing Quad Stretch': 'stretching-quadriceps-stretch',
-  'Stationary Bike': 'stationary-bike',
-  'Stiff-Leg Deadlift': 'barbell-straight-leg-deadlift',
-  'Straight Arm Pulldown': 'cable-straight-arm-pulldown',
-  'Sumo Squat': 'dumbbell-bar-grip-sumo-squat',
-  'T-Bar Row': 'lever-t-bar-row',
-  'Tricep Kickbacks': 'dumbbell-kickback',
-  'Tricep Pushdown': 'cable-triceps-pushdown',
-  'Triceps Extension': 'dumbbell-seated-triceps-extension',
-  'Triceps Pushdowns': 'cable-triceps-pushdown',
-  'TRX Rows': 'inverted-row-with-straps',
-  'Upright Row': 'barbell-upright-row-wide-grip',
-  'V-Ups': 'v-up',
-  'Walking Lunges': 'dumbbell-lunge',
-  'Wrist Curls': 'dumbbell-over-bench-wrist-curl',
+  // App exercise name -> free-exercise-db id (public domain / Unlicense).
+  // Each id maps to exercise-media/{id}/0.jpg + 1.jpg (start/end frames),
+  // self-hosted in this repo — no third-party media dependency. Names with
+  // no acceptable open visual (Battle Ropes, Burpees, Jumping Jacks) are
+  // deliberately absent and fall back to text-only form guides.
+  'Abductor Machine': 'Thigh_Abductor',
+  'Adductor Machine': 'Thigh_Adductor',
+  'Arnold Press': 'Arnold_Dumbbell_Press',
+  'Back Extension (45°)': 'Hyperextensions_Back_Extensions',
+  'Band High Fly': 'Cable_Crossover',
+  'Band Hip Abduction': 'Side_Leg_Raises',
+  'Band Kneeling One-Arm Pulldown': 'One_Arm_Lat_Pulldown',
+  'Band Pull-Through': 'Pull_Through',
+  'Band Pushdown': 'Triceps_Pushdown',
+  'Band Rear Delt Row': 'Cable_Rope_Rear-Delt_Rows',
+  'Band Seated Row': 'Seated_Cable_Rows',
+  'Band Shoulder Pass-Through': 'Shoulder_Circles',
+  'Band Standing Calf Raise': 'Calf_Raises_-_With_Bands',
+  'Band-Assisted Pull-Ups': 'Band_Assisted_Pull-Up',
+  'Barbell Curls': 'Barbell_Curl',
+  'Barbell Row': 'Bent_Over_Barbell_Row',
+  'Bench Dips': 'Bench_Dips',
+  'Bench Press': 'Barbell_Bench_Press_-_Medium_Grip',
+  'Bent Over Barbell Row': 'Bent_Over_Barbell_Row',
+  'Bent-Over Row Burst': 'Bent_Over_Barbell_Row',
+  'Bicycle Crunch': 'Air_Bike',
+  'Cable Crossover': 'Cable_Crossover',
+  'Cable Crunch': 'Cable_Crunch',
+  'Cable Curl': 'Standing_Biceps_Cable_Curl',
+  'Cable Lateral Raise': 'Cable_Seated_Lateral_Raise',
+  'Cable Row': 'Seated_Cable_Rows',
+  'Calf Raises': 'Standing_Calf_Raises',
+  'Calf Stretch': 'Seated_Calf_Stretch',
+  'Chest-Supported Row': 'Dumbbell_Incline_Row',
+  'Chin-Ups': 'Chin-Up',
+  'Close Grip Bench': 'Close-Grip_Barbell_Bench_Press',
+  'Concentration Curl': 'Concentration_Curls',
+  'Crunch': 'Crunches',
+  'Decline Bench Press': 'Wide-Grip_Decline_Barbell_Bench_Press',
+  'Diamond Push-Ups': 'Push-Ups_-_Close_Triceps_Position',
+  'Dips': 'Parallel_Bar_Dip',
+  'Donkey Calf Raise': 'Donkey_Calf_Raises',
+  'Donkey Kicks': 'Glute_Kickback',
+  'Dumbbell Bench Press': 'Dumbbell_Bench_Press',
+  'Dumbbell Bicep Curls': 'Dumbbell_Bicep_Curl',
+  'Dumbbell Curl': 'Dumbbell_Alternate_Bicep_Curl',
+  'Dumbbell Fly': 'Dumbbell_Flyes',
+  'Dumbbell Lunges': 'Dumbbell_Lunges',
+  'Dumbbell Romanian Deadlift': 'Romanian_Deadlift',
+  'Dumbbell Row': 'One-Arm_Dumbbell_Row',
+  'Dumbbell Rows': 'One-Arm_Dumbbell_Row',
+  'Dumbbell Shoulder Press': 'Dumbbell_Shoulder_Press',
+  'Dumbbell Stiff-Leg Deadlift': 'Stiff-Legged_Dumbbell_Deadlift',
+  'EZ Bar Curl': 'EZ-Bar_Curl',
+  'Elliptical': 'Elliptical_Trainer',
+  'Feet-Elevated Glute Bridge': 'Butt_Lift_Bridge',
+  'Flutter Kicks': 'Flutter_Kicks',
+  'Front Raises': 'Front_Dumbbell_Raise',
+  'Front Squat': 'Front_Barbell_Squat',
+  'Glute Bridge': 'Butt_Lift_Bridge',
+  'Glute Bridge Hold': 'Butt_Lift_Bridge',
+  'Glute Bridges': 'Butt_Lift_Bridge',
+  'Glute Kickback': 'Glute_Kickback',
+  'Goblet Squat': 'Goblet_Squat',
+  'Goblet Squats': 'Goblet_Squat',
+  'Hack Squat': 'Hack_Squat',
+  'Hanging Knee Raises': 'Hanging_Leg_Raise',
+  'Hanging Leg Raise': 'Hanging_Leg_Raise',
+  'Hip Flexor Stretch': 'Kneeling_Hip_Flexor',
+  'Incline Bench Press': 'Smith_Machine_Incline_Bench_Press',
+  'Incline Dumbbell Curl': 'Incline_Dumbbell_Curl',
+  'Incline Dumbbell Press': 'Incline_Dumbbell_Press',
+  'Incline Fly': 'Incline_Dumbbell_Flyes',
+  'Incline Machine Press': 'Leverage_Incline_Chest_Press',
+  'Incline Press': 'Barbell_Incline_Bench_Press_-_Medium_Grip',
+  'Inclined Push-Ups': 'Incline_Push-Up_Medium',
+  'Inverted Rows': 'Inverted_Row',
+  'Jog': 'Jogging_Treadmill',
+  'Jump Rope': 'Rope_Jumping',
+  'Kettlebell Deadlift': 'Sumo_Deadlift',
+  'Kneeling Lat Stretch': 'Overhead_Lat',
+  'Kneeling Leg Curl': 'Standing_Leg_Curl',
+  'Landmine Twist': 'Landmine_180s',
+  'Lat Pulldown': 'Wide-Grip_Lat_Pulldown',
+  'Lat Pulldown Burst': 'Wide-Grip_Lat_Pulldown',
+  'Lateral Raises': 'Side_Lateral_Raise',
+  'Leg Curls': 'Lying_Leg_Curls',
+  'Leg Extensions': 'Leg_Extensions',
+  'Leg Press': 'Leg_Press',
+  'Leg Raises': 'Flat_Bench_Lying_Leg_Raise',
+  'Lunges': 'Barbell_Lunge',
+  'Machine Chest Press': 'Leverage_Chest_Press',
+  'Machine Crunch': 'Ab_Crunch_Machine',
+  'Machine High Row': 'Leverage_High_Row',
+  'Machine Hip Extension': 'Glute_Kickback',
+  'Machine Lateral Raise': 'Side_Lateral_Raise',
+  'Machine Preacher Curl': 'Machine_Preacher_Curls',
+  'Machine Rear Delt Fly': 'Cable_Rear_Delt_Fly',
+  'Machine Seated Dip': 'Dip_Machine',
+  'Machine Shrug': 'Leverage_Shrug',
+  'Overhead Press': 'Standing_Military_Press',
+  'Overhead Tricep Extension': 'Triceps_Overhead_Extension_with_Rope',
+  'Pec Deck': 'Butterfly',
+  'Plank': 'Plank',
+  'Plyo Step-Ups': 'Box_Jump_Multiple_Response',
+  'Preacher Curl': 'Preacher_Curl',
+  'Pull-Ups': 'Pullups',
+  'Pulldowns': 'Wide-Grip_Lat_Pulldown',
+  'Push-Ups': 'Pushups',
+  'Push-Ups (weighted)': 'Pushups',
+  'Reverse Crunch': 'Reverse_Crunch',
+  'Reverse Fly': 'Reverse_Flyes',
+  'Reverse-Grip Pulldown': 'Underhand_Cable_Pulldowns',
+  'Romanian Deadlift': 'Romanian_Deadlift',
+  'Russian Twists': 'Russian_Twist',
+  'Seated Calf Raise': 'Seated_Calf_Raise',
+  'Seated Dumbbell Press': 'Seated_Dumbbell_Press',
+  'Seated Leg Curl': 'Seated_Leg_Curl',
+  'Shrugs': 'Barbell_Shrug',
+  'Side Bends': 'Dumbbell_Side_Bend',
+  'Side Plank': 'Side_Bridge',
+  'Side Plank (Left)': 'Side_Bridge',
+  'Side Plank (Right)': 'Side_Bridge',
+  'Sissy Squat': 'Weighted_Sissy_Squat',
+  'Sit-Ups': 'Sit-Up',
+  'Skull Crushers': 'Lying_Triceps_Press',
+  'Smith Shoulder Press': 'Smith_Machine_Overhead_Shoulder_Press',
+  'Sprint': 'Wind_Sprints',
+  'Squat': 'Barbell_Squat',
+  'Stability Ball Leg Curl': 'Ball_Leg_Curl',
+  'Stability Ball Sit-Ups': 'Exercise_Ball_Crunch',
+  'Standing Hamstring Stretch': 'Hamstring_Stretch',
+  'Standing One-Arm Cable Curl': 'Standing_One-Arm_Cable_Curl',
+  'Standing Quad Stretch': 'Quad_Stretch',
+  'Stationary Bike': 'Bicycling_Stationary',
+  'Stiff-Leg Deadlift': 'Stiff-Legged_Barbell_Deadlift',
+  'Straight Arm Pulldown': 'Straight-Arm_Pulldown',
+  'Sumo Squat': 'Plie_Dumbbell_Squat',
+  'T-Bar Row': 'T-Bar_Row_with_Handle',
+  'TRX Rows': 'Inverted_Row_with_Straps',
+  'Tricep Kickbacks': 'Tricep_Dumbbell_Kickback',
+  'Tricep Pushdown': 'Triceps_Pushdown',
+  'Triceps Extension': 'Standing_Dumbbell_Triceps_Extension',
+  'Triceps Pushdowns': 'Triceps_Pushdown',
+  'Upright Row': 'Upright_Barbell_Row',
+  'V-Ups': 'Jackknife_Sit-Up',
+  'Walking Lunges': 'Barbell_Walking_Lunge',
+  'Wrist Curls': 'Seated_Palm-Up_Barbell_Wrist_Curl',
 };
 
 // Pure: resolve an exercise name to {slug, g} ('mf'|'m'|'f') or null.
@@ -14776,27 +14823,25 @@ function _exVideoPickSex(g, pref){
 function _demoSexPref(){
   return (typeof userPreferences === 'object' && userPreferences && userPreferences.demoSex === 'female') ? 'female' : 'male';
 }
-// Build the video block html for the form guide, or '' when no clip is mapped.
+// Build the demo-media block for the form guide, or '' when nothing mapped.
+// Media = self-hosted public-domain 2-frame crossfade; when a real video
+// loop exists for this id (EX_MEDIA_LOOPS, wger overlay) it wins.
 function _exVideoBlockHtml(name){
-  if(!EX_VIDEO_BASE) return ''; // video source offline — text cues only
   const entry = _exVideoEntry(name, EX_VIDEO_MAP);
   if(!entry) return '';
-  const sex = _exVideoPickSex(entry.g, _demoSexPref());
-  if(!sex) return '';
-  const src = `${EX_VIDEO_BASE}exercise-videos/${sex}/${entry.slug}.mp4`;
-  const poster = `${EX_VIDEO_BASE}exercise-posters/${sex}/${entry.slug}.jpg`;
-  // ♂/♀ toggle only when both clips exist.
-  const toggle = entry.g === 'mf' ? `
-    <div style="position:absolute;top:8px;right:8px;display:flex;gap:6px;">
-      <button id="fgSexM" onclick="setDemoSex('male')" style="border:none;border-radius:9px;padding:8px 14px;font-size:13px;font-weight:800;cursor:pointer;background:${sex==='male'?'var(--accent)':'rgba(0,0,0,0.55)'};color:${sex==='male'?'#000':'#fff'};">♂</button>
-      <button id="fgSexF" onclick="setDemoSex('female')" style="border:none;border-radius:9px;padding:8px 14px;font-size:13px;font-weight:800;cursor:pointer;background:${sex==='female'?'var(--accent)':'rgba(0,0,0,0.55)'};color:${sex==='female'?'#000':'#fff'};">♀</button>
-    </div>` : '';
-  return `
-    <div id="fgVideoWrap" data-slug="${entry.slug}" data-g="${entry.g}" data-sex="${sex}" style="position:relative;border-radius:12px;overflow:hidden;margin-bottom:14px;background:#000;">
-      <video id="fgVideo" src="${src}" poster="${poster}" muted loop autoplay playsinline webkit-playsinline preload="metadata"
-        onerror="_fgVideoError()"
+  const id = entry.slug;
+  if(typeof EX_MEDIA_LOOPS !== 'undefined' && EX_MEDIA_LOOPS.has(id)){
+    return `
+    <div style="position:relative;border-radius:12px;overflow:hidden;margin-bottom:14px;background:#000;">
+      <video src="${EX_MEDIA_BASE}${id}/loop.mp4" poster="${EX_MEDIA_BASE}${id}/0.jpg" muted loop autoplay playsinline webkit-playsinline preload="metadata"
         style="width:100%;aspect-ratio:16/9;display:block;object-fit:cover;"></video>
-      ${toggle}
+    </div>`;
+  }
+  const safe = String(name).replace(/"/g,'');
+  return `
+    <div class="xfade-wrap" style="margin-bottom:14px;">
+      <img src="${EX_MEDIA_BASE}${id}/0.jpg" alt="${safe} start position" class="xf-a">
+      <img src="${EX_MEDIA_BASE}${id}/1.jpg" alt="${safe} end position" class="xf-b">
     </div>`;
 }
 // Video load failed. If both sexes exist and we haven't retried yet, fall back
