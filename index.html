@@ -14643,7 +14643,40 @@ const EX_MEDIA_BASE = 'exercise-media/';
 // Ids that ALSO have a real video loop at exercise-media/{id}/loop.mp4
 // (wger.de CC-BY-SA overlay). Empty until the overlay ships; renderers
 // automatically prefer loop.mp4 over the 2-frame crossfade when listed.
-const EX_MEDIA_LOOPS = new Set([]);
+const EX_MEDIA_LOOPS = new Set([
+  'Barbell_Bench_Press_-_Medium_Grip',
+  'Barbell_Curl',
+  'Barbell_Lunge',
+  'Barbell_Shrug',
+  'Barbell_Walking_Lunge',
+  'Dumbbell_Alternate_Bicep_Curl',
+  'Dumbbell_Bench_Press',
+  'Dumbbell_Lunges',
+  'Dumbbell_Shoulder_Press',
+  'Front_Barbell_Squat',
+  'Incline_Dumbbell_Press',
+  'Leg_Press',
+  'Leverage_Shrug',
+  'Lying_Leg_Curls',
+  'Lying_Triceps_Press',
+  'Parallel_Bar_Dip',
+  'Preacher_Curl',
+  'Pullups',
+  'Reverse_Flyes',
+  'Romanian_Deadlift',
+  'Seated_Cable_Rows',
+  'Seated_Calf_Raise',
+  'Seated_Leg_Curl',
+  'Side_Lateral_Raise',
+  'Smith_Machine_Incline_Bench_Press',
+  'Standing_Biceps_Cable_Curl',
+  'Standing_Calf_Raises',
+  'Standing_Dumbbell_Triceps_Extension',
+  'Standing_Leg_Curl',
+  'Thigh_Adductor',
+  'Tricep_Dumbbell_Kickback',
+  'Triceps_Pushdown',
+]);
 const EX_VIDEO_MAP = {
   // App exercise name -> free-exercise-db id (public domain / Unlicense).
   // Each id maps to exercise-media/{id}/0.jpg + 1.jpg (start/end frames),
@@ -14835,6 +14868,7 @@ function _exVideoBlockHtml(name){
     <div style="position:relative;border-radius:12px;overflow:hidden;margin-bottom:14px;background:#000;">
       <video src="${EX_MEDIA_BASE}${id}/loop.mp4" poster="${EX_MEDIA_BASE}${id}/0.jpg" muted loop autoplay playsinline webkit-playsinline preload="metadata"
         style="width:100%;aspect-ratio:16/9;display:block;object-fit:cover;"></video>
+      <div style="position:absolute;bottom:0;left:0;right:0;padding:3px 8px;font-size:9px;color:rgba(255,255,255,0.75);background:rgba(0,0,0,0.45);text-align:right;">Video: Goulart · CC BY-SA 4.0 · wger.de</div>
     </div>`;
   }
   const safe = String(name).replace(/"/g,'');
