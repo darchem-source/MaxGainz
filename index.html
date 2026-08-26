@@ -4464,6 +4464,10 @@ function _refreshNotificationButton(){
 document.addEventListener('visibilitychange', () => {
   if(document.visibilityState === 'visible'){
     maybeFireOSNotification();
+    // Refresh the time-of-day greeting on resume — a PWA foregrounded hours
+    // (or a day) after it was last rendered would otherwise keep the stale
+    // "Good morning/afternoon/evening" from the previous render.
+    if(typeof _renderGreeting === 'function') _renderGreeting();
   }
 });
 
@@ -5110,8 +5114,26 @@ function calcProgrammeCycle(progName){
   return { week, day, total: blockSessions.length };
 }
 
+// Time-of-day greeting + preferred name. Lives in the dispatcher (not a
+// specific view) so BOTH the path view and the legacy view get it — the
+// path view previously never set it, leaving the hard-coded "Good morning"
+// HTML default on screen at any hour for path users. Re-runs on every
+// Today render, so a PWA left open all day rolls over naturally.
+function _renderGreeting(){
+  const el = document.getElementById('todayGreeting');
+  if(!el) return;
+  const hour = new Date().getHours();
+  let greeting = 'Good morning';
+  if(hour < 5)                 greeting = 'Good evening';   // night owls
+  else if(hour >= 12 && hour < 18) greeting = 'Good afternoon';
+  else if(hour >= 18)          greeting = 'Good evening';
+  const displayName = userProfile.preferredName || currentUser?.name || (currentUser?.email ? currentUser.email.split('@')[0] : 'Max');
+  el.innerHTML = greeting + ', <span class="ac">' + String(displayName).replace(/</g,'&lt;') + '</span>';
+}
+
 function renderToday(){
   if(_isColdSyncing()){ _renderTodaySkeleton(); return; }
+  _renderGreeting();
   if(typeof renderTrainingReminder === 'function') renderTrainingReminder();
   if(isPathActive()){ renderTodayWithPath(); return; }
   renderTodayLegacy();
@@ -5175,17 +5197,8 @@ function renderTodayLegacy(){
   const listEl=document.getElementById('todayList');
   if(listEl) listEl.style.display='';
 
-  // Update greeting based on time of day
-  const hour=new Date().getHours();
-  let greeting='Good morning';
-  if(hour>=12&&hour<18) greeting='Good afternoon';
-  else if(hour>=18) greeting='Good evening';
-  
-  // Use preferred name from profile (set at signup, editable in profile)
-  let displayName = userProfile.preferredName || currentUser?.name || (currentUser?.email ? currentUser.email.split('@')[0] : 'Max');
-  
-  document.getElementById('todayGreeting').innerHTML=greeting+', <span class="ac">'+displayName+'</span>';
-  
+  // Greeting is set by _renderGreeting() in the renderToday dispatcher
+  // (shared with the path view — do not duplicate it here).
   renderTodayToggle();
   renderDayPicker();
   
