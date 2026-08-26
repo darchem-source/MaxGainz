@@ -469,6 +469,15 @@ def gate_videomap(js):
     if gbad or len(set(gkeys)) != len(gkeys):
         print(f'  ✗ EX_GIF_MAP invalid (bad={gbad[:3]}, dupes={len(gkeys)-len(set(gkeys))})'); return False
     print(f'  ✓ EX_GIF_MAP well-formed ({len(gentries)} entries)')
+    vm2 = re.search(r'const EX_V2_ID_MAP = \{(.*?)\n\};', js, re.S)
+    if not vm2:
+        print('  ✗ EX_V2_ID_MAP literal not found'); return False
+    v2e = re.findall(r"'((?:[^'\\]|\\.)+)':\s*'([^']*)',", vm2.group(1))
+    v2bad = [(k, v) for k, v in v2e if not re.fullmatch(r'exr_[A-Za-z0-9]+', v)]
+    v2k = [k for k, _ in v2e]
+    if v2bad or len(set(v2k)) != len(v2k):
+        print(f'  ✗ EX_V2_ID_MAP invalid (bad={v2bad[:3]})'); return False
+    print(f'  ✓ EX_V2_ID_MAP well-formed ({len(v2e)} entries)')
     print(f'  ✓ COOLDOWN_STRETCHES well-formed ({len(slugs)} stretches)')
     wm = re.search(r'const WARMUP_MOVES = \[(.*?)\n\];', js, re.S)
     if not wm:

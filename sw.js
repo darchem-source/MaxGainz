@@ -73,6 +73,10 @@ self.addEventListener('fetch', e => {
   // Never intercept Supabase — let calls fail naturally offline.
   if (url.hostname.includes('supabase.co')) return;
 
+  // Never intercept the ExerciseDB proxy — media URLs rotate weekly and the
+  // plan forbids caching, so these must always hit the network fresh.
+  if (url.pathname.startsWith('/api/')) return;
+
   // Navigation requests (HTML): network-first, cache fallback.
   if (e.request.mode === 'navigate') {
     e.respondWith(

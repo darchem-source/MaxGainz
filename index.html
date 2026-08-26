@@ -14371,6 +14371,78 @@ const EX_MEDIA_BASE = 'exercise-media/';
 // CDN unlimited per docs; 180×180 source — accepted user tradeoff). The
 // self-hosted JPG cross-fades / wger loops below remain the fallback.
 const EDB_GIF_BASE = 'https://static.exercisedb.dev/media/';
+// ── ExerciseDB V2 (paid-catalog MP4s via the user's RapidAPI free plan) ──
+// Only PERMANENT exercise ids are stored (explicitly allowed by their docs);
+// the media URL is fetched FRESH per view through the Netlify proxy at
+// /api/edb-video (key server-side, no caching — their terms + weekly URL
+// rotation make stored URLs both non-compliant and broken-by-Monday).
+const EX_V2_ID_MAP = {
+  'Arnold Press': 'exr_41n2hMRXm49mM62z',
+  'Bench Press': 'exr_41n2hxnFMotsXTj3',
+  'Bulgarian Split Squats': 'exr_41n2hpLLs1uU5atr',
+  'Burpees': 'exr_41n2hTaeNKWhMQHH',
+  'Chin-Ups': 'exr_41n2hXszY7TgwKy4',
+  'Diamond Push-Ups': 'exr_41n2hRZ6fgsLyd77',
+  'Donkey Calf Raise': 'exr_41n2hWbP5uF6PQpU',
+  'Flutter Kicks': 'exr_41n2hPRWorCfCPov',
+  'Front Raises': 'exr_41n2howQHvcrcrW6',
+  'Goblet Squats': 'exr_41n2hQDiSwTZXM4F',
+  'Hammer Curls': 'exr_41n2hGioS8HumEF7',
+  'Hip Thrusts': 'exr_41n2hxxePSdr5oN1',
+  'Jump Rope': 'exr_41n2hN468sP27Sac',
+  'Jump Squats': 'exr_41n2hbdZww1thMKz',
+  'Jumping Jacks': 'exr_41n2hupxPcdnktBC',
+  'Lateral Raises': 'exr_41n2hjuGpcex14w7',
+  'Lunges': 'exr_41n2hYXWwoxiUk57',
+  'Pike Push-Ups': 'exr_41n2hmvGdVRvvnNY',
+  'Pull-Ups': 'exr_41n2hU4y6EaYXFhr',
+  'Push-Ups': 'exr_41n2hNXJadYcfjnd',
+  'Romanian Deadlift': 'exr_41n2hn8rpbYihzEW',
+  'Russian Twists': 'exr_41n2hWVVEwU54UtF',
+  'Seated Calf Raise': 'exr_41n2hTs4q3ihihZs',
+  'Side Bends': 'exr_41n2hTCBiQVsEfZ7',
+  'Sissy Squat': 'exr_41n2hw8nSYiaCXW1',
+  'Squat': 'exr_41n2hmGR8WuVfe1U',
+  'Stiff-Leg Deadlift': 'exr_41n2hQp1pR7heQq9',
+  'Sumo Squat': 'exr_41n2hYAP9oGEZk2P',
+  'V-Ups': 'exr_41n2huc12BsuDNYQ',
+  'Walking Lunges': 'exr_41n2hQHmRSoUkk9F',
+};
+function _exV2Id(name){
+  if(!name) return null;
+  if(EX_V2_ID_MAP[name] !== undefined) return EX_V2_ID_MAP[name] || null;
+  const low = String(name).toLowerCase();
+  for(const k in EX_V2_ID_MAP){ if(k.toLowerCase() === low) return EX_V2_ID_MAP[k] || null; }
+  return null;
+}
+// Fetch a fresh V2 video URL via the proxy and swap it into the sheet.
+// Any failure (no proxy locally, quota drained, timeout) reveals the
+// GIF/self-hosted stack that rendered hidden underneath.
+function _v2Bail(){
+  const w = document.getElementById('fgV2Wrap');
+  if(w) w.style.display = 'none';
+  const u = document.getElementById('fgUnderV2');
+  if(u) u.style.display = '';
+}
+function _loadV2Video(v2id){
+  const wrap = document.getElementById('fgV2Wrap');
+  if(!wrap) return;
+  const bail = _v2Bail;
+  const ctrl = ('AbortController' in window) ? new AbortController() : null;
+  const t = setTimeout(() => { try{ ctrl && ctrl.abort(); }catch(e){} bail(); }, 5000);
+  fetch('/api/edb-video?id=' + encodeURIComponent(v2id), ctrl ? { signal: ctrl.signal } : {})
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(j => {
+      clearTimeout(t);
+      if(!j || !j.videoUrl){ bail(); return; }
+      if(!document.getElementById('fgV2Wrap')) return; // sheet closed meanwhile
+      wrap.innerHTML = `<video src="${j.videoUrl}" muted loop autoplay playsinline webkit-playsinline preload="metadata"
+        onerror="_v2Bail()" style="width:100%;display:block;"></video>`;
+      const v = wrap.querySelector('video');
+      if(v){ v.muted = true; try{ v.play().catch(()=>{}); }catch(e){} }
+    })
+    .catch(() => { clearTimeout(t); bail(); });
+}
 const EX_GIF_MAP = {
   'Ab Wheel Rollout': 'NAgVB3t',
   'Abductor Machine': 'CHpahtl',
@@ -14778,6 +14850,20 @@ function _demoSexPref(){
 // Media = self-hosted public-domain 2-frame crossfade; when a real video
 // loop exists for this id (EX_MEDIA_LOOPS, wger overlay) it wins.
 function _exVideoBlockHtml(name){
+  // Visual stack, most desirable first: V2 MP4 (live-fetched) → ExerciseDB
+  // GIF → self-hosted JPG/loop. Lower layers render hidden and reveal on
+  // failure of the layer above.
+  const v2id = (typeof _exV2Id === 'function') ? _exV2Id(name) : null;
+  if(v2id){
+    const under = _exVideoBlockHtmlNoV2(name);
+    return `
+    <div id="fgV2Wrap" data-v2id="${v2id}" style="border-radius:12px;overflow:hidden;margin-bottom:14px;background:#000;min-height:120px;display:flex;align-items:center;justify-content:center;">
+      <div style="font-size:12px;color:#888;padding:30px 0;">Loading demo…</div>
+    </div>` + (under ? `<div id="fgUnderV2" style="display:none;">${under}</div>` : '');
+  }
+  return _exVideoBlockHtmlNoV2(name);
+}
+function _exVideoBlockHtmlNoV2(name){
   // ExerciseDB GIF wins when mapped; the self-hosted fallback rides along
   // hidden so a failed GIF load reveals it without a re-render.
   const gifId = (typeof _exGifId === 'function') ? _exGifId(name) : null;
@@ -14886,6 +14972,7 @@ function _findEXDBEntry(name){
 }
 // Is there anything worth showing for this exercise (a demo clip or a guide)?
 function _hasExerciseGuide(name){
+  if(typeof _exV2Id === 'function' && _exV2Id(name)) return true;
   if(typeof _exGifId === 'function' && _exGifId(name)) return true;
   if(typeof _exVideoEntry === 'function' && _exVideoEntry(name, EX_VIDEO_MAP)) return true;
   return !!_findEXDBEntry(name);
@@ -14937,6 +15024,8 @@ function openFormGuideFor(name){
   // was inserted while its container was display:none.
   const fgv = document.getElementById('fgVideo');
   if(fgv){ fgv.muted = true; try{ fgv.play().catch(()=>{}); }catch(e){} }
+  const fgv2 = document.getElementById('fgV2Wrap');
+  if(fgv2 && typeof _loadV2Video === 'function') _loadV2Video(fgv2.getAttribute('data-v2id'));
 }
 
 // ── EXERCISE NOTES ──
