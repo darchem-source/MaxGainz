@@ -14353,6 +14353,20 @@ const EX_VIDEO_BASE = null; // was: 'https://pub-585d42eb1aa64a67aedf483ec328d3f
 // into this repo under exercise-media/). Relative base works on Netlify,
 // local http.server, and inside the service-worker cache.
 const EX_MEDIA_BASE = 'exercise-media/';
+// ── ExerciseDB free tier (oss.exercisedb.dev) — DOMINANT visual source ──
+// Animated muscle-highlight GIFs from static.exercisedb.dev (no auth; media
+// CDN unlimited per docs; 180×180 source — accepted user tradeoff). The
+// self-hosted JPG cross-fades / wger loops below remain the fallback.
+const EDB_GIF_BASE = 'https://static.exercisedb.dev/media/';
+const EX_GIF_MAP = {
+};
+function _exGifId(name){
+  if(!name) return null;
+  if(EX_GIF_MAP[name] !== undefined) return EX_GIF_MAP[name] || null;
+  const low = String(name).toLowerCase();
+  for(const k in EX_GIF_MAP){ if(k.toLowerCase() === low) return EX_GIF_MAP[k] || null; }
+  return null;
+}
 // Ids that ALSO have a real video loop at exercise-media/{id}/loop.mp4
 // (wger.de CC-BY-SA overlay). Empty until the overlay ships; renderers
 // automatically prefer loop.mp4 over the 2-frame crossfade when listed.
@@ -14573,6 +14587,21 @@ function _demoSexPref(){
 // Media = self-hosted public-domain 2-frame crossfade; when a real video
 // loop exists for this id (EX_MEDIA_LOOPS, wger overlay) it wins.
 function _exVideoBlockHtml(name){
+  // ExerciseDB GIF wins when mapped; the self-hosted fallback rides along
+  // hidden so a failed GIF load reveals it without a re-render.
+  const gifId = (typeof _exGifId === 'function') ? _exGifId(name) : null;
+  if(gifId){
+    const fb = _exFallbackBlockHtml(name);
+    return `
+    <div id="fgGifWrap" style="border-radius:12px;overflow:hidden;margin-bottom:14px;background:#fff;">
+      <img src="${EDB_GIF_BASE}${gifId}.gif" alt="${String(name).replace(/"/g,'')} demonstration" loading="lazy"
+        onerror="const g=document.getElementById('fgGifWrap'); if(g) g.style.display='none'; const f=document.getElementById('fgFallbackWrap'); if(f) f.style.display='';"
+        style="width:100%;max-width:300px;display:block;margin:0 auto;">
+    </div>` + (fb ? `<div id="fgFallbackWrap" style="display:none;">${fb}</div>` : '');
+  }
+  return _exFallbackBlockHtml(name);
+}
+function _exFallbackBlockHtml(name){
   const entry = _exVideoEntry(name, EX_VIDEO_MAP);
   if(!entry) return '';
   const id = entry.slug;
@@ -14666,6 +14695,7 @@ function _findEXDBEntry(name){
 }
 // Is there anything worth showing for this exercise (a demo clip or a guide)?
 function _hasExerciseGuide(name){
+  if(typeof _exGifId === 'function' && _exGifId(name)) return true;
   if(typeof _exVideoEntry === 'function' && _exVideoEntry(name, EX_VIDEO_MAP)) return true;
   return !!_findEXDBEntry(name);
 }
@@ -16647,7 +16677,7 @@ function openMuscleExplorer(muscle){
   EXDB.forEach(e => {
     const fine = (typeof resolveExerciseMuscles === 'function') ? resolveExerciseMuscles(e.name) : [];
     if(!fine || fine.indexOf(muscle) < 0) return;
-    const clip = (typeof _exVideoEntry === 'function') && !!_exVideoEntry(e.name, EX_VIDEO_MAP);
+    const clip = ((typeof _exGifId === 'function') && !!_exGifId(e.name)) || ((typeof _exVideoEntry === 'function') && !!_exVideoEntry(e.name, EX_VIDEO_MAP));
     rows.push({ name: e.name, equip: e.equip || '', cat: e.cat || '', clip });
   });
   rows.sort((a, b) => (b.clip - a.clip) || a.name.localeCompare(b.name));
