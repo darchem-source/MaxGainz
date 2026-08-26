@@ -443,7 +443,7 @@ def gate_videomap(js):
     entries = re.findall(r"'((?:[^'\\]|\\.)+)':\s*'((?:[^'\\]|\\.)+)',", body)
     if len(entries) < 90:
         print(f'  ✗ EX_VIDEO_MAP has only {len(entries)} entries (expected >= 90)'); return False
-    bad = [(k, v) for k, v in entries if not re.fullmatch(r'[a-z0-9-]+(\|[mf])?', v)]
+    bad = [(k, v) for k, v in entries if not re.fullmatch(r'[A-Za-z0-9_-]+(\|[mf])?', v)]
     if bad:
         for k, v in bad[:5]: print(f'  ✗ malformed map value: {k!r}: {v!r}')
         return False
@@ -460,6 +460,15 @@ def gate_videomap(js):
     cbad = [s for s in slugs if not re.fullmatch(r'[a-z0-9-]+', s)]
     if cbad or len(slugs) < 12 or len(set(slugs)) != len(slugs):
         print(f'  ✗ COOLDOWN_STRETCHES invalid (n={len(slugs)}, bad={cbad[:3]}, dupes={len(slugs)-len(set(slugs))})'); return False
+    gm = re.search(r'const EX_GIF_MAP = \{(.*?)\n\};', js, re.S)
+    if not gm:
+        print('  ✗ EX_GIF_MAP literal not found'); return False
+    gentries = re.findall(r"'((?:[^'\\]|\\.)+)':\s*'([^']*)',", gm.group(1))
+    gbad = [(k, v) for k, v in gentries if not re.fullmatch(r'[A-Za-z0-9]+', v)]
+    gkeys = [k for k, _ in gentries]
+    if gbad or len(set(gkeys)) != len(gkeys):
+        print(f'  ✗ EX_GIF_MAP invalid (bad={gbad[:3]}, dupes={len(gkeys)-len(set(gkeys))})'); return False
+    print(f'  ✓ EX_GIF_MAP well-formed ({len(gentries)} entries)')
     print(f'  ✓ COOLDOWN_STRETCHES well-formed ({len(slugs)} stretches)')
     wm = re.search(r'const WARMUP_MOVES = \[(.*?)\n\];', js, re.S)
     if not wm:
