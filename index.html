@@ -22530,17 +22530,32 @@ function exportData(){
   a.click();
 }
 
-function confirmClear(){
-  if(confirm('Clear ALL session history and reset XP to 0?\n\nThis cannot be undone. Export first if you want a backup.')){
-    sbFetch('sessions?user_id=eq.'+USER_ID, {method:'DELETE'});
-    sbFetch('custom_weights?user_id=eq.'+USER_ID, {method:'DELETE'});
-    completedSessions.length=0;
-    localStorage.removeItem(STORAGE_KEY);
-    saveLocalFallback();
-    setSyncStatus('synced');
-    renderProgress();
-    renderToday();
+async function confirmClear(){
+  if(!confirm('Clear ALL session history and reset XP to 0?\n\nThis cannot be undone. Export first if you want a backup.')) return;
+  // Signed in: clear the cloud copy FIRST. Cloud is the source of truth, so if the
+  // delete fails the sessions would just reappear on the next cloudLoadAll — bail
+  // out instead of pretending it worked. Signed out: local clear only.
+  //
+  // Only `sessions` is deleted — XP is derived entirely from it (getXPEvents).
+  // custom_weights is deliberately left alone: it also holds the __profile__ blob
+  // (and any other __*__ rows), and working weights are kept locally here too.
+  // Wiping everything is deleteUserAccount()'s job, not this button's.
+  const signedIn = isAuthenticated();
+  if(signedIn){
+    setSyncStatus('syncing');
+    const res = await sbFetch('sessions?user_id=eq.' + getCurrentUserId(), {method:'DELETE'});
+    if(res === null){
+      setSyncStatus('offline');
+      showToast('❌ Couldn\'t clear cloud history — check your connection and try again', { tone:'error', duration:5000 });
+      return;
+    }
   }
+  completedSessions.length=0;
+  localStorage.removeItem(STORAGE_KEY);
+  saveLocalFallback();
+  if(signedIn) setSyncStatus('synced');
+  renderProgress();
+  renderToday();
 }
 
 // ── MANUAL ACTIVITY ──
@@ -23272,8 +23287,7 @@ async function authLogin(){
     // Call Supabase auth login endpoint
     const endpoint = SB_URL + '/auth/v1/token?grant_type=password';
     console.log('🔐 Attempting login to:', endpoint);
-    console.log('📧 Email:', email);
-    
+
     const result = await fetch(endpoint, {
       method: 'POST',
       headers: {
@@ -23283,10 +23297,10 @@ async function authLogin(){
       body: JSON.stringify({email, password})
     });
     
+    // Status only — never log the body: it carries access_token + refresh_token.
     console.log('✅ Response status:', result.status);
     const data = await result.json();
-    console.log('📊 Response data:', JSON.stringify(data));
-    
+
     if(!result.ok){
       const errorMsg = data.error_description || data.message || data.msg || JSON.stringify(data);
       console.error('❌ Auth error:', errorMsg);
@@ -23454,7 +23468,6 @@ async function sendConfirmationEmail(){
 
     console.log('[RESEND] Response status:', result.status);
     const data = await result.json();
-    console.log('[RESEND] Response data:', data);
 
     if(!result.ok){
       throw new Error(data.message || `Failed to send confirmation email (${result.status})`);
