@@ -23256,7 +23256,9 @@ async function authLogin(){
     return;
   }
   
-  // Block login if opened as a local file (not localhost) — Supabase CORS will reject it
+  // Block login if opened as a local file (not localhost). Not a CORS issue — Supabase
+  // allows any origin — but on file:// the saved JWT lands in localStorage shared with
+  // every other local HTML file, and the service worker can't register.
   if(window.location.protocol === 'file:'){
     showAuthError('⚠️ Use localhost:8080 or maxgainz.netlify.app — login won\'t work from a local file. Run: python3 -m http.server 8080 in your Downloads folder.');
     return;
