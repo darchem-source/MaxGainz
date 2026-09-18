@@ -23482,6 +23482,26 @@ function authLogout(){
   localStorage.removeItem('maxgainz_path_skipped');
   localStorage.removeItem('maxgainz_onboarded');
 
+  // ── INVARIANT: every field cloudSaveProfile() uploads must be reset here ──
+  // Sign-out does not reload the page, so any global left standing survives into
+  // the next account on this device. That is not just a display leak: the next
+  // cloudSaveProfile() writes whatever is in memory into the NEW user's
+  // __profile__ row, making one person's body measurements and private notes
+  // permanently theirs. cloudLoadAll() is no safety net — it only overwrites
+  // these when the incoming blob happens to carry them, and it *merges*
+  // pathHistory rather than replacing it.
+  // Keep this list in step with the blob built in cloudSaveProfile().
+  pathHistory = [];
+  bodyWeightLog = [];
+  measurementsLog = [];
+  dailyNotes = {};
+  pbLifts = _DEFAULT_PB_LIFTS.map(t => ({...t}));
+  localStorage.removeItem('maxgainz_pathHistory');
+  localStorage.removeItem('maxgainz_pbLifts');
+  // Form-guide usage is the previous user's activity and feeds an achievement
+  // ("Always Learning", +100 XP), so leaving it also inflates the next user's XP.
+  localStorage.removeItem('maxgainz_fg_seen');
+
   // ── Clear auth tokens ──
   saveAuthState(null, null);
 
@@ -23687,23 +23707,51 @@ async function deleteUserAccount(){
   _dashDisabled = true; clearTimeout(_dashTimer); _dashTimer = null; // never re-create __dashboard__ after the wipe
   try{
     const userId = getCurrentUserId();
-    
-    // Delete all user sessions
-    await sbFetch('sessions?user_id=eq.' + userId, {method: 'DELETE'});
-    
-    // Delete all user custom weights
-    await sbFetch('custom_weights?user_id=eq.' + userId, {method: 'DELETE'});
-    
-    // Sign out and clear auth
-    await fetch(SB_URL + '/auth/v1/logout', {
-      method: 'POST',
-      headers: {
-        'apikey': SB_KEY,
-        'Authorization': 'Bearer ' + authToken,
-        'Content-Type': 'application/json'
-      }
-    });
-    
+    if(!userId){
+      showToast('❌ You\'re not signed in — nothing was deleted.', { tone:'error', duration:5000 });
+      return;
+    }
+
+    // Unlike confirmClear this deletes EVERYTHING, __profile__ row included.
+    //
+    // sbFetch never throws: it returns null on non-2xx, on its 10s timeout, and on
+    // a dead token after a failed refresh. So the catch below cannot see a failed
+    // delete — the result has to be inspected. Without this the function wiped
+    // localStorage and promised "all your data has been removed" while the rows,
+    // including the profile blob with name, email, DOB and body measurements, were
+    // still sitting in Supabase.
+    const sessRes   = await sbFetch('sessions?user_id=eq.' + userId, {method: 'DELETE'});
+    const weightRes = await sbFetch('custom_weights?user_id=eq.' + userId, {method: 'DELETE'});
+
+    if(sessRes === null || weightRes === null){
+      const stillThere = [];
+      if(sessRes === null)   stillThere.push('workout history');
+      if(weightRes === null) stillThere.push('profile and saved weights');
+      // Nothing local is touched, so the account stays usable and the user can
+      // retry. Re-running the deletes is safe — removing already-removed rows is
+      // a no-op, so a partial first pass finishes cleanly on the next attempt.
+      showToast('❌ Account NOT deleted — your ' + stillThere.join(' and ') +
+                ' could not be removed. Nothing was cleared on this device. '
+                + (_authExpiredToastShown ? 'Sign out and back in, then retry.' : 'Check your connection and retry.'),
+                { tone:'error', duration:7000 });
+      return;
+    }
+
+    // Cloud data is gone. Sign out server-side too, but don't let a failure here
+    // strand the user in a deleted account — the deletes above already succeeded.
+    try{
+      await fetch(SB_URL + '/auth/v1/logout', {
+        method: 'POST',
+        headers: {
+          'apikey': SB_KEY,
+          'Authorization': 'Bearer ' + authToken,
+          'Content-Type': 'application/json'
+        }
+      });
+    }catch(e){
+      console.warn('Account deleted, but server-side sign-out failed:', e.name);
+    }
+
     showToast('✅ Account deleted — all your data has been removed', { duration:4500 });
     saveAuthState(null, null);
     localStorage.clear();
