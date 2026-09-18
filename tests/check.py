@@ -489,18 +489,285 @@ def gate_videomap(js):
     print(f'  ✓ WARMUP_MOVES well-formed ({len(ws)} moves)')
     return True
 
+# ── Gate 4: inline-handler wiring ──────────────────────────────────────────
+# The ReferenceError class: an inline on*="..." attribute calls a function or
+# reads a global that does not exist, so the button throws the moment it's
+# clicked and silently does nothing. Two real instances shipped:
+#   - confirmClear() used an undefined USER_ID, so "Clear history" cleared nothing
+#   - the #cloudToggle button called cloudLogout()/cloudUserId, neither defined
+# The JS parse gate cannot see these — the handler is a string until clicked.
+
+# Globals the browser provides, plus the handler-scope implicit names.
+BROWSER_GLOBALS = {
+    'window', 'document', 'navigator', 'location', 'history', 'localStorage',
+    'sessionStorage', 'console', 'event', 'this', 'self', 'top', 'parent',
+    'alert', 'confirm', 'prompt', 'fetch', 'setTimeout', 'setInterval',
+    'clearTimeout', 'clearInterval', 'requestAnimationFrame', 'getComputedStyle',
+    'JSON', 'Math', 'Date', 'Object', 'Array', 'String', 'Number', 'Boolean',
+    'Promise', 'Set', 'Map', 'RegExp', 'Error', 'Infinity', 'NaN', 'undefined',
+    'null', 'true', 'false', 'parseInt', 'parseFloat', 'isNaN', 'isFinite',
+    'encodeURIComponent', 'decodeURIComponent', 'encodeURI', 'decodeURI',
+    'Blob', 'URL', 'FileReader', 'Image', 'Audio', 'AbortController',
+    'CustomEvent', 'IntersectionObserver', 'MutationObserver', 'ResizeObserver',
+    'structuredClone', 'queueMicrotask', 'caches', 'indexedDB', 'crypto',
+    # reserved words that can appear inside a handler expression
+    'if', 'else', 'return', 'typeof', 'new', 'delete', 'void', 'in', 'of',
+    'let', 'const', 'var', 'function', 'try', 'catch', 'finally', 'throw',
+    'for', 'while', 'do', 'switch', 'case', 'break', 'continue', 'instanceof',
+    'async', 'await', 'yield', 'class', 'extends', 'super',
+}
+
+# SCREAMING_SNAKE names that legitimately appear without a local declaration.
+SCREAMING_ALLOWED = {
+    'XMLHttpRequest', 'NSUTF8StringEncoding',
+}
+
+def strip_js_noise(js):
+    """Blank out comments and quoted spans so identifiers that merely appear in
+    prose or data are not mistaken for live code references.
+
+    Deliberately LINE-BOUNDED. A whole-file character scanner cannot tell a regex
+    literal from division without a real parser, and one mis-read quote desyncs
+    the rest of the file — an earlier version of this silently blanked 63% of the
+    script, which turned the gate below into a permanent green light. Working a
+    line at a time means a bad guess costs at most that one line. Multi-line
+    block comments and template literals are tracked with explicit state, since
+    those two are unambiguous."""
+    out, in_block, in_tpl = [], False, False
+    for raw in js.split('\n'):
+        line = raw
+        if in_block:
+            end = line.find('*/')
+            if end == -1:
+                out.append(''); continue
+            line = ' ' * (end + 2) + line[end + 2:]
+            in_block = False
+        if in_tpl:
+            # inside a template literal: only a lone ` closes it
+            end = line.find('`')
+            if end == -1:
+                out.append(''); continue
+            line = ' ' * (end + 1) + line[end + 1:]
+            in_tpl = False
+        # opening block comment that runs past this line
+        bm = re.search(r'/\*', line)
+        if bm and '*/' not in line[bm.end():]:
+            in_block = True
+            line = line[:bm.start()]
+        line = re.sub(r'/\*.*?\*/', ' ', line)          # closed block comment
+        line = re.sub(r"'(?:[^'\\]|\\.)*'", "''", line)  # closed 'single'
+        line = re.sub(r'"(?:[^"\\]|\\.)*"', '""', line)  # closed "double"
+        line = re.sub(r'`(?:[^`\\]|\\.)*`', '``', line)  # closed `template`
+        # an unclosed ` opens a multi-line template literal
+        if line.count('`') % 2 == 1:
+            in_tpl = True
+            line = line[:line.rfind('`')]
+        line = re.sub(r'//.*$', '', line)                # line comment
+        out.append(line)
+    return '\n'.join(out)
+
+def declared_globals(js):
+    """Every name the inline script defines at any scope. Deliberately
+    over-inclusive: a false 'declared' only weakens the check, while a false
+    'undeclared' would make the gate cry wolf and get switched off."""
+    names = set()
+    names |= set(re.findall(r'\b(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(', js))
+    names |= set(re.findall(r'\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)', js))
+    names |= set(re.findall(r'\bwindow\.([A-Za-z_$][\w$]*)\s*=', js))
+    names |= set(re.findall(r'^[ \t]*([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:function|\()', js, re.M))
+    # `const {a, b} = ...` / `const [a, b] = ...` destructuring
+    for grp in re.findall(r'\b(?:const|let|var)\s*[\{\[]([^\}\]]{1,200})[\}\]]\s*=', js):
+        names |= set(re.findall(r'([A-Za-z_$][\w$]*)', grp))
+    return names
+
+def script_line_offset(html):
+    """Lines to add to an inline-script line number to get an index.html line.
+    Returns None when there is more than one inline block, since the harness
+    concatenates them and the mapping is then ambiguous — better to print an
+    honest 'inline script line N' than a confidently wrong file line."""
+    ms = list(re.finditer(r'<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)</script>', html))
+    if len(ms) != 1:
+        return None
+    return html.count('\n', 0, ms[0].start(1))
+
+def handler_attrs(html):
+    """(line_no, attr_name, code) for every inline on*= handler."""
+    out = []
+    for m in re.finditer(r'\son([a-z]+)\s*=\s*"([^"]*)"', html):
+        out.append((html.count('\n', 0, m.start()) + 1, 'on' + m.group(1), m.group(2)))
+    return out
+
+def strip_strings(code):
+    """Blank out 'single' and \"double\" quoted spans so string contents are not
+    mistaken for identifiers."""
+    code = re.sub(r"'(?:[^'\\]|\\.)*'", "''", code)
+    code = re.sub(r'`(?:[^`\\]|\\.)*`', '``', code)
+    return code
+
+def strip_interpolation(code):
+    """Remove `${ ... }` spans (brace-matched, so nested object/ternary braces are
+    handled). Most of this app's handlers are emitted from JS template literals,
+    where the ${} holds render-local variables that are NOT globals. Blanking the
+    span keeps the surrounding function name checkable — `f(${i})` still verifies
+    that `f` exists — without flagging `i`."""
+    out, i, n = [], 0, len(code)
+    while i < n:
+        if code[i] == '$' and i + 1 < n and code[i + 1] == '{':
+            depth, j = 0, i + 1
+            while j < n:
+                if code[j] == '{': depth += 1
+                elif code[j] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        j += 1
+                        break
+                j += 1
+            i = j                      # drop the whole ${...} span
+        else:
+            out.append(code[i]); i += 1
+    return ''.join(out)
+
+def gate_wiring(html, js):
+    declared = declared_globals(js)
+    known = declared | BROWSER_GLOBALS
+    # Every element id anywhere in the file — including ids that only appear
+    # inside JS template literals, which is how most of this app's DOM is built.
+    element_ids = set(re.findall(r'\bid\s*=\s*["\']([A-Za-z0-9_:-]+)["\']', html))
+    element_ids |= set(re.findall(r'\bid\s*=\s*([A-Za-z0-9_-]+)[\s>]', html))
+
+    bad_names, bad_ids = [], []
+    for line, attr, raw in handler_attrs(html):
+        raw = strip_interpolation(raw)
+        code = strip_strings(raw)
+        # Identifiers that are not property accesses (no leading dot), not object
+        # keys (`{foo:` / `foo:`), and not label-like.
+        for im in re.finditer(r'(?<![\w$.])([A-Za-z_$][\w$]*)\s*(?![\w$])', code):
+            name = im.group(1)
+            rest = code[im.end():].lstrip()
+            if rest.startswith(':'):      # object key / ternary-else handled below
+                continue
+            if name in known:
+                continue
+            bad_names.append((line, attr, name, raw[:90]))
+        # getElementById('x') / querySelector('#x') inside the handler
+        for gm in re.finditer(r"getElementById\(\s*'([A-Za-z0-9_:-]+)'\s*\)", raw):
+            if gm.group(1) not in element_ids:
+                bad_ids.append((line, attr, gm.group(1), raw[:90]))
+        for qm in re.finditer(r"querySelector(?:All)?\(\s*'#([A-Za-z0-9_:-]+)'", raw):
+            if qm.group(1) not in element_ids:
+                bad_ids.append((line, attr, qm.group(1), raw[:90]))
+
+    # De-dup while keeping the first sighting of each name
+    seen, uniq = set(), []
+    for line, attr, name, snippet in bad_names:
+        if name in seen:
+            continue
+        seen.add(name); uniq.append((line, attr, name, snippet))
+
+    handlers_ok = not (uniq or bad_ids)
+    if handlers_ok:
+        n = len(handler_attrs(html))
+        print(f'  ✓ all {n} inline handlers reference defined functions and real element ids')
+    else:
+        for line, attr, name, snippet in uniq:
+            print(f'  ✗ index.html:{line} {attr} calls/reads undefined `{name}`  — {snippet}')
+        for line, attr, eid, snippet in bad_ids:
+            print(f'  ✗ index.html:{line} {attr} targets missing element id "{eid}"  — {snippet}')
+
+    # The confirmClear()/USER_ID instance lived in a function BODY, not in a
+    # handler attribute, so the sweep above would have missed it. Config-style
+    # SCREAMING_SNAKE names are how this file spells its globals, and one that is
+    # read but never declared is the exact shape of that bug.
+    code = strip_js_noise(js)
+    declared_upper = {d for d in declared if re.fullmatch(r'[A-Z][A-Z0-9_]*', d)}
+    ghosts = {}
+    for gm in re.finditer(r'(?<![\w$.])([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)(?![\w$])', code):
+        name = gm.group(1)
+        if name in declared_upper or name in known or name in SCREAMING_ALLOWED:
+            continue
+        ghosts.setdefault(name, code.count('\n', 0, gm.start()) + 1)
+    if ghosts:
+        off = script_line_offset(html)
+        for name, line in sorted(ghosts.items(), key=lambda kv: kv[1]):
+            where = f'index.html:{line + off}' if off is not None else f'inline script line {line}'
+            print(f'  ✗ {where} reads undeclared global `{name}` — ReferenceError when that line runs')
+    else:
+        print('  ✓ no SCREAMING_SNAKE global is read without being declared')
+    return handlers_ok and not ghosts
+
+# ── Gate 5: auth log hygiene ───────────────────────────────────────────────
+# A shipped build printed the full Supabase auth response — access_token AND
+# refresh_token — plus the user's email to the browser console. Nothing on an
+# auth path may log a response body, a token, a password, or an email.
+AUTH_FUNCS = ['authLogin', 'authSignup', 'refreshAuthToken', 'sendPasswordReset',
+              'sendConfirmationEmail', 'deleteUserAccount', 'authLogout', 'saveAuthState']
+# Bare identifiers that must never be passed to console.* on an auth path.
+FORBIDDEN_ARGS = ['data', 'token', 'password', 'email', 'authToken', 'authRefreshToken',
+                  'refreshToken', 'newToken', 'newRefresh', 'user', 'currentUser',
+                  'result', 'res', 'json', 'body', 'blob', 'savedAuth']
+
+def extract_async_decl(js, name):
+    """extract_decl, but also matches `async function NAME(`."""
+    m = re.search(r'(?:async\s+)?function\s+' + re.escape(name) + r'\s*\(', js)
+    if not m:
+        return None
+    i = js.index('{', m.start())
+    depth = 0
+    for j in range(i, len(js)):
+        if js[j] == '{': depth += 1
+        elif js[j] == '}':
+            depth -= 1
+            if depth == 0:
+                return js[m.start():j + 1]
+    return None
+
+def gate_authlogs(js):
+    problems, checked = [], 0
+    for fn in AUTH_FUNCS:
+        src = extract_async_decl(js, fn)
+        if not src:
+            problems.append(f'auth function {fn}() not found — update AUTH_FUNCS in this harness')
+            continue
+        checked += 1
+        for cm in re.finditer(r'console\.(?:log|warn|error|info|debug)\s*\(', src):
+            # Grab the argument list by paren-matching
+            i = src.index('(', cm.start()); depth = 0
+            for j in range(i, len(src)):
+                if src[j] == '(': depth += 1
+                elif src[j] == ')':
+                    depth -= 1
+                    if depth == 0: break
+            args = strip_strings(src[i + 1:j])
+            if re.search(r'JSON\.stringify', args):
+                problems.append(f'{fn}(): console call passes JSON.stringify(...) — may serialize tokens')
+                continue
+            for bad in FORBIDDEN_ARGS:
+                # bare identifier only — `result.status` and `e.message` are fine
+                if re.search(r'(?<![\w$.])' + re.escape(bad) + r'\s*(?![\w$.])', args):
+                    problems.append(f'{fn}(): console call logs bare `{bad}` — may expose credentials/PII')
+                    break
+    if problems:
+        for p in problems: print('  ✗ ' + p)
+        return False
+    print(f'  ✓ no auth path ({checked} functions) logs a token, password, email, or response body')
+    return True
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/3] parse')
+    print('[1/5] parse')
     p = gate_parse(js)
-    print('[2/3] invariants')
+    print('[2/5] invariants')
     inv = gate_invariants(js)
-    print('[3/3] video map')
+    print('[3/5] video map')
     vm = gate_videomap(js)
+    print('[4/5] inline handler wiring')
+    wi = gate_wiring(html, js)
+    print('[5/5] auth log hygiene')
+    au = gate_authlogs(js)
     print()
-    if p and inv and vm:
+    if p and inv and vm and wi and au:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 
