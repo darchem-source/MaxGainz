@@ -909,7 +909,12 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
               <div style="font-size:11px;color:var(--text2);" id="cloudEmail"></div>
             </div>
           </div>
-          <button id="cloudToggle" onclick="cloudUserId?cloudLogout():document.getElementById('cloudLoginMod').classList.add('open')" style="padding:6px 12px;background:var(--accent);color:#000;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">Sign In</button>
+          <!-- onclick is wired at runtime by updateCloudStatus(), which runs on every
+               goTab('profile') before this button can be seen. The old inline handler
+               here called cloudUserId/cloudLogout and opened #cloudLoginMod — none of
+               which have existed for a long time, so it was a ReferenceError waiting
+               on the one path that ever skipped updateCloudStatus(). -->
+          <button id="cloudToggle" style="padding:6px 12px;background:var(--accent);color:#000;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">Sign In</button>
         </div>
       </div>
       <div style="padding:16px;display:flex;flex-direction:column;gap:12px;max-width:500px;">
@@ -22609,17 +22614,31 @@ async function confirmClear(){
   // delete fails the sessions would just reappear on the next cloudLoadAll — bail
   // out instead of pretending it worked. Signed out: local clear only.
   //
-  // Only `sessions` is deleted — XP is derived entirely from it (getXPEvents).
-  // custom_weights is deliberately left alone: it also holds the __profile__ blob
-  // (and any other __*__ rows), and working weights are kept locally here too.
-  // Wiping everything is deleteUserAccount()'s job, not this button's.
+  // Only `sessions` is deleted. custom_weights is deliberately left alone: it also
+  // holds the __profile__ blob (and any other __*__ rows), and working weights are
+  // kept locally here too. Wiping everything is deleteUserAccount()'s job.
+  //
+  // NOTE: this clears session-derived XP (session events, streaks, comebacks, and
+  // every achievement that reads the session list) but NOT all of it — a handful of
+  // achievements score off state this button doesn't own: customWorkouts, the
+  // form-guide counter (maxgainz_fg_seen) and the active path. See confirmClear's
+  // dialog text, which overpromises "reset XP to 0".
   const signedIn = isAuthenticated();
   if(signedIn){
     setSyncStatus('syncing');
     const res = await sbFetch('sessions?user_id=eq.' + getCurrentUserId(), {method:'DELETE'});
     if(res === null){
       setSyncStatus('offline');
-      showToast('❌ Couldn\'t clear cloud history — check your connection and try again', { tone:'error', duration:5000 });
+      // sbFetch returns null for every failure, so distinguish the two the user can
+      // act on. _authExpiredToastShown is set by sbFetch's dead-token path; there is
+      // only one #appToast, so whatever we say replaces sbFetch's own message — say
+      // the right thing rather than "check your connection" on a healthy connection.
+      // (Its 30s debounce also means sbFetch stays silent on a retry, so we must
+      // always emit something here or a second attempt gives no feedback at all.)
+      showToast(_authExpiredToastShown
+        ? '⚠️ Session expired — sign out and back in, then clear history.'
+        : '❌ Couldn\'t clear cloud history — nothing was deleted. Try again when you\'re back online.',
+        { tone: _authExpiredToastShown ? 'warning' : 'error', duration:5000 });
       return;
     }
   }
