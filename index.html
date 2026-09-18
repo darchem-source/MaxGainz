@@ -3710,6 +3710,7 @@ async function sbFetch(path, options = {}, _isRetry = false) {
       method,
       headers,
       body: options.body || undefined,
+      keepalive: !!options.keepalive, // survives page hide/unload (background summary flush)
       signal: controller.signal
     });
 
@@ -3744,7 +3745,7 @@ async function sbFetch(path, options = {}, _isRetry = false) {
   } catch(e) {
     if(e.name === 'AbortError'){
       console.warn('Supabase request timed out:', path);
-      showToast('⚠️ Sync timed out — saved locally');
+      if(!options.silent) showToast('⚠️ Sync timed out — saved locally'); // silent: background writes nobody asked for
     } else {
       console.warn('Supabase fetch failed:', e);
     }
@@ -4483,7 +4484,7 @@ document.addEventListener('visibilitychange', () => {
   } else if(document.visibilityState === 'hidden' && _dashTimer){
     // Going to background with a pending push — flush now, a suspended PWA may never fire the timer.
     clearTimeout(_dashTimer); _dashTimer = null;
-    if(typeof cloudSaveDashboardSummary === 'function') cloudSaveDashboardSummary();
+    if(typeof cloudSaveDashboardSummary === 'function') cloudSaveDashboardSummary({ keepalive: true });
   }
 });
 
@@ -23439,6 +23440,7 @@ async function authLogin(){
 
 // Logout
 function authLogout(){
+  _dashDisabled = true; clearTimeout(_dashTimer); _dashTimer = null; // no summary push once sign-out has started
   // ── Wipe all user data from localStorage ──
   localStorage.removeItem(STORAGE_KEY);
   localStorage.removeItem('maxgainz_cloud_user');
@@ -23663,6 +23665,7 @@ function confirmFinalDelete(){
 }
 
 async function deleteUserAccount(){
+  _dashDisabled = true; clearTimeout(_dashTimer); _dashTimer = null; // never re-create __dashboard__ after the wipe
   try{
     const userId = getCurrentUserId();
     
@@ -23888,7 +23891,7 @@ if('serviceWorker' in navigator){
 // Everything here is computed with the app's own helpers so the page and the app
 // agree. Pushes are debounced, content-hashed (no-op when nothing changed) and
 // deferred while a cloud sync is in flight. No PII beyond a first name.
-var _dashTimer = null, _dashLastHash = null, _dashWeightsOk = false;
+var _dashTimer = null, _dashLastHash = null, _dashWeightsOk = false, _dashDisabled = false;
 const DASH_ROW = '__dashboard__';
 const DASH_VERSION = 1;
 const DASH_WEEKDAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -23929,8 +23932,13 @@ function buildDashboardSummary(){
         const start = Math.max(0, cycle.indexOf(pick));
         for(let i = 0; i < Math.max(8, cycle.length + 1); i++) coreQueue.push(cycle[(start + i) % cycle.length]);
       }
+      // Same 14-day "recently done" exclusion the Path tab's week schedule applies.
       let addOnLabels = [];
-      try { addOnLabels = getAddOnRecommendations('HIIT', calcMuscleImbalance(4), new Set(), 6).map(r => r.name); } catch(e) {}
+      try {
+        const hiitCutoff = new Date(now); hiitCutoff.setDate(hiitCutoff.getDate() - 14);
+        const recentHIIT = new Set(gym.filter(s => D(s) >= hiitCutoff && hiitNames.has(s.day)).map(s => s.day));
+        addOnLabels = getAddOnRecommendations('HIIT', calcMuscleImbalance(4), recentHIIT, 6).map(r => r.name);
+      } catch(e) {}
       return {
         mode: 'path', programme: prog, name: getPathDisplayName(userPath),
         coreKind: prog === 'HIIT' ? 'hiit' : 'strength', freestyle: !cycle.length,
@@ -23971,13 +23979,14 @@ function buildDashboardSummary(){
       label: s.day, kind: kindOf(s), durationMin: s.durationMin || 0,
       volume: Math.round(s.volume || 0), manual: !!s.manualActivity
     }));
-    let coreDone = null, addOnDone = null, catchUp = null;
+    let coreDone = null, addOnDone = null, otherGymSession = null, catchUp = null;
     if(isPathActive()){
       const prog = userPath.programme;
+      // Strict rule = the Today card's "Done!" badge. A gym session that isn't one of
+      // the programme's days (a swap, an ad-hoc workout) is reported separately so the
+      // page can say "trained" without claiming the planned workout was done.
       try { const c = hasCorePathWorkoutBeenCompletedToday(prog); if(c) coreDone = { label: c.dayName }; } catch(e) {}
-      // Same looser rule as the Path tab: any non-adhoc gym session today counts
-      // (catches "swap today" sessions saved under another day name).
-      if(!coreDone){ const loose = sessOn.find(s => !s.adhoc && !s.manualActivity); if(loose) coreDone = { label: loose.day, loose: true }; }
+      if(!coreDone){ const other = sessOn.find(s => !s.manualActivity); if(other) otherGymSession = { label: other.day }; }
       const wd = DASH_WEEKDAYS[now.getDay()];
       const addOn = (userPath.addOns || []).find(a => Array.isArray(a.preferredDays) && a.preferredDays.includes(wd));
       if(addOn){ try { const a = _findTodayAddOnSession(addOn.type); if(a) addOnDone = { label: a.day, type: addOn.type }; } catch(e) {} }
@@ -23986,18 +23995,19 @@ function buildDashboardSummary(){
       const g = sessOn.find(s => !s.manualActivity);
       if(g) coreDone = { label: g.day };
     }
-    return { date: today, done: !!coreDone || !!addOnDone, coreDone, addOnDone, logged, catchUp };
+    return { date: today, done: !!coreDone || !!addOnDone, trained: !!coreDone || !!addOnDone || !!otherGymSession,
+             coreDone, addOnDone, otherGymSession, logged, catchUp };
   });
 
   section('stats', () => {
     const wStart = new Date(now); wStart.setDate(now.getDate() - ((now.getDay() + 6) % 7)); wStart.setHours(0, 0, 0, 0);
     const weekGym = gym.filter(s => D(s) >= wStart);
     const weekActs = all.filter(s => s.manualActivity && D(s) >= wStart);
-    let target = 3; // the app's own streak / weekly-challenge threshold
+    // done/target match what the app shows: the Path header's adherence (path-week
+    // window, core sessions only) when a path is active, else Mon–Sun sessions vs 3.
+    let done = weekGym.length, target = 3; // 3 = the app's streak / weekly-challenge threshold
     if(isPathActive()){
-      const t = ((userPath.coreSchedule && userPath.coreSchedule.daysPerWeek) || 0)
-              + (Array.isArray(userPath.addOns) ? userPath.addOns.reduce((a, x) => a + (x.frequency || 0), 0) : 0);
-      if(t > 0) target = t;
+      try { const a = getPathAdherenceThisWeek(); if(a && a.planned > 0){ done = a.completed; target = a.planned; } } catch(e) {}
     }
     const last = gym.length ? gym.reduce((a, b) => D(b) > D(a) ? b : a) : null;
     let level = null;
@@ -24010,18 +24020,22 @@ function buildDashboardSummary(){
     const num = v => (typeof v === 'number' && isFinite(v)) ? v : 0;
     const priorMax = {};
     gym.filter(s => D(s) < wStart).forEach(s => Object.entries(s.setLog || {}).forEach(([n, v]) => { const w = num(v && v.weight); if(w > (priorMax[n] || 0)) priorMax[n] = w; }));
-    const prs = [];
+    const prs = new Map(); // one entry per exercise (like the app's PR tile), best weight vs the pre-week max
     weekGym.slice().sort((a, b) => D(a) - D(b)).forEach(s => Object.entries(s.setLog || {}).forEach(([n, v]) => {
       const w = num(v && v.weight);
-      if(w > 0 && w > (priorMax[n] || 0)){ prs.push({ name: n, weight: w, prev: priorMax[n] || null }); priorMax[n] = w; }
+      if(w > 0 && w > (priorMax[n] || 0)){
+        const e = prs.get(n);
+        if(e) e.weight = w; else prs.set(n, { name: n, weight: w, prev: priorMax[n] || null });
+        priorMax[n] = w;
+      }
     }));
     return {
       weekStart: _localYMD(wStart),
-      week: { done: weekGym.length, target, activities: weekActs.length, volume: Math.round(weekGym.reduce((a, s) => a + (s.volume || 0), 0)) },
+      week: { done, target, sessions: weekGym.length, activities: weekActs.length, volume: Math.round(weekGym.reduce((a, s) => a + (s.volume || 0), 0)) },
       streak: { weeks: calcWeekStreak(all), best: getLongestWeekStreak(all) },
       lastSession: last ? { name: last.day, kind: kindOf(last), date: D(last).toISOString(), durationMin: last.durationMin || 0,
                             volume: Math.round(last.volume || 0), exercises: Array.isArray(last.exercises) ? last.exercises.length : (last.exercises || 0) } : null,
-      level, prsThisWeek: prs.slice(0, 5), totalSessions: gym.length
+      level, prsThisWeek: [...prs.values()].slice(0, 5), totalSessions: gym.length
     };
   });
 
@@ -24053,23 +24067,28 @@ function buildDashboardSummary(){
 
 // Debounced trigger — cheap to call from every save path.
 function scheduleDashboardSummary(delayMs){
-  if(!isAuthenticated()) return;
+  if(_dashDisabled || !isAuthenticated()) return;
   clearTimeout(_dashTimer);
   _dashTimer = setTimeout(() => { _dashTimer = null; cloudSaveDashboardSummary(); }, delayMs == null ? 2500 : delayMs);
 }
 
-// Upsert the summary row. Skips while a sync is in flight (state is half-loaded),
-// before the first successful weights/profile load, and when the content is unchanged.
-async function cloudSaveDashboardSummary(force){
-  if(!isAuthenticated() || !_dashWeightsOk) return null;
-  if(_isCloudSyncing){ scheduleDashboardSummary(4000); return null; }
+// Upsert the summary row. Skips before the first successful weights/profile load
+// (cloudLoadAll resets state and only sets _dashWeightsOk once it is hydrated), after
+// sign-out / account deletion, and when the content is unchanged. Local state is
+// always final by the time a save path runs, so an in-flight session upload is no
+// reason to wait — and waiting would lose the background flush on a phone.
+// opts: true|{force} to bypass the hash, {keepalive} for the page-hide flush.
+async function cloudSaveDashboardSummary(opts){
+  const force = opts === true || !!(opts && opts.force);
+  const keepalive = !!(opts && opts.keepalive);
+  if(_dashDisabled || !isAuthenticated() || !_dashWeightsOk) return null;
   let summary;
   try { summary = buildDashboardSummary(); } catch(e) { console.warn('[dashboard] build failed', e); return null; }
   const notes = JSON.stringify(summary);
   const hash = notes.replace(/"generatedAt":"[^"]*"/, '');
   if(!force && hash === _dashLastHash) return null;
   const res = await sbFetch('custom_weights?on_conflict=user_id,exercise_name', {
-    method: 'POST',
+    method: 'POST', silent: true, keepalive,
     extraHeaders: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
     body: JSON.stringify({ user_id: getCurrentUserId(), exercise_name: DASH_ROW, weight: 0, updated_at: new Date().toISOString(), notes })
   });
