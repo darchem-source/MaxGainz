@@ -392,6 +392,66 @@ eq('smart: empty candidates → empty', _rankNextPathDays([], []).length, 0);
 eq('smart: no recent history → pure staleness', _rankNextPathDays(PHUL_CANDS, [])[0].day, 'Upper Power');
 ok('smart: conflict reason surfaces', _rankNextPathDays(PHUL_CANDS, PHUL_RECENT).find(x=>x.day==='Lower Hypertrophy').reasons.join(' ').indexOf('trained hard yesterday') >= 0);
 
+// ── Muscle balance (shared by Progress tab + dashboard summary) ──
+// Stubs for the exercise→group mapping the helper consults (real getSplits needs EXDB).
+var EXDB = [{name:'Push-Ups', bw:true}];
+function getSplits(n){
+  if(n==='Bench Press'||n==='Push-Ups') return [{cat:'push',f:1}];
+  if(n==='Barbell Row') return [{cat:'pull',f:1}];
+  if(n==='Squat') return [{cat:'legs',f:1}];
+  if(n==='Plank'||n==='Abdominal Work') return [{cat:'core',f:1}];
+  if(n==='Deadlift') return [{cat:'pull',f:0.6},{cat:'legs',f:0.4}];
+  return null;
+}
+var MB_NOW = Date.UTC(2026, 8, 18, 12, 0, 0);
+var DAY = 86400000;
+function mbSess(daysAgo, setLog, extra){ var o = {date:new Date(MB_NOW - daysAgo*DAY), setLog:setLog}; if(extra) for(var k in extra) o[k]=extra[k]; return o; }
+eq('recency: this week = 1', getRecencyWeight(new Date(MB_NOW - 3*DAY), MB_NOW), 1);
+eq('recency: 3 weeks = 0.75', getRecencyWeight(new Date(MB_NOW - 21*DAY), MB_NOW), 0.75);
+eq('recency: 5 weeks = 0.5', getRecencyWeight(new Date(MB_NOW - 35*DAY), MB_NOW), 0.5);
+eq('recency: 10 weeks = 0.25', getRecencyWeight(new Date(MB_NOW - 70*DAY), MB_NOW), 0.25);
+eq('recency: 13 weeks = 0', getRecencyWeight(new Date(MB_NOW - 91*DAY), MB_NOW), 0);
+eq('share: no sessions → hasData false', _calcMuscleGroupShare([], {windowWeeks:6, nowMs:MB_NOW}).hasData, false);
+var MB_ONE = _calcMuscleGroupShare([mbSess(1, {'Bench Press':{sets:3, reps:[10,10,10], weight:60}})], {windowWeeks:6, nowMs:MB_NOW});
+ok('share: single push session is ~100% push', MB_ONE.hasData && MB_ONE.share.push > 0.99 && MB_ONE.share.pull === 0);
+eq('share: volume = weight×reps', Math.round(MB_ONE.vol.push), 1800);
+var MB_EQ = _calcMuscleGroupShare([
+  mbSess(1, {'Bench Press':{sets:3, reps:[10,10,10], weight:60}}),
+  mbSess(2, {'Barbell Row':{sets:3, reps:[10,10,10], weight:60}}),
+  mbSess(3, {'Squat':{sets:3, reps:[10,10,10], weight:60}}),
+  mbSess(4, {'Plank':{sets:3, reps:[10,10,10], weight:60}})], {windowWeeks:6, nowMs:MB_NOW});
+eq('share: four equal sessions → 25% each', [MB_EQ.share.push, MB_EQ.share.pull, MB_EQ.share.legs, MB_EQ.share.core].map(function(x){return Math.round(x*100);}), [25,25,25,25]);
+ok('share: 13-week-old session is ignored', !_calcMuscleGroupShare([mbSess(91, {'Bench Press':{sets:3, reps:[10], weight:60}})], {windowWeeks:6, nowMs:MB_NOW}).hasData);
+ok('share: 3-week-old session counts at 0.75', Math.abs(_calcMuscleGroupShare([mbSess(21, {'Bench Press':{sets:1, reps:[10], weight:100}})], {windowWeeks:6, nowMs:MB_NOW}).vol.push - 750) < 1e-6);
+ok('share: manual activities are excluded', !_calcMuscleGroupShare([mbSess(1, {'Bench Press':{sets:3, reps:[10], weight:60}}, {manualActivity:true})], {windowWeeks:6, nowMs:MB_NOW}).hasData);
+ok('share: bodyweight flag uses opts.bodyweight', Math.abs(_calcMuscleGroupShare([mbSess(1, {'Push-Ups':{sets:2, reps:[10,10], weight:0, bw:true}})], {windowWeeks:6, nowMs:MB_NOW, bodyweight:90}).vol.push - 1800) < 1e-6);
+ok('share: Abdominal Work with no reps still yields core volume', _calcMuscleGroupShare([mbSess(1, {'Abdominal Work':{sets:3, weight:0}})], {windowWeeks:6, nowMs:MB_NOW, bodyweight:80}).vol.core > 0);
+ok('share: legacy object/string weights do not NaN-poison', (function(){
+  var r=_calcMuscleGroupShare([mbSess(1, {'Bench Press':{sets:3, reps:[10], weight:{kg:'12-15'}}, 'Squat':{sets:2, reps:[8], weight:'bodyweight'}})], {windowWeeks:6, nowMs:MB_NOW});
+  return isFinite(r.total) && isFinite(r.share.push) && isFinite(r.share.legs); })());
+ok('share: compound split credits both groups', (function(){
+  var r=_calcMuscleGroupShare([mbSess(1, {'Deadlift':{sets:1, reps:[5], weight:100}})], {windowWeeks:6, nowMs:MB_NOW});
+  return Math.abs(r.vol.pull-300)<1e-6 && Math.abs(r.vol.legs-200)<1e-6; })());
+ok('share: long window takes 26–52 weeks ago only', (function(){
+  var r=_calcMuscleGroupShare([mbSess(30*7, {'Bench Press':{sets:1, reps:[10], weight:100}}), mbSess(1, {'Squat':{sets:1, reps:[10], weight:100}})], {windowWeeks:'long', nowMs:MB_NOW});
+  return r.hasData && r.vol.push===1000 && r.vol.legs===0; })());
+function V(p,pu,l,c){ return _muscleBalanceVerdict({push:p/100, pull:pu/100, legs:l/100, core:c/100}, true); }
+eq('verdict: nodata', _muscleBalanceVerdict({push:0,pull:0,legs:0,core:0}, false).status, 'nodata');
+eq('verdict: balanced', V(25,25,25,25).status, 'balanced');
+eq('verdict: spread 15 → tip', V(32,17,26,25).status, 'tip');
+eq('verdict: spread 14 → balanced', V(31,17,26,26).status, 'balanced');
+eq('verdict: low 14 → imbalanced', V(14,30,30,26).status, 'imbalanced');
+eq('verdict: high 41 → imbalanced', V(41,20,20,19).status, 'imbalanced');
+eq('verdict: high 40 low 15 → tip (not imbalance)', V(40,15,25,20).status, 'tip');
+eq('verdict: low 9 → critical-low', V(9,31,30,30).status, 'critical-low');
+eq('verdict: high 51 → critical-high', V(51,17,16,16).status, 'critical-high');
+eq('verdict: critical-low beats critical-high', V(60,9,16,15).status, 'critical-low');
+eq('verdict: low/high picked by share', (function(){ var v=V(9,31,30,30); return [v.low.key, v.high.key]; })(), ['push','pull']);
+eq('verdict: flags per bar', V(9,45,31,15).flags, {push:'red', pull:'amber', legs:'ok', core:'ok'});
+eq('verdict: rounds like the Progress tab', _muscleBalanceVerdict({push:0.246, pull:0.254, legs:0.25, core:0.25}, true).pct, {push:25, pull:25, legs:25, core:25});
+ok('verdict: detail is plain text', V(9,31,30,30).detail.indexOf('<') < 0 && V(9,31,30,30).detail.indexOf('Push (Chest/Shoulders/Tri) is critically low at 9%') === 0);
+ok('verdict: tie on low uses first in push/pull/legs/core order', V(20,20,30,30).low.key === 'push' && V(20,20,30,30).high.key === 'core');
+
 JSON.stringify(fails);
 """
 
@@ -415,7 +475,8 @@ def gate_invariants(js):
                '_sessionKey', '_mergeSessions', '_validateSession',
                'getLiftState', '_leanFor', 'snapToSteps', 'stepWeight', 'calc1RM', 'parseRepTarget',
                '_comebackEvents', '_measureDelta', '_exVideoEntry', '_exVideoPickSex', '_rotatePick',
-               '_buildCooldown', '_rankNextPathDays']:
+               '_buildCooldown', '_rankNextPathDays',
+               'getRecencyWeight', '_calcMuscleGroupShare', '_muscleBalanceVerdict']:
         src = extract_decl(js, fn)
         if not src:
             print(f'  ✗ could not extract function {fn}'); return False

@@ -3791,6 +3791,7 @@ async function cloudDeleteSession(s) {
 // Write-through: save a single weight to Supabase immediately
 async function cloudSaveWeight(name, weight) {
   if(!isAuthenticated()) return null;
+  if(typeof name !== 'string' || name.startsWith('__')) return null; // '__' names are reserved system rows
   return sbFetch('custom_weights', {
     method: 'POST',
     extraHeaders: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
@@ -3810,6 +3811,7 @@ async function cloudSaveWeight(name, weight) {
 // Falls back gracefully if column doesn't exist
 async function cloudSaveProfile() {
   if(!isAuthenticated()) return null;
+  if(typeof scheduleDashboardSummary === 'function') scheduleDashboardSummary(); // path/prefs changes reach the profile blob only
   // Read customHIITs from localStorage at save time (it may not be defined globally yet on first call)
   let cHIITs = [];
   try { cHIITs = JSON.parse(localStorage.getItem('maxgainz_custom_hiits') || '[]'); } catch(e){}
@@ -3860,6 +3862,7 @@ async function cloudSaveProfile() {
 async function cloudLoadAll() {
   if(!isAuthenticated()) return false;
   setSyncStatus('syncing');
+  _dashWeightsOk = false; // state is reset below; no dashboard push until weights+profile reload
   const userId = getCurrentUserId();
 
   // Reset profile to defaults before loading — ensures a new user never inherits
@@ -4024,11 +4027,15 @@ async function cloudLoadAll() {
             try { localStorage.setItem('maxgainz_pbLifts', JSON.stringify(pbLifts)); } catch(e){}
           }
         } catch(e) { console.warn('Profile blob parse error:', e); }
+      } else if (typeof r.exercise_name === 'string' && r.exercise_name.startsWith('__')) {
+        // Reserved system rows (__profile__ without notes, the __dashboard__
+        // summary) are never exercise weights — skip them.
       } else {
         customWeights[r.exercise_name] = r.weight;
       }
     });
     applyCustomWeights();
+    _dashWeightsOk = true; // safe to publish a dashboard summary: profile/path are hydrated
   }
 
   // Update local cache from cloud data
@@ -4121,6 +4128,8 @@ function saveLocalCache() {
       savedAt: new Date().toISOString()
     }));
   } catch(e) {}
+  // Anything that changed local state may change the landing-page summary.
+  if(typeof scheduleDashboardSummary === 'function') scheduleDashboardSummary();
 }
 
 // Legacy alias so nothing breaks
@@ -4468,6 +4477,13 @@ document.addEventListener('visibilitychange', () => {
     // (or a day) after it was last rendered would otherwise keep the stale
     // "Good morning/afternoon/evening" from the previous render.
     if(typeof _renderGreeting === 'function') _renderGreeting();
+    // The landing-page summary is date-relative: re-publish if the day rolled over
+    // (the content hash short-circuits it when nothing changed).
+    if(typeof scheduleDashboardSummary === 'function') scheduleDashboardSummary(1500);
+  } else if(document.visibilityState === 'hidden' && _dashTimer){
+    // Going to background with a pending push — flush now, a suspended PWA may never fire the timer.
+    clearTimeout(_dashTimer); _dashTimer = null;
+    if(typeof cloudSaveDashboardSummary === 'function') cloudSaveDashboardSummary();
   }
 });
 
@@ -4579,6 +4595,7 @@ function applyImportPayload(payload){
 
   Object.keys(customWeights).forEach(k => delete customWeights[k]);
   Object.assign(customWeights, payload.customWeights || {});
+  Object.keys(customWeights).forEach(k => { if(k.startsWith('__')) delete customWeights[k]; }); // never import system rows as weights
 
   customWorkouts.length = 0;
   (payload.customWorkouts || []).forEach(w => customWorkouts.push(w));
@@ -4683,6 +4700,7 @@ async function saveStore(newSession = null, newWeights = null) {
 
   if (newWeights) {
     Object.entries(newWeights).forEach(([name, weight]) => {
+      if(name.startsWith('__')) return; // reserved system rows live in their own writers
       promises.push(cloudSaveWeight(name, weight));
     });
   }
@@ -4749,6 +4767,9 @@ const completedSessions = stored
   : [];
 _normalizeSessionWeights(completedSessions); // repair amended-weight sessions on load
 const customWeights = stored ? (stored.weights || {}) : {};
+// Reserved '__' system rows (e.g. the __dashboard__ summary) are never exercise
+// weights; scrub any that an older build cached before the loader learned to skip them.
+Object.keys(customWeights).forEach(k => { if(k.startsWith('__')) delete customWeights[k]; });
 
 // Completed-path history — array of summary records, newest first. Persisted
 // to its own localStorage key and synced in the cloud profile blob. See
@@ -16731,13 +16752,110 @@ function getSplits(exName){
 
 let muscleBalWindow=6;
 function setMuscleBalWindow(w){muscleBalWindow=w;renderMuscleBalance();}
-function getRecencyWeight(sessionDate){
-  const weeksAgo=(Date.now()-new Date(sessionDate))/(7*24*60*60*1000);
+// Pure: recency curve. nowMs is optional (tests inject a fixed clock).
+function getRecencyWeight(sessionDate, nowMs){
+  const weeksAgo=((nowMs||Date.now())-new Date(sessionDate))/(7*24*60*60*1000);
   if(weeksAgo<=2) return 1.0;
   if(weeksAgo<=4) return 0.75;
   if(weeksAgo<=6) return 0.5;
   if(weeksAgo<=12) return 0.25;
   return 0;
+}
+
+// Pure: push/pull/legs/core volume share for a list of sessions. This is the single
+// source of truth shared by the Progress tab (renderMuscleBalance) and the dashboard
+// summary (buildDashboardSummary) so the two can never disagree.
+// opts: {windowWeeks: 6|12|'long', nowMs, bodyweight}. 'long' = sessions 26–52 weeks
+// ago, unweighted; otherwise a rolling window weighted by getRecencyWeight.
+// Depends on getSplits/EXDB for exercise→group mapping (stubbed in tests/check.py).
+function _calcMuscleGroupShare(sessions, opts){
+  const o=opts||{};
+  const isLong=o.windowWeeks==='long';
+  const now=o.nowMs||Date.now();
+  const wk=7*24*60*60*1000;
+  const winWeeks=isLong?0:(o.windowWeeks||6);
+  const bodyweight=o.bodyweight||80;
+  const inWindow=isLong
+    ? s=>new Date(s.date)>=new Date(now-52*wk)&&new Date(s.date)<new Date(now-26*wk)
+    : s=>new Date(s.date)>=new Date(now-winWeeks*wk);
+  const muscleVol={push:0,pull:0,legs:0,core:0};
+  const setCounts={push:0,pull:0,legs:0,core:0};
+  (sessions||[]).filter(s=>!s.manualActivity&&s.setLog&&inWindow(s)).forEach(s=>{
+    // Long-term: no recency weighting (all sessions equally old). Rolling: apply curve.
+    const w=isLong?1:getRecencyWeight(s.date,now);
+    if(!w) return;
+    Object.entries(s.setLog).forEach(([exName,data])=>{
+      const splits=getSplits(exName);
+      if(!splits) return;
+      const sets=data.sets||0;
+      const repsArr=Array.isArray(data.reps)?data.reps:(data.reps?[data.reps]:[]);
+      const repsSum=repsArr.reduce((a,r)=>a+(parseInt(r)||0),0);
+      // Defensive: legacy sessions may have data.weight as an object/string
+      // (HIIT defs used {kg:"12-15"} / "bodyweight"). Coerce to a finite
+      // number so we don't NaN-poison the totals.
+      let ew=(typeof data.weight==='number'&&isFinite(data.weight)&&data.weight>0)?data.weight:0;
+      // Bodyweight volume: prefer the persisted data.bw flag (newer sessions);
+      // fall back to EXDB for older sessions. "Abdominal Work" is the ULF/PPL
+      // core-circuit placeholder (not in EXDB) — treat as bw.
+      let isBW=!!data.bw;
+      if(!ew){
+        if(isBW){
+          ew=bodyweight;
+        } else {
+          const dbEx=EXDB.find(e=>e.name===exName);
+          if((dbEx&&dbEx.bw)||exName==='Abdominal Work'){ew=bodyweight;isBW=true;}
+        }
+      }
+      // If no reps were logged (e.g. core circuit sets stored via markCoreRound),
+      // estimate 10 reps per set so bodyweight exercises still contribute volume.
+      const effectiveReps=repsSum>0?repsSum:(isBW?(sets*10):0);
+      const vol=ew*effectiveReps;
+      splits.forEach(({cat,f})=>{
+        setCounts[cat]+=sets*f*w;
+        muscleVol[cat]+=vol*f*w;
+      });
+    });
+  });
+  const totalVol=Object.values(muscleVol).reduce((a,v)=>a+v,0);
+  const totalSets=Object.values(setCounts).reduce((a,v)=>a+v,0);
+  const avgVPS=totalSets>0?(totalVol/totalSets)||100:100;
+  const vol={};
+  ['push','pull','legs','core'].forEach(c=>{vol[c]=muscleVol[c]>0?muscleVol[c]:setCounts[c]*avgVPS*0.5;});
+  const total=Object.values(vol).reduce((a,v)=>a+v,1);
+  const share={};
+  ['push','pull','legs','core'].forEach(c=>{share[c]=vol[c]/total;});
+  return {vol:vol,total:total,share:share,hasData:total>1};
+}
+
+// Pure: verdict on a push/pull/legs/core share (fractions of 1). Thresholds mirror the
+// Progress tab's muscle-balance card: <10/>50 critical, <15/>40 imbalance, spread>=15 tip.
+// Returns plain-text headline/detail (the renderer adds its own bold/emoji markup).
+function _muscleBalanceVerdict(share, hasData){
+  const META=[
+    {key:'push',label:'Push',name:'Push (Chest/Shoulders/Tri)',exs:['bench press','shoulder press','dips']},
+    {key:'pull',label:'Pull',name:'Pull (Back/Biceps)',exs:['rows','pull-ups','face pulls']},
+    {key:'legs',label:'Legs',name:'Legs & Glutes',exs:['squats','deadlifts','lunges']},
+    {key:'core',label:'Core',name:'Core',exs:['planks','leg raises','Russian twists']}
+  ];
+  const rows=META.map(m=>{
+    const sh=(share&&typeof share[m.key]==='number'&&isFinite(share[m.key]))?share[m.key]:0;
+    return {key:m.key,label:m.label,name:m.name,exs:m.exs,share:sh,pct:Math.round(sh*100)};
+  });
+  const pct={},flags={};
+  rows.forEach(r=>{pct[r.key]=r.pct;flags[r.key]=(r.pct<10||r.pct>50)?'red':((r.pct<15||r.pct>40)?'amber':'ok');});
+  if(!hasData) return {status:'nodata',level:null,pct:pct,flags:flags,low:null,high:null,headline:'No data',detail:'No sessions in the window yet.'};
+  const sorted=rows.slice().sort((a,b)=>a.share-b.share);
+  const lo=sorted[0],hi=sorted[sorted.length-1];
+  const loPct=lo.pct,hiPct=hi.pct;
+  const low={key:lo.key,label:lo.label,name:lo.name,pct:loPct,exs:lo.exs};
+  const high={key:hi.key,label:hi.label,name:hi.name,pct:hiPct,exs:hi.exs};
+  let status,level,headline,detail;
+  if(loPct<10){status='critical-low';level=3;headline='Critical imbalance';detail=lo.name+' is critically low at '+loPct+'%. Add '+lo.exs.join(', ')+' to every session this week.';}
+  else if(hiPct>50){status='critical-high';level=3;headline='Critical imbalance';detail=hi.name+' dominates at '+hiPct+'%. Reduce its volume or add '+lo.exs.join(', ')+' to close the gap.';}
+  else if(loPct<15||hiPct>40){status='imbalanced';level=2;headline='Imbalance detected';detail=lo.name+' is at '+loPct+'% — try '+lo.exs.join(', ')+' this week to balance with '+hi.name+' ('+hiPct+'%).';}
+  else if(hiPct-loPct>=15){status='tip';level=1;headline='Tip';detail='Consider '+lo.exs.join(' or ')+' to bring '+lo.name+' ('+loPct+'%) closer to '+hi.name+' ('+hiPct+'%).';}
+  else{status='balanced';level=0;headline='Well balanced';detail='Well balanced — keep it up!';}
+  return {status:status,level:level,pct:pct,flags:flags,low:low,high:high,headline:headline,detail:detail};
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -18001,57 +18119,9 @@ function renderTrainingFrequency(){
 
 function renderMuscleBalance(){
   const isLong=muscleBalWindow==='long';
-  const now=Date.now();
-  const wk=7*24*60*60*1000;
-  // Long-term: sessions from 26–52 weeks ago (6–12 months). Rolling: last N weeks.
-  const inWindow=isLong
-    ? s=>new Date(s.date)>=new Date(now-52*wk)&&new Date(s.date)<new Date(now-26*wk)
-    : s=>new Date(s.date)>=new Date(now-muscleBalWindow*wk);
-
-  const muscleVol={push:0,pull:0,legs:0,core:0};
-  const setCounts={push:0,pull:0,legs:0,core:0};
-  completedSessions.filter(s=>!s.manualActivity&&s.setLog&&inWindow(s)).forEach(s=>{
-    // Long-term: no recency weighting (all sessions equally old). Rolling: apply curve.
-    const w=isLong?1:getRecencyWeight(s.date);
-    if(!w) return;
-    Object.entries(s.setLog).forEach(([exName,data])=>{
-      const splits=getSplits(exName);
-      if(!splits) return;
-      const sets=data.sets||0;
-      const repsArr=Array.isArray(data.reps)?data.reps:(data.reps?[data.reps]:[]);
-      const repsSum=repsArr.reduce((a,r)=>a+(parseInt(r)||0),0);
-      // Defensive: legacy sessions may have data.weight as an object/string
-      // (HIIT defs used {kg:"12-15"} / "bodyweight"). Coerce to a finite
-      // number so we don't NaN-poison the totals.
-      let ew=(typeof data.weight==='number'&&isFinite(data.weight)&&data.weight>0)?data.weight:0;
-      // Bodyweight volume: prefer the persisted data.bw flag (newer sessions);
-      // fall back to EXDB for older sessions. "Abdominal Work" is the ULF/PPL
-      // core-circuit placeholder (not in EXDB) — treat as bw.
-      let isBW=!!data.bw;
-      if(!ew){
-        if(isBW){
-          ew=userProfile.weight||80;
-        } else {
-          const dbEx=EXDB.find(e=>e.name===exName);
-          if((dbEx&&dbEx.bw)||exName==='Abdominal Work'){ew=userProfile.weight||80;isBW=true;}
-        }
-      }
-      // If no reps were logged (e.g. core circuit sets stored via markCoreRound),
-      // estimate 10 reps per set so bodyweight exercises still contribute volume.
-      const effectiveReps=repsSum>0?repsSum:(isBW?(sets*10):0);
-      const vol=ew*effectiveReps;
-      splits.forEach(({cat,f})=>{
-        setCounts[cat]+=sets*f*w;
-        muscleVol[cat]+=vol*f*w;
-      });
-    });
-  });
-  const totalVol=Object.values(muscleVol).reduce((a,v)=>a+v,0);
-  const totalSets=Object.values(setCounts).reduce((a,v)=>a+v,0);
-  const avgVPS=totalSets>0?(totalVol/totalSets)||100:100;
-  const bv={};
-  ['push','pull','legs','core'].forEach(c=>{bv[c]=muscleVol[c]>0?muscleVol[c]:setCounts[c]*avgVPS*0.5;});
-  const total=Object.values(bv).reduce((a,v)=>a+v,1);
+  // Volume maths lives in the shared pure helper (also feeds the dashboard summary).
+  const shareRes=_calcMuscleGroupShare(completedSessions,{windowWeeks:muscleBalWindow,bodyweight:userProfile.weight||80});
+  const bv=shareRes.vol,total=shareRes.total;
   const rows=[
     {key:'push',name:'Push (Chest/Shoulders/Tri)',vol:bv.push,color:'#c8ff00',exs:['bench press','shoulder press','dips']},
     {key:'pull',name:'Pull (Back/Biceps)',vol:bv.pull,color:'#00d4ff',exs:['rows','pull-ups','face pulls']},
@@ -18092,16 +18162,17 @@ function renderMuscleBalance(){
   if(isLong){
     insight=`<div style="margin-top:12px;padding:10px 12px;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;font-size:12px;color:var(--text2);line-height:1.5;">📊 <strong>Historical view</strong> — this shows your training patterns from 6–12 months ago. Switch to <em>Last 6 weeks</em> for current recommendations.</div>`;
   } else {
-    const sorted=[...rows].sort((a,b)=>(a.vol/total)-(b.vol/total));
-    const lo=sorted[0],hi=sorted[sorted.length-1];
-    const loPct=Math.round((lo.vol/total)*100),hiPct=Math.round((hi.vol/total)*100);
-    if(loPct<10){
+    // Thresholds + low/high pick come from the shared verdict helper; markup stays here.
+    const verdict=_muscleBalanceVerdict(shareRes.share,true);
+    const lo=verdict.low,hi=verdict.high;
+    const loPct=lo.pct,hiPct=hi.pct;
+    if(verdict.status==='critical-low'){
       insight=`<div style="margin-top:12px;padding:12px;background:rgba(255,77,106,0.08);border:0.5px solid rgba(255,77,106,0.3);border-radius:10px;"><div style="font-size:11px;font-weight:800;color:var(--red);text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;">🔴 Critical imbalance</div><div style="font-size:12px;color:var(--text);line-height:1.5;"><strong>${lo.name}</strong> is critically low at ${loPct}%. Add ${lo.exs.join(', ')} to every session this week.</div></div>`;
-    } else if(hiPct>50){
+    } else if(verdict.status==='critical-high'){
       insight=`<div style="margin-top:12px;padding:12px;background:rgba(255,77,106,0.08);border:0.5px solid rgba(255,77,106,0.3);border-radius:10px;"><div style="font-size:11px;font-weight:800;color:var(--red);text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;">🔴 Critical imbalance</div><div style="font-size:12px;color:var(--text);line-height:1.5;"><strong>${hi.name}</strong> dominates at ${hiPct}%. Reduce its volume or add ${lo.exs.join(', ')} to close the gap.</div></div>`;
-    } else if(loPct<15||hiPct>40){
+    } else if(verdict.status==='imbalanced'){
       insight=`<div style="margin-top:12px;padding:12px;background:rgba(255,160,0,0.08);border:0.5px solid rgba(255,160,0,0.3);border-radius:10px;"><div style="font-size:11px;font-weight:800;color:#ffaa00;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;">⚠ Imbalance detected</div><div style="font-size:12px;color:var(--text);line-height:1.5;"><strong>${lo.name}</strong> is at ${loPct}% — try ${lo.exs.join(', ')} this week to balance with <strong>${hi.name}</strong> (${hiPct}%).</div></div>`;
-    } else if(hiPct-loPct>=15){
+    } else if(verdict.status==='tip'){
       insight=`<div style="margin-top:12px;padding:12px;background:rgba(255,160,0,0.08);border:0.5px solid rgba(255,160,0,0.3);border-radius:10px;"><div style="font-size:11px;font-weight:800;color:#ffaa00;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;">💡 Tip</div><div style="font-size:12px;color:var(--text);">Consider ${lo.exs.join(' or ')} to bring <strong>${lo.name}</strong> (${loPct}%) closer to <strong>${hi.name}</strong> (${hiPct}%).</div></div>`;
     } else {
       insight=`<div style="margin-top:12px;padding:10px;background:rgba(76,175,80,0.08);border:0.5px solid rgba(76,175,80,0.25);border-radius:10px;font-size:12px;color:var(--green);text-align:center;font-weight:700;">✓ Well balanced — keep it up!</div>`;
@@ -19006,6 +19077,7 @@ function maybeShowLadderExpanded(){
 
 function savePathLocal() {
   localStorage.setItem('maxgainz_path', JSON.stringify(userPath));
+  if(typeof scheduleDashboardSummary === 'function') scheduleDashboardSummary(); // week rollover / completion
 }
 
 function clearPath() {
@@ -23806,6 +23878,203 @@ if('serviceWorker' in navigator){
       if(_swReloadingForUpdate) window.location.reload();
     });
   });
+}
+
+// ── DASHBOARD SUMMARY (personal landing page) ──
+// Publishes a compact JSON snapshot — what's scheduled, today's status, headline
+// stats and muscle balance — to Supabase as the custom_weights row '__dashboard__'
+// (JSON in `notes`, exactly like '__profile__'). A separate file:// landing page
+// reads that single row with the user's own sign-in and renders it.
+// Everything here is computed with the app's own helpers so the page and the app
+// agree. Pushes are debounced, content-hashed (no-op when nothing changed) and
+// deferred while a cloud sync is in flight. No PII beyond a first name.
+var _dashTimer = null, _dashLastHash = null, _dashWeightsOk = false;
+const DASH_ROW = '__dashboard__';
+const DASH_VERSION = 1;
+const DASH_WEEKDAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+function buildDashboardSummary(){
+  const now = new Date();
+  const today = _localYMD(now);
+  const D = s => (s.date instanceof Date ? s.date : new Date(s.date));
+  const all = Array.isArray(completedSessions) ? completedSessions : [];
+  const gym = all.filter(s => !s.manualActivity);
+  const hiitNames = new Set(HIIT.map(h => h.name));
+  if(typeof customHIITs !== 'undefined' && Array.isArray(customHIITs)) customHIITs.forEach(h => { if(h && h.name) hiitNames.add(h.name); });
+  const kindOf = s => s.manualActivity ? (s.activityType || 'activity') : (hiitNames.has(s.day) ? 'hiit' : 'strength');
+  const out = {
+    v: DASH_VERSION,
+    generatedAt: now.toISOString(),
+    date: today,
+    firstName: String(userProfile.preferredName || userProfile.firstName || '').slice(0, 40)
+  };
+  // Each section is isolated so one failing helper can't blank the whole summary.
+  const section = (key, fn) => { try { out[key] = fn(); } catch(e) { out[key] = null; console.warn('[dashboard] section failed:', key, e); } };
+
+  section('plan', () => {
+    if(isPathActive()){
+      const prog = userPath.programme;
+      const cycle = _pathCycleDays(prog);
+      const coreDays = (userPath.coreSchedule && userPath.coreSchedule.preferredDays) || [];
+      const addOns = Array.isArray(userPath.addOns) ? userPath.addOns : [];
+      const weekdays = DASH_WEEKDAYS.map(wd => {
+        const addOn = addOns.find(a => Array.isArray(a.preferredDays) && a.preferredDays.includes(wd));
+        return { core: coreDays.includes(wd), addOn: addOn ? addOn.type : null };
+      });
+      // Next core workouts in order: the app's smart pick first, then the written
+      // rotation. The landing page consumes this queue one core day at a time.
+      const coreQueue = [];
+      if(cycle.length){
+        const pick = getNextPathDay(prog);
+        const start = Math.max(0, cycle.indexOf(pick));
+        for(let i = 0; i < Math.max(8, cycle.length + 1); i++) coreQueue.push(cycle[(start + i) % cycle.length]);
+      }
+      let addOnLabels = [];
+      try { addOnLabels = getAddOnRecommendations('HIIT', calcMuscleImbalance(4), new Set(), 6).map(r => r.name); } catch(e) {}
+      return {
+        mode: 'path', programme: prog, name: getPathDisplayName(userPath),
+        coreKind: prog === 'HIIT' ? 'hiit' : 'strength', freestyle: !cycle.length,
+        week: getPathCurrentWeek(), of: userPath.duration || null, endDate: userPath.endDate || null,
+        weekdays, coreQueue, addOnLabels
+      };
+    }
+    if(todayProg === 'PPL' || todayProg === 'ULF'){
+      // Legacy programmes are fixed weekday tables (same tables as getDayName).
+      const tbl = todayProg === 'PPL'
+        ? ['Push A','Pull A','Legs A','Push B','Pull B','Legs B','Rest']
+        : ['Lower','Upper','Full Body','Upper','Lower','Full Body','Upper'];
+      return {
+        mode: 'weekday', programme: todayProg,
+        name: todayProg === 'PPL' ? 'Push / Pull / Legs' : 'Upper / Lower / Full Body', coreKind: 'strength',
+        weekdays: tbl.map(l => ({ core: l !== 'Rest', label: l === 'Rest' ? null : l, addOn: null })),
+        coreQueue: [], addOnLabels: []
+      };
+    }
+    if(todayProg === 'HIIT'){
+      // Count rotation, no calendar: publish the next few in order.
+      const done = all.filter(s => HIIT.some(h => h.name === s.day)).length;
+      const coreQueue = [];
+      for(let i = 0; i < 4; i++){ const h = HIIT[(done + i) % HIIT.length]; if(h) coreQueue.push(h.name); }
+      return { mode: 'rotation', programme: 'HIIT', name: 'HIIT rotation', coreKind: 'hiit', weekdays: null, coreQueue, addOnLabels: [] };
+    }
+    const custom = (typeof customWorkouts !== 'undefined' && Array.isArray(customWorkouts)) ? customWorkouts.find(w => w && w.name === todayProg) : null;
+    if(custom){
+      return { mode: 'custom', programme: 'custom', name: custom.name, coreKind: 'strength', weekdays: null,
+               coreQueue: (custom.subcategories || []).map(sc => sc.name).filter(Boolean), addOnLabels: [] };
+    }
+    return { mode: 'none', programme: todayProg || null, name: 'No active plan', coreKind: 'strength', weekdays: null, coreQueue: [], addOnLabels: [] };
+  });
+
+  section('today', () => {
+    const sessOn = all.filter(s => D(s).toDateString() === now.toDateString());
+    const logged = sessOn.map(s => ({
+      label: s.day, kind: kindOf(s), durationMin: s.durationMin || 0,
+      volume: Math.round(s.volume || 0), manual: !!s.manualActivity
+    }));
+    let coreDone = null, addOnDone = null, catchUp = null;
+    if(isPathActive()){
+      const prog = userPath.programme;
+      try { const c = hasCorePathWorkoutBeenCompletedToday(prog); if(c) coreDone = { label: c.dayName }; } catch(e) {}
+      // Same looser rule as the Path tab: any non-adhoc gym session today counts
+      // (catches "swap today" sessions saved under another day name).
+      if(!coreDone){ const loose = sessOn.find(s => !s.adhoc && !s.manualActivity); if(loose) coreDone = { label: loose.day, loose: true }; }
+      const wd = DASH_WEEKDAYS[now.getDay()];
+      const addOn = (userPath.addOns || []).find(a => Array.isArray(a.preferredDays) && a.preferredDays.includes(wd));
+      if(addOn){ try { const a = _findTodayAddOnSession(addOn.type); if(a) addOnDone = { label: a.day, type: addOn.type }; } catch(e) {} }
+      try { const c = _getPathCatchUpSuggestion(); if(c && c.suggestedDay) catchUp = { day: c.suggestedDay, missed: c.missed || 0 }; } catch(e) {}
+    } else {
+      const g = sessOn.find(s => !s.manualActivity);
+      if(g) coreDone = { label: g.day };
+    }
+    return { date: today, done: !!coreDone || !!addOnDone, coreDone, addOnDone, logged, catchUp };
+  });
+
+  section('stats', () => {
+    const wStart = new Date(now); wStart.setDate(now.getDate() - ((now.getDay() + 6) % 7)); wStart.setHours(0, 0, 0, 0);
+    const weekGym = gym.filter(s => D(s) >= wStart);
+    const weekActs = all.filter(s => s.manualActivity && D(s) >= wStart);
+    let target = 3; // the app's own streak / weekly-challenge threshold
+    if(isPathActive()){
+      const t = ((userPath.coreSchedule && userPath.coreSchedule.daysPerWeek) || 0)
+              + (Array.isArray(userPath.addOns) ? userPath.addOns.reduce((a, x) => a + (x.frequency || 0), 0) : 0);
+      if(t > 0) target = t;
+    }
+    const last = gym.length ? gym.reduce((a, b) => D(b) > D(a) ? b : a) : null;
+    let level = null;
+    try {
+      const xp = getTotalXP(), rank = getRank(xp), idx = RANKS.indexOf(rank), next = idx >= 0 ? (RANKS[idx + 1] || null) : null;
+      level = { xp, rank: rank.name, emoji: rank.emoji, next: next ? next.name : null,
+                pct: next ? Math.min(100, Math.round(((xp - rank.min) / (next.min - rank.min)) * 100)) : 100 };
+    } catch(e) {}
+    // PRs this week: mirrors renderWeekKpi (heaviest logged weight vs all prior weeks)
+    const num = v => (typeof v === 'number' && isFinite(v)) ? v : 0;
+    const priorMax = {};
+    gym.filter(s => D(s) < wStart).forEach(s => Object.entries(s.setLog || {}).forEach(([n, v]) => { const w = num(v && v.weight); if(w > (priorMax[n] || 0)) priorMax[n] = w; }));
+    const prs = [];
+    weekGym.slice().sort((a, b) => D(a) - D(b)).forEach(s => Object.entries(s.setLog || {}).forEach(([n, v]) => {
+      const w = num(v && v.weight);
+      if(w > 0 && w > (priorMax[n] || 0)){ prs.push({ name: n, weight: w, prev: priorMax[n] || null }); priorMax[n] = w; }
+    }));
+    return {
+      weekStart: _localYMD(wStart),
+      week: { done: weekGym.length, target, activities: weekActs.length, volume: Math.round(weekGym.reduce((a, s) => a + (s.volume || 0), 0)) },
+      streak: { weeks: calcWeekStreak(all), best: getLongestWeekStreak(all) },
+      lastSession: last ? { name: last.day, kind: kindOf(last), date: D(last).toISOString(), durationMin: last.durationMin || 0,
+                            volume: Math.round(last.volume || 0), exercises: Array.isArray(last.exercises) ? last.exercises.length : (last.exercises || 0) } : null,
+      level, prsThisWeek: prs.slice(0, 5), totalSessions: gym.length
+    };
+  });
+
+  section('muscleBalance', () => {
+    const r = _calcMuscleGroupShare(all, { windowWeeks: 6, bodyweight: userProfile.weight || 80 });
+    const v = _muscleBalanceVerdict(r.share, r.hasData);
+    const mb = { windowWeeks: 6, hasData: r.hasData, pct: v.pct, flags: v.flags, status: v.status, level: v.level,
+                 headline: v.headline, detail: v.detail,
+                 low: v.low ? { key: v.low.key, label: v.low.label, pct: v.low.pct, exs: v.low.exs } : null,
+                 high: v.high ? { key: v.high.key, label: v.high.label, pct: v.high.pct } : null };
+    try { mb.lastTrainedDays = calcFrequency().broadDays; } catch(e) {}
+    try {
+      const h = calcMuscleHeatmap(28);
+      const vols = Object.entries(h.muscleVol).filter(([, val]) => typeof val === 'number' && isFinite(val));
+      const peak = vols.reduce((a, [, val]) => Math.max(a, val), 0);
+      if(peak > 0){
+        mb.fine = {
+          windowDays: 28,
+          top: vols.slice().sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k]) => ({ key: k, label: MUSCLE_LABELS[k] || k })),
+          under: vols.filter(([, val]) => val < peak * 0.2).sort((a, b) => a[1] - b[1]).slice(0, 3)
+                     .map(([k]) => ({ key: k, label: MUSCLE_LABELS[k] || k, hint: UNDER_TRAINED_HINTS[k] || '' }))
+        };
+      }
+    } catch(e) {}
+    return mb;
+  });
+  return out;
+}
+
+// Debounced trigger — cheap to call from every save path.
+function scheduleDashboardSummary(delayMs){
+  if(!isAuthenticated()) return;
+  clearTimeout(_dashTimer);
+  _dashTimer = setTimeout(() => { _dashTimer = null; cloudSaveDashboardSummary(); }, delayMs == null ? 2500 : delayMs);
+}
+
+// Upsert the summary row. Skips while a sync is in flight (state is half-loaded),
+// before the first successful weights/profile load, and when the content is unchanged.
+async function cloudSaveDashboardSummary(force){
+  if(!isAuthenticated() || !_dashWeightsOk) return null;
+  if(_isCloudSyncing){ scheduleDashboardSummary(4000); return null; }
+  let summary;
+  try { summary = buildDashboardSummary(); } catch(e) { console.warn('[dashboard] build failed', e); return null; }
+  const notes = JSON.stringify(summary);
+  const hash = notes.replace(/"generatedAt":"[^"]*"/, '');
+  if(!force && hash === _dashLastHash) return null;
+  const res = await sbFetch('custom_weights?on_conflict=user_id,exercise_name', {
+    method: 'POST',
+    extraHeaders: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify({ user_id: getCurrentUserId(), exercise_name: DASH_ROW, weight: 0, updated_at: new Date().toISOString(), notes })
+  });
+  if(res !== null) _dashLastHash = hash;
+  return res;
 }
 
 // ── OFFLINE / ONLINE DETECTION ──
