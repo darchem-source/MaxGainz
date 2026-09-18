@@ -813,22 +813,130 @@ def gate_authlogs(js):
     print(f'  ✓ no auth path ({checked} functions) logs a token, password, email, or response body')
     return True
 
+# ── Gate 6: sign-out scrubs everything sign-in uploads ─────────────────────
+# The cross-account leak class. authLogout() does not reload the page, so any
+# user-data global left standing survives into the NEXT account on the device —
+# and the next cloudSaveProfile() writes it into that account's __profile__ row,
+# making one person's body measurements and private notes permanently theirs.
+# The blob cloudSaveProfile() builds is the exact list of things that leak, so
+# every key in it must be reset by authLogout(). This gate keeps the two in step
+# when someone adds a field to the blob months from now.
+#
+# Keys that are legitimately NOT per-account state, with the reason:
+LOGOUT_EXEMPT = {
+    'prefs': 'device-level display prefs (units, audio, RPE) — not identifying, '
+             'and resetting them on every sign-out would be a UX regression',
+}
+# Blob keys whose reset is a localStorage removal rather than a global assignment.
+LOGOUT_VIA_STORAGE = {'onboarded': 'maxgainz_onboarded'}
+
+def gate_logout_scrub(js):
+    prof = extract_async_decl(js, 'cloudSaveProfile')
+    out = extract_async_decl(js, 'authLogout')
+    if not prof or not out:
+        print('  ✗ could not extract cloudSaveProfile/authLogout'); return False
+    m = re.search(r'JSON\.stringify\(\s*\{', prof)
+    if not m:
+        print('  ✗ could not find the profile blob literal in cloudSaveProfile'); return False
+    i = prof.index('{', m.start()); depth = 0
+    for j in range(i, len(prof)):
+        if prof[j] == '{': depth += 1
+        elif prof[j] == '}':
+            depth -= 1
+            if depth == 0: break
+    blob = prof[i + 1:j]
+    # Top-level keys only. Scanned character-wise rather than with one regex: a
+    # regex that matches the separating comma CONSUMES it, so it cannot then use
+    # it as the lead-in for the next key and silently finds every *other* key —
+    # which made this gate report "all 7 fields" for a 12-field blob and pass.
+    keys, depth, k = [], 0, 0
+    while k < len(blob):
+        c = blob[k]
+        if c in '{[(':
+            depth += 1; k += 1; continue
+        if c in '}])':
+            depth -= 1; k += 1; continue
+        if c in '\'"`':                      # skip string literals wholesale
+            q = c; k += 1
+            while k < len(blob):
+                if blob[k] == '\\': k += 2; continue
+                if blob[k] == q: break
+                k += 1
+            k += 1; continue
+        if depth == 0 and (c.isalpha() or c in '_$'):
+            m2 = re.match(r'[A-Za-z_$][\w$]*', blob[k:])
+            name = m2.group(0)
+            after = blob[k + len(name):]
+            # a top-level key is followed by ':' (key: value) or ',' / end (shorthand)
+            if re.match(r'\s*[:,]', after) or after.strip() == '':
+                keys.append(name)
+            k += len(name)
+            # jump past this entry's value to the next top-level comma
+            while k < len(blob):
+                ch = blob[k]
+                if ch in '{[(': depth += 1
+                elif ch in '}])': depth -= 1
+                elif ch in '\'"`':
+                    q = ch; k += 1
+                    while k < len(blob):
+                        if blob[k] == '\\': k += 2; continue
+                        if blob[k] == q: break
+                        k += 1
+                elif ch == ',' and depth == 0:
+                    break
+                k += 1
+            k += 1
+            continue
+        k += 1
+    # cloudSaveProfile's blob is known to carry ~12 fields; a parse that finds far
+    # fewer means this scanner broke, not that the app shrank. Fail loudly.
+    if len(keys) < 10:
+        print(f'  ✗ parsed only {len(keys)} blob keys ({", ".join(keys)}) — the parser '
+              f'in this harness is wrong, not the app. Fix it rather than trusting a pass.')
+        return False
+
+    missing = []
+    for k in keys:
+        if k in LOGOUT_EXEMPT:
+            continue
+        if k in LOGOUT_VIA_STORAGE:
+            if f"removeItem('{LOGOUT_VIA_STORAGE[k]}')" in out:
+                continue
+            missing.append(f'{k} (expected removeItem of {LOGOUT_VIA_STORAGE[k]})')
+            continue
+        reset = (re.search(r'(?<![\w$.])' + re.escape(k) + r'\s*=(?!=)', out)          # reassigned
+                 or re.search(re.escape(k) + r'\.length\s*=\s*0', out)                  # emptied in place
+                 or re.search(r'Object\.keys\(\s*' + re.escape(k) + r'\s*\)', out))     # keys deleted
+        if not reset:
+            missing.append(k)
+    if missing:
+        print('  ✗ authLogout() does not reset these fields that cloudSaveProfile() uploads:')
+        for k in missing:
+            print(f'      - {k}  → survives sign-out and lands in the NEXT account\'s cloud row')
+        print('    Reset it in authLogout(), or add it to LOGOUT_EXEMPT here with a reason.')
+        return False
+    print(f'  ✓ authLogout() resets all {len(keys) - len(LOGOUT_EXEMPT)} per-account fields '
+          f'cloudSaveProfile() uploads')
+    return True
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/5] parse')
+    print('[1/6] parse')
     p = gate_parse(js)
-    print('[2/5] invariants')
+    print('[2/6] invariants')
     inv = gate_invariants(js)
-    print('[3/5] video map')
+    print('[3/6] video map')
     vm = gate_videomap(js)
-    print('[4/5] inline handler wiring')
+    print('[4/6] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/5] auth log hygiene')
+    print('[5/6] auth log hygiene')
     au = gate_authlogs(js)
+    print('[6/6] sign-out scrub')
+    sc = gate_logout_scrub(js)
     print()
-    if p and inv and vm and wi and au:
+    if p and inv and vm and wi and au and sc:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 
