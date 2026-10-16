@@ -1,0 +1,215 @@
+# Place at .github/workflows/testflight.yml
+# Builds the Capacitor iOS shell in native/ and uploads it to TestFlight.
+# Secrets needed: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (base64), APPLE_TEAM_ID.
+name: TestFlight
+
+on:
+  push:
+    branches: [app-store, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: testflight-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Fast Linux sanity check. Runs on every PR and push, costs almost nothing.
+  check:
+    name: Quick check (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: native/package-lock.json
+      - name: Install shell tooling
+        working-directory: native
+        run: npm ci
+      - name: Build www folder
+        working-directory: native
+        run: npm run prepare-www
+      - name: Parse-check inline JavaScript in index.html
+        run: |
+          set -euo pipefail
+          node --input-type=module -e '
+            import fs from "node:fs";
+            import { execFileSync } from "node:child_process";
+            const html = fs.readFileSync("index.html", "utf8");
+            const re = /<script(?![^>]*\bsrc=)([^>]*)>([\s\S]*?)<\/script>/gi;
+            let m, n = 0;
+            while ((m = re.exec(html))) {
+              if (/type\s*=\s*["\x27](?!module|text\/javascript)/i.test(m[1])) continue;
+              const file = `/tmp/inline-${n++}.mjs`;
+              fs.writeFileSync(file, m[2]);
+              execFileSync("node", ["--check", file], { stdio: "inherit" });
+            }
+            if (n === 0) { console.error("No inline scripts found"); process.exit(1); }
+            console.log(`Parsed ${n} inline script(s) OK`);
+          '
+
+  build:
+    name: Build and upload to TestFlight
+    # Never on PRs (secrets are not available to forks, and it would burn builds).
+    if: github.event_name != 'pull_request'
+    needs: check
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      XCODE_VERSION: "26.6"   # installed on macos-26; must be Xcode 26.x or later for uploads
+      SCHEME: App
+      PROJECT: native/ios/App/App.xcodeproj
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app/Contents/Developer"
+          xcodebuild -version
+          xcrun --show-sdk-version --sdk iphoneos
+
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: native/package-lock.json
+
+      - name: Install, prepare web files, sync Capacitor
+        working-directory: native
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run prepare-www
+          npx cap sync ios
+
+      - name: Write App Store Connect API key
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$ASC_KEY_P8" || { echo "::error::Secret ASC_KEY_P8 is empty"; exit 1; }
+          test -n "$ASC_KEY_ID" || { echo "::error::Secret ASC_KEY_ID is empty"; exit 1; }
+          # xcodebuild reads the key from the path we give it; altool looks in this fixed folder.
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%s' "$ASC_KEY_P8" | base64 --decode > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          grep -q "BEGIN PRIVATE KEY" "$KEY_PATH" || { echo "::error::ASC_KEY_P8 did not decode to a .p8 key (did you base64 it?)"; exit 1; }
+          echo "KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Archive
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          xcodebuild archive \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/App.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            2>&1 | tee build/archive.log
+          test -d build/App.xcarchive
+
+      - name: Write ExportOptions.plist
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          cat > build/ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>export</string>
+            <key>teamID</key><string>${APPLE_TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>uploadSymbols</key><true/>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          PLIST
+          plutil -lint build/ExportOptions.plist
+
+      - name: Export .ipa (cloud signing)
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          xcodebuild -exportArchive \
+            -archivePath build/App.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist build/ExportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            2>&1 | tee build/export.log
+          ls -l build/export
+          test -f build/export/App.ipa
+
+      - name: Upload to TestFlight
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          # altool finds AuthKey_<ASC_KEY_ID>.p8 in ~/.appstoreconnect/private_keys (written above).
+          xcrun altool --upload-app \
+            --type ios \
+            --file build/export/App.ipa \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID" \
+            --output-format json \
+            2>&1 | tee build/upload.log
+          # altool can exit 0 while reporting errors in its output; fail loudly if so.
+          if grep -qiE '"errors"|ITMS-[0-9]+|Validation failed|UPLOAD FAILED' build/upload.log; then
+            echo "::error::Upload reported errors. See upload.log artifact and the runbook."
+            exit 1
+          fi
+
+      - name: Remove API key from runner
+        if: always()
+        run: rm -f "$HOME"/.appstoreconnect/private_keys/AuthKey_*.p8
+
+      - name: Upload .ipa
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: App-ipa-${{ github.run_number }}
+          path: build/export/*.ipa
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: build-logs-${{ github.run_number }}
+          path: |
+            build/*.log
+            build/ExportOptions.plist
+            build/export/*.log
+            build/export/*.plist
+          if-no-files-found: ignore
+          retention-days: 14
