@@ -58,6 +58,10 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 }
 .app { max-width: 420px; margin: 0 auto; height: 100vh; height: 100dvh; display: flex; flex-direction: column; background: var(--bg); opacity: 1; z-index: 1; }
 .app.hidden { display: none !important; }
+/* Native shell: <html class="mg-native"> is set by native-bridge.js before the
+   page renders. Mark-up that only makes sense in one place uses these. */
+html.mg-native [data-web-only] { display: none !important; }
+html:not(.mg-native) [data-native-only] { display: none !important; }
 .tab-content { flex: 1; overflow-y: auto; padding-top: env(safe-area-inset-top, 0px); padding-bottom: calc(90px + env(safe-area-inset-bottom, 0px)); padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); min-height: 0; }
 .tab-content::-webkit-scrollbar { display: none; }
 .nav { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 420px; background: rgba(10,10,15,0.97); backdrop-filter: blur(20px); border-top: 0.5px solid var(--border); display: flex; padding: 8px 0 20px; z-index: var(--z-app); }
@@ -1187,6 +1191,8 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
           <!-- Exercise rotation -->
           <button id="rotateExBtn" onclick="toggleRotateExercises()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">🔄 Exercise variety: On</button>
           <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Accessory exercises rotate through fresh variations each time you repeat a workout day. Main lifts never change.</div>
+          <!-- Media credit (web only: the iOS app shows no third-party exercise media) -->
+          <div data-web-only style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Exercise animations by <a href="https://exercisedb.dev" target="_blank" rel="noopener" style="color:var(--text2);">AscendAPI (ExerciseDB)</a>. Demo videos: Goulart, CC BY-SA 4.0, <a href="https://wger.de" target="_blank" rel="noopener" style="color:var(--text2);">wger.de</a>.</div>
           <!-- Feedback -->
           <button onclick="openFeedbackModal()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;">📬 Send Feedback</button>
         </div>
@@ -10942,18 +10948,11 @@ function _renderCooldownStretch(){
   const v = document.getElementById('cooldownVideo');
   const xf = document.getElementById('cooldownXfade');
   if(v) v.style.display = 'none'; // legacy <video> unused in the image era
-  const mid = (typeof STRETCH_MEDIA_MAP === 'object' && STRETCH_MEDIA_MAP[st.slug]) || null;
-  if(!mid){
-    if(wrap) wrap.style.display = 'none';
-    if(xf) xf.innerHTML = '';
-    return;
-  }
-  if(wrap) wrap.style.display = '';
-  if(xf){
-    xf.className = 'xfade-wrap';
-    xf.style.display = 'block';
-    xf.innerHTML = `<img src="${EX_MEDIA_BASE}${mid}/0.jpg" alt="" class="xf-a"><img src="${EX_MEDIA_BASE}${mid}/1.jpg" alt="" class="xf-b">`;
-  }
+  // The stretch start/end frames (free-exercise-db JPGs) were removed from the
+  // repo, so the cooldown runs as a timer with the stretch name only.
+  // STRETCH_MEDIA_MAP is kept for when licensed stretch media exists.
+  if(wrap) wrap.style.display = 'none';
+  if(xf) xf.innerHTML = '';
 }
 // Failed clip: retry the other sex once, then hide the player (timer runs on).
 function _cooldownVideoError(v){
@@ -14391,6 +14390,19 @@ const EX_VIDEO_BASE = null; // was: 'https://pub-585d42eb1aa64a67aedf483ec328d3f
 // into this repo under exercise-media/). Relative base works on Netlify,
 // local http.server, and inside the service-worker cache.
 const EX_MEDIA_BASE = 'exercise-media/';
+// ── Exercise visuals policy ──
+// MG_NATIVE: running inside the iOS app (window.MGNative from native-bridge.js).
+// The free-exercise-db JPG frames were removed from the repo (no rights chain),
+// so the 2-frame crossfades are gone everywhere. The web keeps the wger loops,
+// ExerciseDB GIFs and V2 videos (with an on-screen AscendAPI credit); the iOS
+// app shows text form guides only — no third-party exercise media at all.
+const MG_NATIVE = !!(window.MGNative && window.MGNative.isNative);
+const EX_SHOW_LOOPS = !MG_NATIVE;   // exercise-media/{id}/loop.mp4 (web only)
+const EX_SHOW_EDB   = !MG_NATIVE;   // ExerciseDB GIFs + V2 videos (web only)
+// The V2 proxy is a Netlify function, so the URL must be absolute on the web
+// (it is never called in native: EX_SHOW_EDB is false there).
+const EDB_VIDEO_PROXY = 'https://maxgainz.netlify.app/api/edb-video';
+const EDB_CREDIT_HTML = '<div style="font-size:10px;color:var(--text2);text-align:center;margin:-8px 0 12px;">Exercise animations by <a href="https://exercisedb.dev" target="_blank" rel="noopener" style="color:var(--text2);">AscendAPI (ExerciseDB)</a></div>';
 // ── ExerciseDB free tier (oss.exercisedb.dev) — DOMINANT visual source ──
 // Animated muscle-highlight GIFs from static.exercisedb.dev (no auth; media
 // CDN unlimited per docs; 180×180 source — accepted user tradeoff). The
@@ -14431,7 +14443,7 @@ const EX_V2_ID_MAP = {
   'Walking Lunges': 'exr_41n2hQHmRSoUkk9F',
 };
 function _exV2Id(name){
-  if(!name) return null;
+  if(!name || !EX_SHOW_EDB) return null;
   if(EX_V2_ID_MAP[name] !== undefined) return EX_V2_ID_MAP[name] || null;
   const low = String(name).toLowerCase();
   for(const k in EX_V2_ID_MAP){ if(k.toLowerCase() === low) return EX_V2_ID_MAP[k] || null; }
@@ -14452,7 +14464,7 @@ function _loadV2Video(v2id){
   const bail = _v2Bail;
   const ctrl = ('AbortController' in window) ? new AbortController() : null;
   const t = setTimeout(() => { try{ ctrl && ctrl.abort(); }catch(e){} bail(); }, 5000);
-  fetch('/api/edb-video?id=' + encodeURIComponent(v2id), ctrl ? { signal: ctrl.signal } : {})
+  fetch(EDB_VIDEO_PROXY + '?id=' + encodeURIComponent(v2id), ctrl ? { signal: ctrl.signal } : {})
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
     .then(j => {
       clearTimeout(t);
@@ -14646,7 +14658,7 @@ const EX_GIF_MAP = {
   'Wrist Curls': '2dImyQ8',
 };
 function _exGifId(name){
-  if(!name) return null;
+  if(!name || !EX_SHOW_EDB) return null;
   if(EX_GIF_MAP[name] !== undefined) return EX_GIF_MAP[name] || null;
   const low = String(name).toLowerCase();
   for(const k in EX_GIF_MAP){ if(k.toLowerCase() === low) return EX_GIF_MAP[k] || null; }
@@ -14881,7 +14893,7 @@ function _exVideoBlockHtml(name){
     return `
     <div id="fgV2Wrap" data-v2id="${v2id}" style="border-radius:12px;overflow:hidden;margin-bottom:14px;background:#000;min-height:120px;display:flex;align-items:center;justify-content:center;">
       <div style="font-size:12px;color:#888;padding:30px 0;">Loading demo…</div>
-    </div>` + (under ? `<div id="fgUnderV2" style="display:none;">${under}</div>` : '');
+    </div>${EDB_CREDIT_HTML}` + (under ? `<div id="fgUnderV2" style="display:none;">${under}</div>` : '');
   }
   return _exVideoBlockHtmlNoV2(name);
 }
@@ -14894,29 +14906,29 @@ function _exVideoBlockHtmlNoV2(name){
     return `
     <div id="fgGifWrap" style="border-radius:12px;overflow:hidden;margin-bottom:14px;background:#fff;">
       <img src="${EDB_GIF_BASE}${gifId}.gif" alt="${String(name).replace(/"/g,'')} demonstration" loading="lazy"
-        onerror="const g=document.getElementById('fgGifWrap'); if(g) g.style.display='none'; const f=document.getElementById('fgFallbackWrap'); if(f) f.style.display='';"
+        onerror="const g=document.getElementById('fgGifWrap'); if(g) g.style.display='none'; const c=document.getElementById('fgEdbCredit'); if(c) c.style.display='none'; const f=document.getElementById('fgFallbackWrap'); if(f) f.style.display='';"
         style="width:100%;max-width:300px;display:block;margin:0 auto;">
-    </div>` + (fb ? `<div id="fgFallbackWrap" style="display:none;">${fb}</div>` : '');
+    </div><div id="fgEdbCredit">${EDB_CREDIT_HTML}</div>` + (fb ? `<div id="fgFallbackWrap" style="display:none;">${fb}</div>` : '');
   }
   return _exFallbackBlockHtml(name);
 }
-function _exFallbackBlockHtml(name){
+// Does this exercise have a self-hosted loop we are allowed to show here?
+function _exHasLocalClip(name){
+  if(!EX_SHOW_LOOPS || typeof EX_MEDIA_LOOPS === 'undefined') return false;
   const entry = _exVideoEntry(name, EX_VIDEO_MAP);
-  if(!entry) return '';
-  const id = entry.slug;
-  if(typeof EX_MEDIA_LOOPS !== 'undefined' && EX_MEDIA_LOOPS.has(id)){
-    return `
+  return !!(entry && EX_MEDIA_LOOPS.has(entry.slug));
+}
+function _exFallbackBlockHtml(name){
+  // The JPG start/end frames no longer exist, so the only self-hosted visual
+  // is the wger loop, and only on the web. A failed load hides the player.
+  if(!_exHasLocalClip(name)) return '';
+  const id = _exVideoEntry(name, EX_VIDEO_MAP).slug;
+  return `
     <div style="position:relative;border-radius:12px;overflow:hidden;margin-bottom:14px;background:#000;">
-      <video src="${EX_MEDIA_BASE}${id}/loop.mp4" poster="${EX_MEDIA_BASE}${id}/0.jpg" muted loop autoplay playsinline webkit-playsinline preload="metadata"
+      <video src="${EX_MEDIA_BASE}${id}/loop.mp4" muted loop autoplay playsinline webkit-playsinline preload="metadata"
+        onerror="this.parentNode.style.display='none'"
         style="width:100%;aspect-ratio:16/9;display:block;object-fit:cover;"></video>
       <div style="position:absolute;bottom:0;left:0;right:0;padding:3px 8px;font-size:9px;color:rgba(255,255,255,0.75);background:rgba(0,0,0,0.45);text-align:right;">Video: Goulart · CC BY-SA 4.0 · wger.de</div>
-    </div>`;
-  }
-  const safe = String(name).replace(/"/g,'');
-  return `
-    <div class="xfade-wrap" style="margin-bottom:14px;">
-      <img src="${EX_MEDIA_BASE}${id}/0.jpg" alt="${safe} start position" class="xf-a">
-      <img src="${EX_MEDIA_BASE}${id}/1.jpg" alt="${safe} end position" class="xf-b">
     </div>`;
 }
 // Video load failed. If both sexes exist and we haven't retried yet, fall back
@@ -14996,7 +15008,7 @@ function _findEXDBEntry(name){
 function _hasExerciseGuide(name){
   if(typeof _exV2Id === 'function' && _exV2Id(name)) return true;
   if(typeof _exGifId === 'function' && _exGifId(name)) return true;
-  if(typeof _exVideoEntry === 'function' && _exVideoEntry(name, EX_VIDEO_MAP)) return true;
+  if(_exHasLocalClip(name)) return true;
   return !!_findEXDBEntry(name);
 }
 
@@ -17076,7 +17088,7 @@ function openMuscleExplorer(muscle){
   EXDB.forEach(e => {
     const fine = (typeof resolveExerciseMuscles === 'function') ? resolveExerciseMuscles(e.name) : [];
     if(!fine || fine.indexOf(muscle) < 0) return;
-    const clip = ((typeof _exGifId === 'function') && !!_exGifId(e.name)) || ((typeof _exVideoEntry === 'function') && !!_exVideoEntry(e.name, EX_VIDEO_MAP));
+    const clip = ((typeof _exGifId === 'function') && !!_exGifId(e.name)) || _exHasLocalClip(e.name);
     rows.push({ name: e.name, equip: e.equip || '', cat: e.cat || '', clip });
   });
   rows.sort((a, b) => (b.clip - a.clip) || a.name.localeCompare(b.name));

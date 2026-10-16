@@ -30,7 +30,8 @@ const WEB_FILES = [
   'native-bridge.js', // window.MGNative, loaded by a <script> tag in <head>
   'sw.js',            // registered on the web; WKWebView has no service workers
   'icon.png',
-  'exercise-media',   // self-hosted demo frames and loops (EX_MEDIA_BASE)
+  // NOT exercise-media/: the iOS app shows text form guides only (the wger
+  // loops stay web-only until their licence chain is confirmed).
 ];
 
 function fail(msg) {
@@ -69,7 +70,6 @@ for (const u of refs) {
   checked++;
   if (!existsSync(join(OUT, path))) missing.push(u);
 }
-if (!existsSync(join(OUT, 'exercise-media'))) missing.push('exercise-media/');
 if (missing.length) fail('index.html references files that are not in www/: ' + missing.join(', '));
 
 // ── 3. Keep the Xcode bundle ID in step with capacitor.config.json ───────

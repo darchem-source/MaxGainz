@@ -47,6 +47,8 @@
     isNative = !!(Cap && typeof Cap.isNativePlatform === 'function' && Cap.isNativePlatform());
     if (isNative && typeof Cap.getPlatform === 'function') platform = String(Cap.getPlatform() || 'web');
   } catch (e) { isNative = false; platform = 'web'; }
+  // Lets CSS hide web-only mark-up ([data-web-only]) before the first paint.
+  if (isNative) { try { document.documentElement.classList.add('mg-native'); } catch (e) {} }
 
   // ── helpers ────────────────────────────────────────────────────────────
   // safe(fn, fallback): run fn and resolve with its result, or with the
