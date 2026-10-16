@@ -2,6 +2,10 @@
 -- Max Gainz — read-only checks to run AFTER rls_owner_only.sql
 -- Supabase dashboard → SQL Editor → paste → Run. Changes nothing.
 -- One result grid; every row is a check with a count or a value.
+--
+-- Checks 1–4 are superseded by verify_security.sql, which covers every table
+-- and gives PASS/FAIL verdicts. Use that for security. Checks 5–7 below
+-- (stray HTML, custom_weights keys, feedback volume) are data hygiene only.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 select * from (
@@ -21,8 +25,11 @@ select * from (
    where n.nspname = 'public' and c.relkind in ('v','m')
 
   union all
-  -- 3. SECURITY DEFINER functions in public callable through /rest/v1/rpc. Expect none.
-  select 3, 'security definer fn: ' || p.proname, null, pg_get_function_identity_arguments(p.oid)
+  -- 3. SECURITY DEFINER functions in public callable through /rest/v1/rpc.
+  --    Expect only the two that delete_my_account.sql installs (marked "expected").
+  select 3, 'security definer fn: ' || p.proname, null,
+         case when p.proname in ('delete_my_account', 'mg_refuse_deleted_account_writes')
+              then 'expected (account deletion) ' else '' end || pg_get_function_identity_arguments(p.oid)
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.prosecdef
 
