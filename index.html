@@ -1212,7 +1212,7 @@ html:not(.mg-native) [data-native-only] { display: none !important; }
         <div style="margin-top:20px;padding-top:20px;border-top:0.5px solid var(--border);">
           <div style="background:rgba(255,77,106,0.1);border:0.5px solid rgba(255,77,106,0.25);border-radius:10px;padding:12px;margin-bottom:12px;">
             <div style="font-size:12px;font-weight:700;color:var(--red);margin-bottom:4px;">⚠️ Delete Account</div>
-            <div style="font-size:12px;color:var(--text2);margin-bottom:12px;">This action cannot be undone. You can request your data to be emailed to you before deletion.</div>
+            <div style="font-size:12px;color:var(--text2);margin-bottom:12px;">Permanently deletes your account and all its data from our servers. You can download your data first. This cannot be undone.</div>
             <button onclick="initiateAccountDeletion()" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;width:100%;">Delete My Account</button>
           </div>
         </div>
@@ -3848,11 +3848,21 @@ function attachLongPress(el, callback, opts){
   }, { passive: true });
 })();
 
+// Account deletion (see deleteUserAccount): while it runs, no write may
+// reach the server and no cloud load may re-upload local data.
+let _accountDeletionInProgress = false;
+const _sbInFlight = new Set();
 async function sbFetch(path, options = {}, _isRetry = false) {
+  const method = options.method || 'GET';
+  if(_accountDeletionInProgress && method !== 'GET') return null;
+  const p = _sbFetchInner(path, options, _isRetry, method);
+  _sbInFlight.add(p);
+  try { return await p; } finally { _sbInFlight.delete(p); }
+}
+async function _sbFetchInner(path, options, _isRetry, method) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
   try {
-    const method = options.method || 'GET';
     const headers = {
       'apikey': SB_KEY,
       'Authorization': 'Bearer ' + (authToken || SB_KEY),
@@ -3897,6 +3907,9 @@ async function sbFetch(path, options = {}, _isRetry = false) {
     const text = await res.text();
     if (!res.ok) {
       console.warn('Supabase error', res.status, text);
+      // The account was deleted on another device: the server refuses every
+      // write with this marker. Wipe this device too (per backend spec §4).
+      if(res.status === 403 && /MG_ACCOUNT_DELETED/.test(text || '')) _onAccountDeletedRemotely();
       return null;
     }
     return text ? JSON.parse(text) : [];
@@ -4020,6 +4033,7 @@ async function cloudSaveProfile() {
 // This is the source of truth on login and app start
 async function cloudLoadAll() {
   if(!isAuthenticated()) return false;
+  if(_accountDeletionInProgress) return false;
   setSyncStatus('syncing');
   _dashWeightsOk = false; // state is reset below; no dashboard push until weights+profile reload
   const userId = getCurrentUserId();
@@ -4694,23 +4708,38 @@ function _buildExportPayload(){
   };
 }
 
-function exportAllData(){
+// Hand a file to the user. Web: a download. iOS app: WKWebView ignores
+// <a download>, so the file goes to the share sheet (Save to Files, AirDrop,
+// Mail…) through window.MGNative. Resolves {saved:boolean}.
+async function _saveFile(blob, filename, title){
+  if(MG_NATIVE && window.MGNative && typeof window.MGNative.share === 'function'){
+    const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+    const r = await window.MGNative.share({ title: title || filename, files: [file] });
+    return { saved: !!(r && r.shared), reason: r && r.reason };
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  return { saved: true };
+}
+async function exportAllData(){
   try {
     const payload = _buildExportPayload();
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
     const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-    a.href = url;
-    a.download = 'max-gainz-backup-' + ts + '.json';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    showToast('✅ Backup downloaded · ' + payload.sessions.length + ' sessions', { duration: 3000 });
+    const r = await _saveFile(blob, 'max-gainz-backup-' + ts + '.json', 'Max Gainz backup');
+    if(r.saved) showToast('✅ Backup ' + (MG_NATIVE ? 'shared' : 'downloaded') + ' · ' + payload.sessions.length + ' sessions', { duration: 3000 });
+    else if(r.reason !== 'cancelled') showToast('❌ Could not save the backup', { tone:'error', duration: 4000 });
+    return r.saved;
   } catch(err){
     console.error('Export failed:', err);
     showToast('❌ Export failed: ' + (err?.message || 'unknown error'), { tone:'error', duration: 4000 });
+    return false;
   }
 }
 
@@ -14487,12 +14516,7 @@ function roundRect(ctx, x, y, w, h, r){
 
 function downloadShareCard(){
   if(!_lastShareBlob) return;
-  const url = URL.createObjectURL(_lastShareBlob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'maxgainz-' + new Date().toISOString().slice(0,10) + '.png';
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  _saveFile(_lastShareBlob, 'maxgainz-' + new Date().toISOString().slice(0,10) + '.png', 'Max Gainz Workout');
 }
 
 async function shareCardNative(){
@@ -22763,10 +22787,7 @@ function exportData(){
     weights: customWeights
   };
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download='maxgainz_backup_'+new Date().toISOString().slice(0,10)+'.json';
-  a.click();
+  _saveFile(blob, 'maxgainz_backup_'+new Date().toISOString().slice(0,10)+'.json', 'Max Gainz export');
 }
 
 async function confirmClear(){
@@ -23475,6 +23496,7 @@ if(MG_NATIVE){
 // ── SPLASH SCREEN ──
 // Load auth state FIRST before splash timer
 loadAuthState();
+_checkDeletionStateAtBoot();
 // A password-reset or confirmation link takes over from the splash + auth gate.
 const _bootAuthLink = !MG_NATIVE && !!_parseAuthLink(location.href);
 if(_bootAuthLink){ const _lnk = location.href; _whenDomReady(() => _handleAuthLink(_lnk)); }
@@ -23815,103 +23837,169 @@ goTab = function(name, btn){
 
 // ── ACCOUNT DELETION ──
 
+// ── ACCOUNT DELETION ──
+// One server call (RPC delete_my_account, installed by the owner from
+// supabase/delete_my_account.sql) removes every row and the login in a single
+// transaction. The device is wiped only after the server says ok:true.
+// Spec: appstore-team/backend-client-spec.md.
+const DELETE_SUPPORT = 'support@maxgainz.app'; // TODO owner: confirm support contact
 function initiateAccountDeletion(){
+  if(!isAuthenticated()){ showToast('Guests have no account to delete. Use "Clear local data" instead.', { duration: 3500 }); return; }
   document.getElementById('deleteAccountMod').classList.add('open');
 }
-
-function proceedDeleteWithData(){
-  document.getElementById('deleteAccountMod').classList.remove('open');
-  document.getElementById('emailConfirm').textContent = getCurrentUserEmail();
-  document.getElementById('emailDataMod').classList.add('open');
+function openManageSubscriptions(){
+  if(window.MGNative) window.MGNative.openExternal('https://apps.apple.com/account/subscriptions');
+  else window.open('https://apps.apple.com/account/subscriptions', '_blank', 'noopener');
 }
-
+function proceedDeleteExportFirst(){
+  exportAllData();
+}
 function proceedDeleteNoData(){
   document.getElementById('deleteAccountMod').classList.remove('open');
-  document.getElementById('finalDeleteMod').classList.add('open');
+  _showFinalDelete('confirm');
 }
-
-async function sendDataEmail(){
-  const email = getCurrentUserEmail();
-  const btn = document.getElementById('sendEmailBtn');
-  const status = document.getElementById('emailStatus');
-  
-  btn.disabled = true;
-  btn.textContent = 'Sending...';
-  
-  try{
-    // Create CSV export of all sessions
-    const csvContent = generateSessionsCSV();
-    
-    // In a real app, you'd call a backend function to email this
-    // For now, we'll simulate success and trigger browser download as backup
-    const blob = new Blob([csvContent], {type: 'text/csv'});
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'maxgainz_workout_data_' + new Date().toISOString().slice(0,10) + '.csv';
-    a.click();
-    window.URL.revokeObjectURL(url);
-    
-    status.style.display = 'block';
-    status.textContent = '✅ Data prepared! File downloaded. Now deleting your account...';
-    
-    setTimeout(()=>{
-      document.getElementById('emailDataMod').classList.remove('open');
-      document.getElementById('finalDeleteMod').classList.add('open');
-    }, 2000);
-  }catch(e){
-    status.style.display = 'block';
-    status.style.background = 'rgba(255,77,106,0.1)';
-    status.style.color = 'var(--red)';
-    status.textContent = '❌ Error: ' + e.message;
-    btn.disabled = false;
-    btn.textContent = 'Send Email & Delete Account';
+function _showFinalDelete(mode, message){
+  const m = document.getElementById('finalDeleteMod');
+  const title = document.getElementById('finalDeleteTitle');
+  const body = document.getElementById('finalDeleteBody');
+  const btn = document.getElementById('finalDeleteBtn');
+  const cancel = document.getElementById('finalDeleteCancel');
+  const email = getCurrentUserEmail() || 'this account';
+  btn.disabled = false; cancel.style.display = '';
+  if(mode === 'confirm'){
+    title.textContent = 'Delete account permanently?';
+    body.textContent = 'Your account (' + email + ') and all its data will be deleted from our servers straight away, and you\'ll be signed out on every device. This can\'t be undone.\n\nYour App Store subscription, if you have one, is not cancelled by this. Cancel it in iPhone Settings → your name → Subscriptions.';
+    btn.textContent = 'Delete my account';
+  } else if(mode === 'pending'){
+    title.textContent = 'Finish deleting your account';
+    body.textContent = 'Your last attempt to delete your account didn\'t finish. Tap Delete my account to complete it.';
+    btn.textContent = 'Delete my account';
+  } else if(mode === 'running'){
+    title.textContent = 'Deleting your account…';
+    body.textContent = 'Please keep the app open.';
+    btn.textContent = 'Deleting…'; btn.disabled = true; cancel.style.display = 'none';
+  } else if(mode === 'retry'){
+    title.textContent = 'Couldn\'t confirm';
+    body.textContent = message;
+    btn.textContent = 'Try again'; cancel.style.display = 'none';
+  } else { // 'failed'
+    title.textContent = 'Couldn\'t delete';
+    body.textContent = message;
+    btn.textContent = 'Try again';
   }
+  m.classList.add('open');
 }
+function confirmFinalDelete(){ deleteUserAccount(); }
 
-function generateSessionsCSV(){
-  let csv = 'Date,Day,Exercises,Duration (min),Volume (kg),Intensity,XP Awarded\n';
-  completedSessions.forEach(s => {
-    const date = s.date instanceof Date ? s.date.toISOString().slice(0,10) : s.date;
-    csv += `"${date}","${s.day}","${s.exercises}","${s.durationMin}","${s.volume}","${s.intensity||''}","${s.xpAwarded}"\n`;
-  });
-  return csv;
+let _deleteTokenRefreshedAt = 0;
+async function _callDeleteMyAccount(){
+  // Returns {ok:true} | {status, code, message, definite:boolean} | {unknown:true}
+  const attempt = async () => {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 20000);
+    try{
+      const res = await fetch(SB_URL + '/rest/v1/rpc/delete_my_account', {
+        method: 'POST',
+        headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+        body: '{}', signal: ctrl.signal
+      });
+      const text = await res.text();
+      let body = null; try { body = text ? JSON.parse(text) : null; } catch(e){}
+      if(res.ok && body && body.ok === true) return { ok: true, body };
+      if(res.status === 408 || res.status === 429 || res.status >= 500) return { unknown: true, status: res.status };
+      return { status: res.status, code: body && body.code, message: (body && (body.message || body.hint)) || text, definite: true };
+    }catch(e){
+      return { unknown: true, error: e };
+    }finally{ clearTimeout(t); }
+  };
+  const waits = [1000, 3000];
+  for(let i = 0; i < 3; i++){
+    let r = await attempt();
+    if(r.status === 401 && i === 0){
+      const refreshed = await refreshAuthToken();
+      if(!refreshed) return { status: 401, definite: true, signIn: true };
+      r = await attempt();
+    }
+    if(r.ok || r.definite) return r;
+    if(i < 2) await new Promise(res => setTimeout(res, waits[i]));
+  }
+  return { unknown: true };
 }
-
-function confirmFinalDelete(){
-  if(!confirm('⚠️ This will permanently delete your account and all associated data. Type your email to confirm:\n\n' + getCurrentUserEmail())) return;
-  
-  // Actually delete the account
-  deleteUserAccount();
-}
-
 async function deleteUserAccount(){
-  _dashDisabled = true; clearTimeout(_dashTimer); _dashTimer = null; // never re-create __dashboard__ after the wipe
-  try{
-    const userId = getCurrentUserId();
-    
-    // Delete all user sessions
-    await sbFetch('sessions?user_id=eq.' + userId, {method: 'DELETE'});
-    
-    // Delete all user custom weights
-    await sbFetch('custom_weights?user_id=eq.' + userId, {method: 'DELETE'});
-    
-    // Sign out and clear auth
-    await fetch(SB_URL + '/auth/v1/logout', {
-      method: 'POST',
-      headers: {
-        'apikey': SB_KEY,
-        'Authorization': 'Bearer ' + authToken,
-        'Content-Type': 'application/json'
-      }
+  if(!isAuthenticated()) return;
+  if(!navigator.onLine){
+    _showFinalDelete('failed', 'You\'re offline. Connect to the internet to delete your account. Nothing has been deleted.');
+    return;
+  }
+  // 1. Freeze sync.
+  _accountDeletionInProgress = true;
+  _dashDisabled = true; clearTimeout(_dashTimer); _dashTimer = null;
+  _showFinalDelete('running');
+  const unfreeze = () => { _accountDeletionInProgress = false; _dashDisabled = false; localStorage.removeItem('maxgainz_delete_pending'); if(typeof scheduleDashboardSummary === 'function') scheduleDashboardSummary(); };
+  // 2. Let in-flight writes finish (cap 10 s).
+  await Promise.race([Promise.allSettled([..._sbInFlight]), new Promise(r => setTimeout(r, 10000))]);
+  // 3. Fresh token (skip if refreshed in the last ~50 min during a retry loop).
+  if(Date.now() - _deleteTokenRefreshedAt > 50 * 60 * 1000){
+    if(!(await refreshAuthToken())){
+      unfreeze();
+      _showFinalDelete('failed', 'For your security, please sign in again and then delete your account. Nothing has been deleted.');
+      return;
+    }
+    _deleteTokenRefreshedAt = Date.now();
+  }
+  // 4. Mark pending so a killed app can finish on next launch.
+  localStorage.setItem('maxgainz_delete_pending', currentUser.id);
+  // 5. Call.
+  const r = await _callDeleteMyAccount();
+  if(r.ok){
+    _wipeDeviceAfterDeletion();
+    return;
+  }
+  if(r.unknown){
+    // 8. Unknown outcome: keep sync frozen and the pending flag.
+    _showFinalDelete('retry', 'We couldn\'t confirm your account was deleted because the connection dropped. Tap Try again when you\'re back online.');
+    return;
+  }
+  // 7. Definite failure.
+  if(r.code === 'PGRST202' || r.status === 404) console.warn('delete_my_account not installed');
+  else console.warn('delete_my_account refused', r.status, r.code, r.message);
+  unfreeze();
+  _deleteTokenRefreshedAt = 0;
+  _showFinalDelete('failed', r.signIn
+    ? 'For your security, please sign in again and then delete your account. Nothing has been deleted.'
+    : 'We couldn\'t delete your account right now. Nothing has been deleted. Please try again later, or contact support at ' + DELETE_SUPPORT + '.');
+}
+// 6. Success (also used when another device deleted the account).
+function _wipeDeviceAfterDeletion(){
+  saveAuthState(null, null);
+  localStorage.clear();
+  try { sessionStorage.clear(); sessionStorage.setItem('maxgainz_account_deleted', '1'); } catch(e){}
+  location.reload();
+}
+let _remoteDeleteHandled = false;
+function _onAccountDeletedRemotely(){
+  if(_remoteDeleteHandled) return;
+  _remoteDeleteHandled = true;
+  _accountDeletionInProgress = true;
+  _dashDisabled = true; clearTimeout(_dashTimer); _dashTimer = null;
+  _wipeDeviceAfterDeletion();
+}
+// At boot (after loadAuthState): one-shot "deleted" confirmation, and the
+// "finish deleting" prompt when a previous attempt was interrupted.
+function _checkDeletionStateAtBoot(){
+  let deleted = false;
+  try { deleted = sessionStorage.getItem('maxgainz_account_deleted') === '1'; if(deleted) sessionStorage.removeItem('maxgainz_account_deleted'); } catch(e){}
+  if(deleted){
+    _whenDomReady(() => {
+      showInfoModal('Your account has been deleted', 'Your Max Gainz account and all its data have been permanently removed from our servers and from this device. If you had an App Store subscription, remember to cancel it in iPhone Settings → your name → Subscriptions, because Apple bills it separately.');
     });
-    
-    showToast('✅ Account deleted — all your data has been removed', { duration:4500 });
-    saveAuthState(null, null);
-    localStorage.clear();
-    location.reload();
-  }catch(e){
-    showToast('❌ Error deleting account: ' + e.message, { tone:'error', duration:5000 });
+    return;
+  }
+  const pending = localStorage.getItem('maxgainz_delete_pending');
+  if(pending && currentUser && pending === currentUser.id){
+    _accountDeletionInProgress = true; // no cloudLoadAll, no writes
+    _dashDisabled = true;
+    _whenDomReady(() => setTimeout(() => _showFinalDelete('pending'), 1200));
   }
 }
 
@@ -24439,39 +24527,26 @@ window.addEventListener('offline', updateOnlineStatus);
 
 <!-- DELETE ACCOUNT MODAL -->
 <div class="modal-ov" id="deleteAccountMod" onclick="if(event.target===this)this.classList.remove('open')">
-  <div class="modal">
+  <div class="modal" style="max-height:88vh;overflow-y:auto;">
     <div class="modal-handle"></div>
-    <div style="font-size:18px;font-weight:800;margin-bottom:8px;">Delete Account</div>
-    <div style="font-size:13px;color:var(--text2);margin-bottom:20px;">Would you like us to email your workout data before we delete your account?</div>
-    <div style="display:flex;gap:10px;margin-bottom:16px;">
-      <button class="btn-p" style="flex:1;" onclick="proceedDeleteWithData()">📧 Email Data & Delete</button>
-      <button style="flex:1;background:var(--surface2);border:0.5px solid var(--border);color:var(--red);border-radius:10px;padding:14px;font-size:13px;font-weight:700;cursor:pointer;" onclick="proceedDeleteNoData()">Delete Without Email</button>
-    </div>
+    <div style="font-size:18px;font-weight:800;margin-bottom:8px;">Delete your account?</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.55;">This permanently deletes your Max Gainz account and everything in it: your workout history, weights, profile and photo, body measurements, notes and custom workouts, and any feedback you sent while signed in. This can't be undone.</div>
+    <div style="background:rgba(255,140,66,0.1);border:0.5px solid rgba(255,140,66,0.35);border-radius:10px;padding:12px;margin-bottom:16px;font-size:12px;color:var(--text);line-height:1.55;"><strong>Subscribed through the App Store?</strong> Deleting your account does <strong>not</strong> cancel your subscription. Apple bills you for it and keeps charging until you cancel. To cancel, open the <strong>Settings</strong> app on your iPhone → tap your name → <strong>Subscriptions</strong> → <strong>Max Gainz</strong> → <strong>Cancel Subscription</strong>. Please do this before you delete your account.</div>
+    <button onclick="openManageSubscriptions()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);color:var(--text);border-radius:10px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:8px;">Manage subscription</button>
+    <button onclick="proceedDeleteExportFirst()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);color:var(--accent);border-radius:10px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:8px;">⬇️ Download my data first</button>
+    <button onclick="proceedDeleteNoData()" style="width:100%;background:var(--red);color:#fff;border:none;border-radius:10px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:8px;">Continue</button>
     <button onclick="this.closest('.modal-ov').classList.remove('open')" style="width:100%;background:transparent;border:0.5px solid var(--border);color:var(--text2);border-radius:8px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;">Cancel</button>
   </div>
 </div>
 
-<!-- EMAIL DATA CONFIRMATION MODAL -->
-<div class="modal-ov" id="emailDataMod" onclick="if(event.target===this)this.classList.remove('open')">
+<!-- FINAL CONFIRMATION MODAL (also shows progress, retry and failure states) -->
+<div class="modal-ov" id="finalDeleteMod" onclick="if(event.target===this&&!_accountDeletionInProgress)this.classList.remove('open')">
   <div class="modal">
     <div class="modal-handle"></div>
-    <div style="font-size:18px;font-weight:800;margin-bottom:8px;">Email Your Data</div>
-    <div style="font-size:13px;color:var(--text2);margin-bottom:12px;">We'll send your complete workout history to your email address:</div>
-    <div style="background:var(--surface);border:0.5px solid var(--border);border-radius:8px;padding:12px;margin-bottom:20px;font-size:13px;font-weight:700;" id="emailConfirm">your@email.com</div>
-    <div id="emailStatus" style="display:none;margin-bottom:16px;padding:12px;background:rgba(76,175,80,0.1);border:0.5px solid rgba(76,175,80,0.25);border-radius:8px;color:var(--green);font-size:13px;font-weight:700;text-align:center;"></div>
-    <button class="btn-p" style="width:100%;margin-bottom:8px;" id="sendEmailBtn" onclick="sendDataEmail()">Send Email & Delete Account</button>
-    <button onclick="this.closest('.modal-ov').classList.remove('open')" style="width:100%;background:transparent;border:0.5px solid var(--border);color:var(--text2);border-radius:8px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;">Cancel</button>
-  </div>
-</div>
-
-<!-- FINAL CONFIRMATION MODAL -->
-<div class="modal-ov" id="finalDeleteMod" onclick="if(event.target===this)this.classList.remove('open')">
-  <div class="modal">
-    <div class="modal-handle"></div>
-    <div style="font-size:18px;font-weight:800;margin-bottom:8px;color:var(--red);">⚠️ Final Confirmation</div>
-    <div style="font-size:13px;color:var(--text2);margin-bottom:20px;line-height:1.6;">Your account and all associated data will be permanently deleted. This cannot be undone.<br><br>Are you absolutely sure?</div>
-    <button style="width:100%;background:var(--red);color:#fff;border:none;border-radius:10px;padding:14px;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:8px;" onclick="confirmFinalDelete()">Yes, Delete My Account Permanently</button>
-    <button onclick="this.closest('.modal-ov').classList.remove('open')" style="width:100%;background:transparent;border:0.5px solid var(--border);color:var(--text2);border-radius:8px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;">Cancel</button>
+    <div id="finalDeleteTitle" style="font-size:18px;font-weight:800;margin-bottom:8px;color:var(--red);">Delete account permanently?</div>
+    <div id="finalDeleteBody" style="font-size:13px;color:var(--text2);margin-bottom:20px;line-height:1.6;white-space:pre-wrap;"></div>
+    <button id="finalDeleteBtn" onclick="confirmFinalDelete()" style="width:100%;background:var(--red);color:#fff;border:none;border-radius:10px;padding:14px;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:8px;">Delete my account</button>
+    <button id="finalDeleteCancel" onclick="this.closest('.modal-ov').classList.remove('open')" style="width:100%;background:transparent;border:0.5px solid var(--border);color:var(--text2);border-radius:8px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;">Cancel</button>
   </div>
 </div>
 
