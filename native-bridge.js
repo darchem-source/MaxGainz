@@ -35,6 +35,11 @@
  *   MGNative.openExternal(url)                http(s) opens in an in-app Safari
  *       sheet on iOS and a new tab on the web; mailto:/tel:/sms: go to the
  *       system app. -> true if handed off.
+ *   MGNative.purchases                        RevenueCat (@revenuecat/purchases-
+ *       capacitor) in the app; on the web every call resolves to an
+ *       "unavailable" result and `available` is false. See the section below.
+ *   MGNative.onAppState(cb)                   cb(isActive) on app background/
+ *       foreground (Capacitor App plugin); web: visibilitychange.
  */
 (function (w) {
   'use strict';
@@ -316,6 +321,63 @@
     return false; // never navigate the app itself away (javascript:, data:, file: ...)
   }, false);
 
+  // ── app state (foreground / background) ────────────────────────────────
+  var onAppState = function (cb) {
+    if (typeof cb !== 'function') return false;
+    if (isNative && has('App', 'addListener')) {
+      try { plugin('App').addListener('appStateChange', function (ev) { try { cb(!!(ev && ev.isActive)); } catch (e) {} }); return true; } catch (e) { return false; }
+    }
+    document.addEventListener('visibilitychange', function () { try { cb(document.visibilityState === 'visible'); } catch (e) {} });
+    return true;
+  };
+
+  // ── purchases (RevenueCat) ─────────────────────────────────────────────
+  // The public SDK key is written into the copy of this file that ships in
+  // the app by native/scripts/prepare-www.mjs (from capacitor.config.json
+  // plugins.MaxGainzNative.revenueCatApiKey). The web copy keeps the
+  // placeholder and never configures RevenueCat.
+  var RC_API_KEY = '__MG_RC_API_KEY__';
+  var rcAvailable = isNative && !!plugin('Purchases') && /^appl_/.test(RC_API_KEY);
+  var rcConfigured = false;
+  // Error shape from the Capacitor bridge: {code:'1', message, data:{readableErrorCode,…}}
+  function rcError(e) {
+    var code = String((e && (e.code || (e.data && e.data.code))) || '');
+    var readable = (e && e.data && e.data.readableErrorCode) || '';
+    return { code: code, readable: readable, message: String((e && e.message) || e || 'Unknown error'),
+      cancelled: code === '1' || /CANCELLED/i.test(readable),
+      pending: code === '20' || /PENDING/i.test(readable),
+      network: code === '10' || code === '35' || /NETWORK|OFFLINE/i.test(readable) };
+  }
+  var unavailable = { ok: false, unavailable: true };
+  function rc(method, args) {
+    if (!rcAvailable) return Promise.resolve(unavailable);
+    return call('Purchases', method, args || {})
+      .then(function (r) { return { ok: true, value: r }; }, function (e) { return { ok: false, error: rcError(e) }; });
+  }
+  var purchases = {
+    available: rcAvailable,
+    configure: safe(function (opts) {
+      if (!rcAvailable) return unavailable;
+      var args = { apiKey: RC_API_KEY };
+      if (opts && opts.appUserID) args.appUserID = String(opts.appUserID);
+      return rc('configure', args).then(function (r) { rcConfigured = rcConfigured || r.ok; return r; });
+    }, unavailable),
+    isConfigured: function () { return rcConfigured; },
+    getOfferings: safe(function () { return rc('getOfferings'); }, unavailable),
+    getCustomerInfo: safe(function () { return rc('getCustomerInfo').then(function (r) { return r.ok ? { ok: true, value: (r.value && r.value.customerInfo) || r.value } : r; }); }, unavailable),
+    purchasePackage: safe(function (pkg) { return rc('purchasePackage', { aPackage: pkg }); }, unavailable),
+    restorePurchases: safe(function () { return rc('restorePurchases').then(function (r) { return r.ok ? { ok: true, value: (r.value && r.value.customerInfo) || r.value } : r; }); }, unavailable),
+    checkTrialEligibility: safe(function (ids) { return rc('checkTrialOrIntroductoryPriceEligibility', { productIdentifiers: ids || [] }); }, unavailable),
+    logIn: safe(function (id) { return rc('logIn', { appUserID: String(id) }); }, unavailable),
+    logOut: safe(function () { return rc('logOut'); }, unavailable),
+    getAppUserID: safe(function () { return rc('getAppUserID'); }, unavailable),
+    // cb(customerInfo) whenever RevenueCat reports a change (renewal, expiry…)
+    onCustomerInfo: function (cb) {
+      if (!rcAvailable || typeof cb !== 'function' || !has('Purchases', 'addCustomerInfoUpdateListener')) return false;
+      try { plugin('Purchases').addCustomerInfoUpdateListener({}, function (info) { try { if (info) cb(info.customerInfo || info); } catch (e) {} }); return true; } catch (e) { return false; }
+    }
+  };
+
   // ── native launch splash ───────────────────────────────────────────────
   // capacitor.config.json keeps the launch splash up for at most 3 s; hide it
   // as soon as the page has painted (the page then shows its own splash).
@@ -339,6 +401,8 @@
     haptic: haptic,
     keepAwake: keepAwake,
     share: share,
-    openExternal: openExternal
+    openExternal: openExternal,
+    onAppState: onAppState,
+    purchases: purchases
   };
 })(window);

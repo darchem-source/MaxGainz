@@ -495,6 +495,7 @@ html:not(.mg-native) [data-native-only] { display: none !important; }
         <div style="font-size:13px;color:var(--text2);margin-top:2px;" id="todayMeta"></div>
       </div>
       <!-- Reminder banner — shown when a major group is overdue, dismissible per-day -->
+      <div id="todayProLock" style="display:none;margin:0 16px 10px;"></div>
       <div id="todayReminder" style="display:none;margin:0 16px 10px;"></div>
       <!-- Dynamic programme toggle — rebuilt by renderTodayToggle() -->
       <div id="todayToggleWrap" style="padding:0 16px 8px;overflow-x:auto;display:none;gap:6px;"></div>
@@ -1198,6 +1199,16 @@ html:not(.mg-native) [data-native-only] { display: none !important; }
           <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Accessory exercises rotate through fresh variations each time you repeat a workout day. Main lifts never change.</div>
           <!-- Media credit (web only: the iOS app shows no third-party exercise media) -->
           <div data-web-only style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Exercise animations by <a href="https://exercisedb.dev" target="_blank" rel="noopener" style="color:var(--text2);">AscendAPI (ExerciseDB)</a>. Demo videos: Goulart, CC BY-SA 4.0, <a href="https://wger.de" target="_blank" rel="noopener" style="color:var(--text2);">wger.de</a>.</div>
+          <!-- Subscription (iOS app only) -->
+          <div data-native-only style="background:var(--surface2);border-radius:12px;padding:14px;margin-bottom:10px;">
+            <div style="font-size:13px;font-weight:700;">Max Gainz Pro</div>
+            <div id="proStatusLine" style="font-size:11px;color:var(--text2);margin-top:2px;">Checking subscription…</div>
+            <div style="display:flex;gap:8px;margin-top:10px;">
+              <button id="proSubscribeBtn" onclick="openPaywall('settings')" style="flex:1;background:var(--accent);color:#000;border:none;border-radius:8px;padding:10px;font-size:12px;font-weight:700;cursor:pointer;">See plans</button>
+              <button onclick="openManageSubscriptions()" style="flex:1;background:var(--surface);border:0.5px solid var(--border);color:var(--text);border-radius:8px;padding:10px;font-size:12px;font-weight:700;cursor:pointer;">Manage subscription</button>
+              <button onclick="restorePurchases()" style="flex:1;background:var(--surface);border:0.5px solid var(--border);color:var(--text);border-radius:8px;padding:10px;font-size:12px;font-weight:700;cursor:pointer;">Restore</button>
+            </div>
+          </div>
           <!-- Legal & support -->
           <div style="display:flex;gap:8px;margin-bottom:10px;">
             <a href="https://maxgainz.netlify.app/privacy" target="_blank" rel="noopener" style="flex:1;text-align:center;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px 6px;font-size:12px;font-weight:700;color:var(--text);text-decoration:none;">Privacy Policy</a>
@@ -3066,6 +3077,8 @@ function continueAsGuest(){
 // Shared post-entry sequence (boot, guest entry, sign-up, sign-in): refresh
 // the UI, then onboarding, then the path wizard for anyone without a path.
 function _afterEnterApp(synced){
+  _purchasesSyncIdentity();
+  try{ renderTodayLock(); }catch(e){}
   if(synced){
     applyCustomWeights();
     renderToday();
@@ -5081,6 +5094,9 @@ function getNextDay(p){
 
 
 function goTab(tab,el){
+  // Read-only mode (iOS app, no active subscription): history and Settings
+  // stay open; training, Paths, programmes and Gainz open the paywall.
+  if(PRO_LOCKED_TABS.includes(tab) && !requirePro()) return;
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('s-'+tab).classList.add('active');
@@ -5379,6 +5395,7 @@ function _renderGreeting(){
 }
 
 function renderToday(){
+  try{ renderTodayLock(); }catch(e){}
   if(_isColdSyncing()){ _renderTodaySkeleton(); return; }
   _renderGreeting();
   if(typeof renderTrainingReminder === 'function') renderTrainingReminder();
@@ -5697,6 +5714,7 @@ function stepWeight(current, dir, steps) {
 
 // ── SESSION STATE ──
 function beginSession(){
+  if(!requirePro()) return;
   if(todayProg==='HIIT'){
     const day=getDayName('HIIT');
     const idx=HIIT.findIndex(h=>h.name===day);
@@ -5974,6 +5992,7 @@ function applyExerciseRotation(exs, dayName, progKey, cycleOffset){
 }
 
 function startSession(day,prog){
+  if(!requirePro()) return;
   stopRest(); window._restStoppedManually=false; // clean slate before new session
   window._prShownThisSession = new Map(); clearTimeout(window._pulsePendingTimer); window._pulsePendingTimer = null; const _cnEl=document.getElementById("currName"); if(_cnEl) _cnEl.dataset.exName="";
   window._warmupBannerDismissed = false; window._warmupBannerDone = false; // fresh guided-warmup offer each session
@@ -12067,6 +12086,7 @@ function _hiitIconFor(w){
 }
 
 function startHIIT(idx){
+  if(!requirePro()) return;
   window._sessionFinalized = false; sessProgKey = 'hiit'; window._nextProgKey = null;
   const w=HIIT[idx];
   if(!w) return;
@@ -13351,6 +13371,7 @@ function deleteCustomProgramme(idx){
 }
 
 function startCustomSubSession(progIdx,subIdx){
+  if(!requirePro()) return;
   window._sessionFinalized = false; sessProgKey = 'custom'; window._nextProgKey = null;
   const prog=customWorkouts[progIdx];
   const sub=prog.subcategories[subIdx];
@@ -15571,6 +15592,7 @@ function deleteCustomHIIT(idx){
 }
 
 function startCustomHIIT(idx){
+  if(!requirePro()) return;
   window._sessionFinalized = false; sessProgKey = 'hiit'; window._nextProgKey = null;
   const w = customHIITs[idx];
   if(!w) return;
@@ -16724,7 +16746,7 @@ function renderProgress(){
   renderTrainingFrequency();
   _applyProgSectionState();
   // Apply the user's last-selected sub-tab (defaults to 'week' on first run)
-  const saved = lsGetRaw('progSubTab', 'week');
+  const saved = isProUnlocked() ? lsGetRaw('progSubTab', 'week') : 'habits';
   const chip = document.querySelector('#progSubTabs .chip[data-tab="' + saved + '"]')
             || document.querySelector('#progSubTabs .chip');
   if(chip) setProgressSubTab(saved, chip, /*skipPersist*/ true);
@@ -16736,6 +16758,11 @@ function renderProgress(){
 // Optional `liftKey` (3rd arg) is honoured when tab==='strength' — taps the
 // matching chip in #liftTabs so insight cards can drill to a specific lift.
 function setProgressSubTab(tab, chipEl, skipPersist, liftKey){
+  // Analytics sub-tabs are Pro; the calendar/history ('habits') is always open.
+  if(tab !== 'habits' && !isProUnlocked()){
+    if(!skipPersist) openPaywall('analytics');
+    tab = 'habits'; chipEl = document.querySelector('#progSubTabs .chip[data-tab="habits"]');
+  }
   // Toggle chip active state
   document.querySelectorAll('#progSubTabs .chip').forEach(c => c.classList.remove('active'));
   if(chipEl) chipEl.classList.add('active');
@@ -20595,6 +20622,7 @@ function openWorkoutSummary(programme, dayName, occOffset){
 }
 
 function startPathSession(programme, dayName) {
+  if(!requirePro()) return;
   window._currentSessionIsAdhoc = false;
   if(programme === 'ULF') startSessionULF(dayName);
   else if(programme === 'PPL') startSession(dayName, PPL);
@@ -21003,6 +21031,7 @@ function _renderAdhocList(){
 // Universal "start as extra session" router. Keeps all the routing logic
 // in one place so the picker only needs to emit a {type, ...} spec.
 function startAdhocWorkout(spec){
+  if(!requirePro()) return;
   document.getElementById('adhocMod').classList.remove('open');
   // "Swap today" mode may request this session count toward the Path week
   // (saved non-adhoc). When the flag isn't set, behaviour is unchanged: the
@@ -21804,6 +21833,7 @@ function confirmCancelPath() {
 // ─────────────────────────────────────────────
 
 function openPathWizard() {
+  if(!requirePro()) return;
   // _pathWizardAutoOpened is set to true by the auto-open triggers;
   // when called manually (Profile button), reset it so Skip button doesn't show.
   if(!_pathWizardAutoOpened) _pathWizardAutoOpened = false;
@@ -23436,6 +23466,301 @@ renderTodayToggle();
 renderToday();
 renderProgrammeFeed();
 
+// ── SUBSCRIPTION (iOS app only; the web stays free and fully unlocked) ──
+// RevenueCat through window.MGNative.purchases. Entitlement `pro` is unlocked
+// by maxgainz_pro_monthly / maxgainz_pro_annual (one subscription group, each
+// with a 1-week free trial configured in App Store Connect). Decision: hard
+// paywall after the trial — without `pro` the app is read-only: history
+// (Progress → calendar), export, Settings and account deletion stay open,
+// everything else opens the paywall. The paywall is plain HTML so every
+// Apple-required disclosure lives in this file.
+const PRO_ENTITLEMENT = 'pro';
+const PRO_PRODUCTS = { monthly: 'maxgainz_pro_monthly', annual: 'maxgainz_pro_annual' };
+const PRO_LOCKED_TABS = ['path', 'active', 'workout', 'game'];
+const PRO_CACHE_KEY = 'maxgainz_pro_cache';
+const PRO_CACHE_GRACE_MS = 3 * 24 * 60 * 60 * 1000; // trust the last known state offline for 3 days
+const APPLE_EULA_URL = 'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/';
+const APPLE_MANAGE_SUBS_URL = 'https://apps.apple.com/account/subscriptions';
+// {active, periodType, expiresAt, willRenew, productId, checkedAt, known}
+let _pro = { active: false, known: false, periodType: null, expiresAt: null, willRenew: false, productId: null, checkedAt: 0 };
+let _rcUserId = null;      // app user id RevenueCat currently has (null = anonymous)
+let _paywallPkgs = null;   // {monthly, annual} packages from the current offering
+let _paywallSel = 'annual';
+let _paywallTrial = { monthly: false, annual: false };
+let _paywallBusy = false;
+
+function isProUnlocked(){
+  if(!MG_NATIVE) return true;                     // web: free, everything on
+  if(!window.MGNative || !window.MGNative.purchases || !window.MGNative.purchases.available) return true; // no store in this build (e.g. dev)
+  return !!_pro.active;
+}
+// Gate: true when the caller may proceed; otherwise opens the paywall.
+function requirePro(reason){
+  if(isProUnlocked()) return true;
+  openPaywall(reason || 'locked');
+  return false;
+}
+function _proReadCache(){
+  try { const c = JSON.parse(localStorage.getItem(PRO_CACHE_KEY) || 'null'); if(c && typeof c === 'object') return c; } catch(e){}
+  return null;
+}
+function _proWriteCache(){
+  try { localStorage.setItem(PRO_CACHE_KEY, JSON.stringify(_pro)); } catch(e){}
+}
+// Apply a RevenueCat CustomerInfo to _pro.
+function _proApplyCustomerInfo(info){
+  const ent = info && info.entitlements && info.entitlements.active && info.entitlements.active[PRO_ENTITLEMENT];
+  const all = info && info.entitlements && info.entitlements.all && info.entitlements.all[PRO_ENTITLEMENT];
+  const e = ent || all || null;
+  const was = _pro.active;
+  _pro = {
+    active: !!(ent && ent.isActive !== false),
+    known: true,
+    periodType: e ? (e.periodType || null) : null,
+    expiresAt: e ? (e.expirationDate || null) : null,
+    willRenew: !!(e && e.willRenew),
+    productId: e ? (e.productIdentifier || null) : null,
+    checkedAt: Date.now()
+  };
+  _proWriteCache();
+  if(was !== _pro.active) _proOnChange();
+  _renderProStatus();
+}
+// Fetch the entitlement from RevenueCat; on failure fall back to the cache
+// (within the grace period) so a brief offline launch never locks a
+// subscriber out.
+async function refreshProEntitlement(){
+  const P = window.MGNative && window.MGNative.purchases;
+  if(!MG_NATIVE || !P || !P.available) return;
+  const r = await P.getCustomerInfo();
+  if(r && r.ok && r.value){ _proApplyCustomerInfo(r.value); return; }
+  const c = _proReadCache();
+  if(c && c.active && (Date.now() - (c.checkedAt || 0)) < PRO_CACHE_GRACE_MS){
+    _pro = Object.assign({}, c, { known: true });
+  } else if(c){
+    _pro = Object.assign({}, c, { active: false, known: true });
+  } else {
+    _pro = Object.assign({}, _pro, { active: false, known: true });
+  }
+  _renderProStatus();
+  _proOnChange();
+}
+function _proOnChange(){
+  try{ renderTodayLock(); }catch(e){}
+  // Leaving a locked tab if access just lapsed
+  if(!isProUnlocked()){
+    const active = document.querySelector('.screen.active');
+    if(active && PRO_LOCKED_TABS.includes(active.id.replace('s-', ''))){
+      goTab('today', document.getElementById('nav-today'));
+    }
+  }
+}
+// RevenueCat identity follows the Supabase account: anonymous id for guests,
+// logIn(userId) after sign-up/sign-in. Never logOut on sign-out (Apple:
+// purchases must keep working across the user's devices and after sign-out);
+// logOut only on account deletion (backend-client-spec §3).
+async function _purchasesSyncIdentity(){
+  const P = window.MGNative && window.MGNative.purchases;
+  if(!MG_NATIVE || !P || !P.available || !P.isConfigured()) return;
+  const uid = isAuthenticated() ? getCurrentUserId() : null;
+  if(uid && uid !== _rcUserId){
+    const r = await P.logIn(uid);
+    if(r && r.ok){ _rcUserId = uid; if(r.value && r.value.customerInfo) _proApplyCustomerInfo(r.value.customerInfo); }
+  }
+}
+async function _purchasesLogOutForDeletion(){
+  const P = window.MGNative && window.MGNative.purchases;
+  if(!MG_NATIVE || !P || !P.available || !P.isConfigured()) return;
+  try { await P.logOut(); } catch(e){}
+  _rcUserId = null;
+}
+// Boot (native only): configure, listen, check, and re-check on foreground.
+function _initPurchases(){
+  const P = window.MGNative && window.MGNative.purchases;
+  if(!MG_NATIVE || !P || !P.available) return;
+  const c = _proReadCache();
+  if(c) _pro = Object.assign({}, c, { known: false });
+  const uid = isAuthenticated() ? getCurrentUserId() : null;
+  P.configure({ appUserID: uid || undefined }).then(r => {
+    if(!r || !r.ok){ console.warn('[purchases] configure failed', r && r.error); refreshProEntitlement(); return; }
+    _rcUserId = uid;
+    P.onCustomerInfo(info => _proApplyCustomerInfo(info));
+    refreshProEntitlement();
+  });
+  window.MGNative.onAppState(isActive => { if(isActive) refreshProEntitlement(); });
+}
+
+// ── Paywall UI ──
+function _fmtDate(iso){
+  try { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }); } catch(e){ return ''; }
+}
+function _periodWord(p){ // ISO 8601 period from StoreKit → 'month' | 'year' | 'week'
+  if(/^P1Y$/i.test(p || '')) return 'year';
+  if(/^P1M$/i.test(p || '')) return 'month';
+  if(/^P1W$/i.test(p || '') || /^P7D$/i.test(p || '')) return 'week';
+  return 'period';
+}
+function _trialWord(intro){ // introPrice → '1-week', '3-day', '1-month'
+  if(!intro) return '';
+  const n = intro.periodNumberOfUnits || 1, u = String(intro.periodUnit || '').toLowerCase();
+  const unit = u.startsWith('day') ? 'day' : u.startsWith('week') ? 'week' : u.startsWith('month') ? 'month' : u.startsWith('year') ? 'year' : 'period';
+  return n + '-' + unit;
+}
+function openPaywall(reason){
+  const m = document.getElementById('paywallMod');
+  if(!m) return;
+  m.classList.add('open');
+  _renderPaywall('loading');
+  _loadPaywall();
+}
+function closePaywall(){
+  const m = document.getElementById('paywallMod');
+  if(m) m.classList.remove('open');
+}
+async function _loadPaywall(){
+  const P = window.MGNative && window.MGNative.purchases;
+  if(!P || !P.available){ _renderPaywall('unavailable'); return; }
+  const r = await P.getOfferings();
+  if(!r || !r.ok || !r.value){ _renderPaywall('error', r && r.error); return; }
+  const off = r.value.current || (r.value.all && Object.values(r.value.all)[0]);
+  const pkgs = (off && off.availablePackages) || [];
+  const find = (type, id) => pkgs.find(p => p.packageType === type || (p.product && p.product.identifier === id)) || null;
+  _paywallPkgs = { monthly: find('MONTHLY', PRO_PRODUCTS.monthly), annual: find('ANNUAL', PRO_PRODUCTS.annual) };
+  if(!_paywallPkgs.monthly && !_paywallPkgs.annual){ _renderPaywall('error', { message: 'No plans available' }); return; }
+  // Trial text only when StoreKit says this person is eligible (one intro offer per group).
+  const ids = ['monthly','annual'].map(k => _paywallPkgs[k] && _paywallPkgs[k].product.identifier).filter(Boolean);
+  const el = await P.checkTrialEligibility(ids);
+  _paywallTrial = { monthly: false, annual: false };
+  ['monthly','annual'].forEach(k => {
+    const pkg = _paywallPkgs[k]; if(!pkg) return;
+    const intro = pkg.product.introPrice;
+    const st = el && el.ok && el.value && el.value[pkg.product.identifier];
+    const eligible = !!(st && (st.status === 2 || st.status === 'INTRO_ELIGIBILITY_STATUS_ELIGIBLE'));
+    _paywallTrial[k] = eligible && !!intro && Number(intro.price) === 0;
+  });
+  if(!_paywallPkgs[_paywallSel]) _paywallSel = _paywallPkgs.annual ? 'annual' : 'monthly';
+  _renderPaywall('ready');
+}
+function selectPaywallPlan(k){ if(_paywallPkgs && _paywallPkgs[k]){ _paywallSel = k; _renderPaywall('ready'); } }
+function _planCard(k){
+  const pkg = _paywallPkgs[k]; if(!pkg) return '';
+  const pr = pkg.product;
+  const sel = _paywallSel === k;
+  const per = _periodWord(pr.subscriptionPeriod);
+  let sub = '';
+  if(k === 'annual' && pr.pricePerMonthString) sub = pr.pricePerMonthString + ' / month, billed yearly';
+  if(k === 'annual' && _paywallPkgs.monthly && _paywallPkgs.monthly.product.price > 0 && pr.price > 0){
+    const pct = Math.round(100 * (1 - pr.price / (12 * _paywallPkgs.monthly.product.price)));
+    if(pct > 0) sub += (sub ? ' · ' : '') + 'save ' + pct + '%';
+  }
+  return `<div onclick="selectPaywallPlan('${k}')" style="padding:14px;border-radius:14px;cursor:pointer;margin-bottom:10px;border:1.5px solid ${sel?'var(--accent)':'var(--border)'};background:${sel?'rgba(200,255,0,0.08)':'var(--surface2)'};display:flex;align-items:center;gap:12px;">
+    <div style="width:20px;height:20px;border-radius:50%;border:2px solid ${sel?'var(--accent)':'var(--text2)'};background:${sel?'var(--accent)':'transparent'};flex-shrink:0;"></div>
+    <div style="flex:1;min-width:0;">
+      <div style="font-size:13px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;">${k === 'annual' ? 'Yearly' : 'Monthly'}</div>
+      <div style="font-size:22px;font-weight:900;color:var(--text);line-height:1.2;">${pr.priceString} <span style="font-size:13px;font-weight:600;color:var(--text2);">/ ${per}</span></div>
+      ${sub ? `<div style="font-size:11px;color:var(--text2);margin-top:2px;">${sub}</div>` : ''}
+    </div>
+  </div>`;
+}
+function _renderPaywall(state, err){
+  const box = document.getElementById('paywallBody');
+  if(!box) return;
+  const legal = `<div style="font-size:10px;color:var(--text2);text-align:center;line-height:1.6;margin-top:14px;">
+      <a href="https://maxgainz.netlify.app/terms" target="_blank" rel="noopener" style="color:var(--text2);">Terms of Use</a> · <a href="https://maxgainz.netlify.app/privacy" target="_blank" rel="noopener" style="color:var(--text2);">Privacy Policy</a> · <a href="${APPLE_EULA_URL}" target="_blank" rel="noopener" style="color:var(--text2);">Apple EULA</a>
+    </div>`;
+  const header = `<div style="text-align:center;margin-bottom:14px;">
+      <div style="font-size:40px;">💪</div>
+      <div style="font-size:22px;font-weight:900;margin-top:4px;">Max Gainz Pro</div>
+      <div style="font-size:13px;color:var(--text2);margin-top:4px;line-height:1.5;">Training Paths and programmes, HIIT, the live session coach, progress analytics and achievements. Your history, export and settings always stay open.</div>
+    </div>`;
+  if(state === 'loading'){ box.innerHTML = header + '<div style="text-align:center;padding:24px;color:var(--text2);font-size:13px;">Loading plans…</div>' + legal; return; }
+  if(state === 'unavailable'){ box.innerHTML = header + '<div style="text-align:center;padding:16px;color:var(--text2);font-size:13px;">Subscriptions are not available in this build.</div>' + legal; return; }
+  if(state === 'error'){
+    box.innerHTML = header + `<div style="text-align:center;padding:12px;color:var(--text2);font-size:13px;line-height:1.5;">Couldn't load the plans${err && err.network ? ' — check your connection' : ''}.</div>
+      <button class="btn-p" style="width:100%;padding:14px;font-size:15px;margin-top:6px;" onclick="_renderPaywall('loading');_loadPaywall()">Try again</button>
+      <button onclick="restorePurchases()" style="width:100%;background:transparent;border:none;color:var(--accent);font-size:13px;padding:12px;font-weight:700;cursor:pointer;">Restore Purchases</button>` + legal;
+    return;
+  }
+  const pkg = _paywallPkgs[_paywallSel];
+  const pr = pkg.product;
+  const per = _periodWord(pr.subscriptionPeriod);
+  const trial = _paywallTrial[_paywallSel];
+  const terms = trial
+    ? `${_trialWord(pr.introPrice)} free trial, then ${pr.priceString} per ${per}. Auto-renews until cancelled. Cancel anytime in iPhone Settings › Apple Account › Subscriptions, at least 24 hours before the trial ends to avoid being charged.`
+    : `${pr.priceString} per ${per}, charged to your Apple Account at confirmation. Auto-renews until cancelled. Cancel anytime in iPhone Settings › Apple Account › Subscriptions, at least 24 hours before the current period ends.`;
+  box.innerHTML = header
+    + _planCard('annual') + _planCard('monthly')
+    + `<div style="font-size:11px;color:var(--text);line-height:1.55;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:10px 12px;margin:4px 0 12px;">${terms}</div>
+    <button id="paywallBuyBtn" class="btn-p" style="width:100%;padding:15px;font-size:16px;" onclick="purchaseSelectedPlan()" ${_paywallBusy ? 'disabled' : ''}>${_paywallBusy ? 'Please wait…' : (trial ? 'Start free trial' : 'Subscribe')}</button>
+    <div style="display:flex;justify-content:center;gap:18px;margin-top:6px;">
+      <button onclick="restorePurchases()" style="background:transparent;border:none;color:var(--accent);font-size:13px;padding:10px 0;font-weight:700;cursor:pointer;">Restore Purchases</button>
+      ${isAuthenticated() ? '' : `<button onclick="closePaywall();openAuthForSignup();showAuthLogin()" style="background:transparent;border:none;color:var(--accent);font-size:13px;padding:10px 0;font-weight:700;cursor:pointer;">Already subscribed? Sign in</button>`}
+    </div>` + legal;
+}
+async function purchaseSelectedPlan(){
+  const P = window.MGNative && window.MGNative.purchases;
+  const pkg = _paywallPkgs && _paywallPkgs[_paywallSel];
+  if(!P || !pkg || _paywallBusy) return;
+  _paywallBusy = true; _renderPaywall('ready');
+  const r = await P.purchasePackage(pkg);
+  _paywallBusy = false;
+  if(r && r.ok){
+    const info = r.value && r.value.customerInfo;
+    if(info) _proApplyCustomerInfo(info); else await refreshProEntitlement();
+    if(isProUnlocked()){ closePaywall(); showToast('✅ Welcome to Max Gainz Pro', { duration: 3500 }); haptic([18, 24, 18]); }
+    else { _renderPaywall('ready'); showToast('Purchase recorded — checking your subscription…', { duration: 3000 }); refreshProEntitlement(); }
+    return;
+  }
+  const e = (r && r.error) || {};
+  _renderPaywall('ready');
+  if(e.cancelled) return; // user backed out of the App Store sheet: no error
+  if(e.pending){ showToast('⏳ Purchase pending approval (Ask to Buy). Access unlocks once it is approved.', { duration: 5000 }); return; }
+  if(e.network){ showToast('⚠️ No connection — check your network and try again', { tone:'warning', duration: 4000 }); return; }
+  if(e.code === '6'){ showToast('You already own this — tap Restore Purchases', { duration: 4000 }); return; }
+  showToast('⚠️ Purchase failed: ' + (e.message || 'please try again'), { tone:'warning', duration: 5000 });
+}
+async function restorePurchases(){
+  const P = window.MGNative && window.MGNative.purchases;
+  if(!P || !P.available){ showToast('Restore is only available in the iPhone app', { duration: 3000 }); return; }
+  showToast('Restoring purchases…', { duration: 2000 });
+  const r = await P.restorePurchases();
+  if(r && r.ok && r.value){
+    _proApplyCustomerInfo(r.value);
+    if(isProUnlocked()){ closePaywall(); showToast('✅ Subscription restored', { duration: 3500 }); }
+    else showToast('No active subscription found for this Apple Account', { duration: 4000 });
+    return;
+  }
+  const e = (r && r.error) || {};
+  showToast(e.network ? '⚠️ No connection — try again when online' : '⚠️ Restore failed: ' + (e.message || 'please try again'), { tone:'warning', duration: 4500 });
+}
+// Today tab banner + Settings status line.
+function renderTodayLock(){
+  const el = document.getElementById('todayProLock');
+  if(!el) return;
+  if(isProUnlocked()){ el.style.display = 'none'; el.innerHTML = ''; return; }
+  const expired = _pro.expiresAt && new Date(_pro.expiresAt) < new Date();
+  el.style.display = 'block';
+  el.innerHTML = `<div style="background:linear-gradient(135deg, rgba(200,255,0,0.12), rgba(0,212,255,0.06));border:1px solid rgba(200,255,0,0.35);border-radius:14px;padding:14px;">
+      <div style="font-size:14px;font-weight:800;">${expired ? 'Your subscription has ended' : 'Unlock Max Gainz Pro'}</div>
+      <div style="font-size:12px;color:var(--text2);margin:4px 0 10px;line-height:1.45;">${expired ? 'Your history and settings are still here. Subscribe to keep training with Paths, HIIT, the session coach and analytics.' : 'Training Paths, HIIT, the session coach, analytics and achievements. Your history and settings are always free to view.'}</div>
+      <button class="btn-p" style="width:100%;padding:12px;" onclick="openPaywall('today')">See plans</button>
+    </div>`;
+}
+function _renderProStatus(){
+  const el = document.getElementById('proStatusLine');
+  if(!el) return;
+  if(!MG_NATIVE) return;
+  let t;
+  if(!_pro.known && !_pro.active) t = 'Checking subscription…';
+  else if(_pro.active && _pro.periodType === 'TRIAL') t = 'Free trial' + (_pro.expiresAt ? ' until ' + _fmtDate(_pro.expiresAt) : '') + (_pro.willRenew ? ', then ' + (_pro.productId === PRO_PRODUCTS.annual ? 'yearly' : 'monthly') + ' plan' : ' (will not renew)');
+  else if(_pro.active) t = (_pro.productId === PRO_PRODUCTS.annual ? 'Yearly plan' : 'Monthly plan') + (_pro.expiresAt ? (_pro.willRenew ? ', renews on ' : ', ends on ') + _fmtDate(_pro.expiresAt) : '');
+  else if(_pro.expiresAt) t = 'Expired on ' + _fmtDate(_pro.expiresAt);
+  else t = 'No subscription';
+  el.textContent = t;
+  const btn = document.getElementById('proSubscribeBtn');
+  if(btn) btn.style.display = _pro.active ? 'none' : '';
+}
+
 // ── AUTH EMAIL LINKS (password reset, sign-up confirmation) ──
 // Supabase sends the user back to `redirect_to` with the session in the URL
 // fragment: #access_token=…&refresh_token=…&type=recovery|signup. The web
@@ -23577,6 +23902,7 @@ if(MG_NATIVE){
 // Load auth state FIRST before splash timer
 loadAuthState();
 _checkDeletionStateAtBoot();
+_initPurchases();
 // A password-reset or confirmation link takes over from the splash + auth gate.
 const _bootAuthLink = !MG_NATIVE && !!_parseAuthLink(location.href);
 if(_bootAuthLink){ const _lnk = location.href; _whenDomReady(() => _handleAuthLink(_lnk)); }
@@ -24018,6 +24344,7 @@ async function deleteUserAccount(){
   // 5. Call.
   const r = await _callDeleteMyAccount();
   if(r.ok){
+    await _purchasesLogOutForDeletion(); // RevenueCat must not keep the deleted user's id
     _wipeDeviceAfterDeletion();
     return;
   }
@@ -24579,6 +24906,15 @@ window.addEventListener('offline', updateOnlineStatus);
     </div>
 
     <div style="margin-top:40px;font-size:11px;color:#8888aa;text-align:center;line-height:1.6;">Your workouts are private to your account and sent over an encrypted connection.<br>By creating an account you agree to the <a href="https://maxgainz.netlify.app/terms" target="_blank" rel="noopener" style="color:#c8ff00;text-decoration:none;">Terms of Use</a> and <a href="https://maxgainz.netlify.app/privacy" target="_blank" rel="noopener" style="color:#c8ff00;text-decoration:none;">Privacy Policy</a>.</div>
+  </div>
+</div>
+
+<!-- PAYWALL (iOS app only; see the SUBSCRIPTION section of the script) -->
+<div class="modal-ov" id="paywallMod" style="z-index:300;" onclick="if(event.target===this)closePaywall()">
+  <div class="modal" style="max-height:92vh;overflow-y:auto;position:relative;">
+    <div class="modal-handle"></div>
+    <button onclick="closePaywall()" aria-label="Close" style="position:absolute;top:14px;right:14px;background:var(--surface2);border:none;border-radius:50%;width:32px;height:32px;font-size:16px;color:var(--text2);cursor:pointer;">✕</button>
+    <div id="paywallBody"></div>
   </div>
 </div>
 

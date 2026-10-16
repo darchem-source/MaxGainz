@@ -52,6 +52,23 @@ for (const rel of WEB_FILES) {
   });
 }
 
+// ── 1b. RevenueCat public API key into the app's copy of native-bridge.js ──
+// capacitor.config.json → plugins.MaxGainzNative.revenueCatApiKey. The repo
+// copy of native-bridge.js keeps the '__MG_RC_API_KEY__' placeholder, so the
+// web never carries the key; a missing/placeholder key leaves purchases off.
+{
+  const cfg = JSON.parse(readFileSync(join(NATIVE, 'capacitor.config.json'), 'utf8'));
+  const key = (cfg.plugins && cfg.plugins.MaxGainzNative && cfg.plugins.MaxGainzNative.revenueCatApiKey) || '';
+  const bridgePath = join(OUT, 'native-bridge.js');
+  const bridge = readFileSync(bridgePath, 'utf8');
+  if (!bridge.includes("'__MG_RC_API_KEY__'")) fail('native-bridge.js has no __MG_RC_API_KEY__ placeholder');
+  if (/^appl_[A-Za-z]+$/.test(key)) {
+    writeFileSync(bridgePath, bridge.replace("'__MG_RC_API_KEY__'", JSON.stringify(key)));
+  } else {
+    console.warn('prepare-www: WARNING no RevenueCat public key in capacitor.config.json (plugins.MaxGainzNative.revenueCatApiKey) — purchases will be unavailable in this build');
+  }
+}
+
 // ── 2. Check local references ───────────────────────────────────────────
 const html = readFileSync(join(OUT, 'index.html'), 'utf8');
 const refs = new Set();
