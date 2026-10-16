@@ -1,0 +1,34 @@
+{
+  "appId": "com.maxgainz.app",
+  "appName": "Max Gainz",
+  "webDir": "www",
+  "backgroundColor": "#0a0a0f",
+  "loggingBehavior": "debug",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#0a0a0f",
+    "scheme": "capacitor",
+    "limitsNavigationsToAppBoundDomains": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": true,
+      "launchShowDuration": 3000,
+      "backgroundColor": "#0a0a0f",
+      "showSpinner": false
+    },
+    "SystemBars": {
+      "style": "DARK"
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "overlaysWebView": true
+    },
+    "CapacitorHttp": {
+      "enabled": false
+    },
+    "CapacitorCookies": {
+      "enabled": false
+    }
+  }
+}
