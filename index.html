@@ -11,15 +11,12 @@
 <!-- window.MGNative: native iOS features in the app, web fallbacks in the
      browser. Must load before the main inline script. -->
 <script src="native-bridge.js"></script>
-<!-- Inter Variable — single woff2 with full weight axis 100..900.
-     font-display:swap so initial paint uses the system stack while
-     Inter loads in the background. Falls back gracefully when offline.
-     Loaded non-render-blocking via media="print" + onload swap. -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" media="print" onload="this.media='all'">
-<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"></noscript>
+<!-- Inter Variable — bundled (vendor/, SIL OFL 1.1) so the app never calls
+     Google Fonts: works offline and inside the iOS app. font-display:swap so
+     the first paint uses the system stack while Inter loads. -->
+<link rel="preload" href="vendor/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <style>
+@font-face { font-family:'Inter'; font-style:normal; font-weight:100 900; font-display:swap; src:url(vendor/inter-latin-wght-normal.woff2) format('woff2-variations'), url(vendor/inter-latin-wght-normal.woff2) format('woff2'); }
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 html { height: 100%; }
 body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif; background: var(--bg); color: #f0f0f0; height: 100%; overflow: hidden; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; font-feature-settings: "cv11", "ss01", "ss03"; }
@@ -61,6 +58,8 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 /* Native shell: <html class="mg-native"> is set by native-bridge.js before the
    page renders. Mark-up that only makes sense in one place uses these. */
 html.mg-native [data-web-only] { display: none !important; }
+html.mg-native #updateBanner { display: none !important; }      /* updates come through the App Store */
+html.mg-native #cooldownRotateHint { display: none !important; } /* the app is portrait-only */
 html:not(.mg-native) [data-native-only] { display: none !important; }
 .tab-content { flex: 1; overflow-y: auto; padding-top: env(safe-area-inset-top, 0px); padding-bottom: calc(90px + env(safe-area-inset-bottom, 0px)); padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); min-height: 0; }
 .tab-content::-webkit-scrollbar { display: none; }
@@ -1181,7 +1180,7 @@ html:not(.mg-native) [data-native-only] { display: none !important; }
           <button onclick="openPathWizard()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🎯 Change My Path</button>
           <!-- Reminders -->
           <button id="notifEnableBtn" onclick="requestNotificationPermission()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;margin-bottom:2px;">🔔 Enable training reminders</button>
-          <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Nudges you when a muscle group is overdue — shown when you next open the app (background push coming later).</div>
+          <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;"><span data-native-only>A morning reminder when a muscle group is overdue.</span><span data-web-only>Nudges you when a muscle group is overdue — shown when you next open the app.</span></div>
           <!-- Effort (RPE) tracking -->
           <button id="trackRpeBtn" onclick="toggleTrackRPE()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">📊 Track effort (RPE): Off</button>
           <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Adds an optional effort chip when logging a set — the coach uses it to fine-tune weight suggestions.</div>
@@ -3199,9 +3198,20 @@ function getCurrentUserEmail(){
 }
 
 // ── HAPTIC FEEDBACK ──
-// navigator.vibrate is supported on Android PWA; silently ignored on iOS Safari.
+// Web: navigator.vibrate (Android; iOS Safari ignores it). iOS app: the
+// Taptic Engine through window.MGNative (native-bridge.js). The vibrate
+// pattern each call site already passes is mapped to a native feel.
 function haptic(pattern){
-  try{ if(navigator.vibrate) navigator.vibrate(pattern); }catch(e){}
+  try{
+    if(window.MGNative && window.MGNative.isNative){
+      let kind = 'medium';
+      if(Array.isArray(pattern)) kind = pattern.length >= 5 ? 'success' : pattern.length >= 3 ? 'warning' : 'medium';
+      else if(typeof pattern === 'number') kind = pattern < 20 ? 'light' : pattern > 20 ? 'heavy' : 'medium';
+      window.MGNative.haptic(kind, pattern);
+      return;
+    }
+    if(navigator.vibrate) navigator.vibrate(pattern);
+  }catch(e){}
 }
 
 // ── EVENT BUS ──
@@ -3416,7 +3426,7 @@ function _loadLottieScript(){
   _lottieReady = new Promise((resolve, reject) => {
     if(typeof lottie !== 'undefined'){ resolve(); return; }
     const s = document.createElement('script');
-    s.src = 'https://unpkg.com/lottie-web@5.12.2/build/player/lottie_light.min.js';
+    s.src = 'vendor/lottie_light.min.js'; // bundled (MIT) — no runtime download
     s.async = true;
     s.onload  = () => resolve();
     s.onerror = () => reject(new Error('lottie-web load failed'));
@@ -4500,42 +4510,55 @@ function renderTrainingReminder(){
     </div>`;
 }
 
-// OS-level notification (best-effort)
-function maybeFireOSNotification(){
-  if(!('Notification' in window)) return;
-  if(Notification.permission !== 'granted') return;
-  if(_isReminderDismissedToday()) return;
-  const r = getTrainingReminder();
-  if(!r) return;
-  // Dedupe across the same day with `tag`
+// OS-level reminder, through window.MGNative.notify (native-bridge.js).
+// Web: shown immediately when a group is overdue (deduped per day by id),
+// exactly as before. iOS app: a real background reminder is scheduled for
+// the next morning (9:00 local) while a group is overdue, and cancelled when
+// nothing is overdue or the reminder was dismissed for today.
+const NATIVE_REMINDER_ID = 'maxgainz-reminder';
+function _nextReminderTime(){
+  const d = new Date(); d.setHours(9, 0, 0, 0);
+  if(d.getTime() < Date.now() + 60 * 60 * 1000) d.setDate(d.getDate() + 1);
+  return d;
+}
+async function maybeFireOSNotification(){
+  const N = window.MGNative && window.MGNative.notify;
+  if(!N) return;
   try {
-    const n = new Notification(r.title, {
-      body: r.body,
-      tag:  'maxgainz-reminder-' + _todayDateKey(),
-      silent: false,
-      requireInteraction: false,
-    });
-    n.onclick = () => { window.focus(); n.close(); };
+    if((await N.checkPermission()) !== 'granted') return;
+    const r = (!_isReminderDismissedToday()) ? getTrainingReminder() : null;
+    if(MG_NATIVE){
+      if(!r){ N.cancel(NATIVE_REMINDER_ID); return; }
+      N.schedule({ id: NATIVE_REMINDER_ID, at: _nextReminderTime(), title: r.title, body: r.body });
+      return;
+    }
+    if(!r) return;
+    N.schedule({ id: 'maxgainz-reminder-' + _todayDateKey(), title: r.title, body: r.body });
   } catch(e){ console.warn('[Notification] failed:', e); }
 }
-
+function _notifBlockedHint(){
+  return MG_NATIVE ? '⚠️ Notifications are off for Max Gainz — turn them on in iPhone Settings → Notifications → Max Gainz'
+                   : '⚠️ Blocked — re-enable notifications in your browser settings';
+}
 async function requestNotificationPermission(){
-  if(!('Notification' in window)){
-    showToast('⚠️ Notifications not supported in this browser', { tone:'warning', duration: 3000 });
+  const N = window.MGNative && window.MGNative.notify;
+  const state = N ? await N.checkPermission() : 'unsupported';
+  if(state === 'unsupported'){
+    showToast('⚠️ Notifications are not available here', { tone:'warning', duration: 3000 });
     return;
   }
-  if(Notification.permission === 'granted'){
+  if(state === 'granted'){
     showToast('✅ Reminders already enabled', { duration: 2500 });
     maybeFireOSNotification();
     _refreshNotificationButton();
     return;
   }
-  if(Notification.permission === 'denied'){
-    showToast('⚠️ Blocked — re-enable notifications in your browser settings', { tone:'warning', duration: 4500 });
+  if(state === 'denied'){
+    showToast(_notifBlockedHint(), { tone:'warning', duration: 4500 });
     return;
   }
   try {
-    const result = await Notification.requestPermission();
+    const result = await N.requestPermission();
     if(result === 'granted'){
       showToast('✅ Reminders enabled · we\'ll nudge you when a group is overdue', { duration: 3500 });
       maybeFireOSNotification();
@@ -4622,16 +4645,17 @@ function _refreshRotateExBtn(){
   btn.style.color = on ? 'var(--accent2)' : 'var(--text)';
 }
 
-function _refreshNotificationButton(){
+async function _refreshNotificationButton(){
   const btn = document.getElementById('notifEnableBtn');
   if(!btn) return;
-  if(!('Notification' in window)){
-    btn.textContent = 'Notifications not supported';
+  const N = window.MGNative && window.MGNative.notify;
+  const p = N ? await N.checkPermission() : 'unsupported';
+  if(p === 'unsupported'){
+    btn.textContent = 'Notifications not available';
     btn.disabled = true;
     btn.style.opacity = '0.5';
     return;
   }
-  const p = Notification.permission;
   if(p === 'granted'){
     btn.textContent = '✅ Reminders enabled';
     btn.style.color = 'var(--green)';
@@ -5765,34 +5789,34 @@ function cancelSession(){
 let sessStartTime = null;
 let wakeLockSentinel = null;
 
+// Keep the screen on during a session. window.MGNative.keepAwake wraps the
+// Screen Wake Lock API on the web (incl. re-acquiring it when the tab comes
+// back) and the KeepAwake plugin in the iOS app. wakeLockSentinel is now a
+// plain on/off flag.
 async function toggleWakeLock(){
   const btn=document.getElementById('wakeLockBtn');
   if(wakeLockSentinel){
-    try{await wakeLockSentinel.release();}catch(e){}
+    try{ await window.MGNative.keepAwake(false); }catch(e){}
     wakeLockSentinel=null;
     btn.textContent='🔒 Auto-lock';
     btn.style.color='var(--text2)';
     btn.style.borderColor='var(--border)';
   } else {
-    try{
-      if('wakeLock' in navigator){
-        wakeLockSentinel=await navigator.wakeLock.request('screen');
-        btn.textContent='🔓 Screen on';
-        btn.style.color='var(--accent)';
-        btn.style.borderColor='var(--accent)';
-        // Re-acquire if page becomes visible again
-        document.addEventListener('visibilitychange',async()=>{
-          if(wakeLockSentinel!==null&&document.visibilityState==='visible'){
-            wakeLockSentinel=await navigator.wakeLock.request('screen');
-          }
-        });
-      }
-    }catch(e){btn.textContent='⚠️ Not supported';}
+    let on=false;
+    try{ on = !!(window.MGNative && await window.MGNative.keepAwake(true)); }catch(e){}
+    if(on){
+      wakeLockSentinel=true;
+      btn.textContent='🔓 Screen on';
+      btn.style.color='var(--accent)';
+      btn.style.borderColor='var(--accent)';
+    } else {
+      btn.textContent='⚠️ Not supported';
+    }
   }
 }
 
 function releaseWakeLock(){
-  if(wakeLockSentinel){try{wakeLockSentinel.release();}catch(e){}wakeLockSentinel=null;}
+  if(wakeLockSentinel){ try{ window.MGNative.keepAwake(false); }catch(e){} wakeLockSentinel=null; }
   const btn=document.getElementById('wakeLockBtn');
   if(btn){btn.textContent='🔒 Auto-lock';btn.style.color='var(--text2)';}
 }
@@ -14495,8 +14519,8 @@ function generateShareCard(){
     const preview = document.getElementById('shareCardPreview');
     preview.innerHTML = `<img src="${url}" style="width:100%;max-width:320px;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,0.5);">`;
     
-    // Show native share button if supported
-    if(navigator.canShare && navigator.canShare({ files: [new File([blob], 'workout.png', {type: 'image/png'})] })){
+    // Show the share-sheet button when files can be shared (always in the app)
+    if(MG_NATIVE || (navigator.canShare && navigator.canShare({ files: [new File([blob], 'workout.png', {type: 'image/png'})] }))){
       document.getElementById('shareCardNativeBtn').style.display = 'block';
     }
   }, 'image/png');
@@ -14520,15 +14544,10 @@ function downloadShareCard(){
 }
 
 async function shareCardNative(){
-  if(!_lastShareBlob || !navigator.share) return;
-  try {
-    const file = new File([_lastShareBlob], 'workout.png', { type: 'image/png' });
-    await navigator.share({
-      files: [file],
-      title: 'Max Gainz Workout',
-      text: 'Just crushed a workout 💪'
-    });
-  } catch(e){ console.warn('Share cancelled:', e); }
+  if(!_lastShareBlob || !window.MGNative) return;
+  const file = new File([_lastShareBlob], 'workout.png', { type: 'image/png' });
+  const r = await window.MGNative.share({ files: [file], title: 'Max Gainz Workout', text: 'Just crushed a workout 💪' });
+  if(r && !r.shared && r.reason === 'unsupported') showToast('Sharing is not available here — use Save image', { duration: 3000 });
 }
 
 // ── FORM GUIDE ──
@@ -23493,6 +23512,19 @@ if(MG_NATIVE){
   }catch(e){}
 }
 
+// In the iOS app every http(s) link opens in an in-app Safari sheet
+// (@capacitor/browser via MGNative.openExternal) instead of leaving the app.
+if(MG_NATIVE){
+  document.addEventListener('click', ev => {
+    const a = ev.target && ev.target.closest && ev.target.closest('a[href]');
+    if(!a) return;
+    const href = a.getAttribute('href') || '';
+    if(!/^https?:\/\//i.test(href)) return;
+    ev.preventDefault();
+    window.MGNative.openExternal(href);
+  }, true);
+}
+
 // ── SPLASH SCREEN ──
 // Load auth state FIRST before splash timer
 loadAuthState();
@@ -23504,12 +23536,6 @@ if(_bootAuthLink){ const _lnk = location.href; _whenDomReady(() => _handleAuthLi
 // dismissSplash is already callable — splash element has onclick="dismissSplash()" in HTML
 // Auto dismiss after 3 seconds
 const splashTimer = _bootAuthLink ? null : setTimeout(dismissSplash, 3000);
-
-// Show local file warning if opened from file:// AND not already logged in
-if(window.location.protocol === 'file:' && !isAuthenticated()){
-  const w = document.getElementById('localFileWarning');
-  if(w) w.style.display = 'block';
-}
 
 // ── AUTHENTICATION ──
 
@@ -23637,14 +23663,6 @@ async function authLogin(){
   
   if(!email.includes('@') || !password){
     showAuthError('Please enter email and password');
-    return;
-  }
-  
-  // Block login if opened as a local file (not localhost). Not a CORS issue — Supabase
-  // allows any origin — but on file:// the saved JWT lands in localStorage shared with
-  // every other local HTML file, and the service worker can't register.
-  if(window.location.protocol === 'file:'){
-    showAuthError('⚠️ Use localhost:8080 or maxgainz.netlify.app — login won\'t work from a local file. Run: python3 -m http.server 8080 in your Downloads folder.');
     return;
   }
   
@@ -24128,11 +24146,8 @@ async function submitFeedback(){
     console.warn('[Feedback] Submission failed — detail:', errorDetail);
     let hint = 'Please try again';
     if(errorDetail.includes('timed out'))               hint = 'Request timed out — check your connection';
-    else if(errorDetail.includes('does not exist'))      hint = 'Table not set up — run Supabase migration';
-    else if(errorDetail.includes('policy') || errorDetail.includes('permission') || errorDetail.includes('42501')) hint = 'RLS policy blocking insert — check Supabase policies';
-    else if(errorDetail.includes('23502'))               hint = 'Missing required field — ' + errorDetail;
-    else if(errorDetail.length > 0 && errorDetail.length < 120) hint = errorDetail;
-    showToast('⚠️ Feedback failed: ' + hint, 6000);
+    // Diagnostics stay in the console; users get a plain message.
+    showToast('⚠️ Couldn\'t send feedback — ' + hint, 6000);
   }
 }
 
@@ -24159,7 +24174,9 @@ function acceptSWUpdate(){
   if(banner) banner.classList.remove('show');
 }
 
-if('serviceWorker' in navigator){
+// Web only: the iOS app ships its files in the bundle and updates through
+// the App Store (no service worker, no "New version" banner).
+if('serviceWorker' in navigator && !MG_NATIVE){
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js')
       .then(reg => {
@@ -24438,14 +24455,6 @@ window.addEventListener('offline', updateOnlineStatus);
     <img id="authScreenIcon" alt="Max Gainz" style="width:80px;height:80px;margin-bottom:24px;border-radius:18px;" onerror="this.style.display='none'">
     <div style="font-size:32px;font-weight:900;margin-bottom:8px;color:#f0f0f0;">Max Gainz</div>
     <div style="font-size:14px;color:#8888aa;margin-bottom:24px;">Your training. Elevated.</div>
-
-    <div id="localFileWarning" style="display:none;width:100%;max-width:320px;background:rgba(255,160,0,0.12);border:1px solid rgba(255,160,0,0.4);border-radius:12px;padding:14px 16px;margin-bottom:20px;text-align:center;">
-      <div style="font-size:13px;font-weight:700;color:#ffaa00;margin-bottom:6px;">⚠️ Login won't work from a local file</div>
-      <div style="font-size:12px;color:#cc8800;margin-bottom:8px;">For testing, run in Terminal:</div>
-      <div style="font-size:11px;font-family:monospace;background:rgba(0,0,0,0.3);border-radius:6px;padding:8px;color:#ffcc44;margin-bottom:8px;">cd ~/Downloads<br>python3 -m http.server 8080</div>
-      <div style="font-size:11px;color:#cc8800;margin-bottom:6px;">Then open: <strong>localhost:8080/gymtracker.html</strong></div>
-      <div style="font-size:11px;color:#888;margin-top:6px;">Or deploy to: <a href="https://maxgainz.netlify.app" style="color:var(--accent);text-decoration:none;">Netlify</a></div>
-    </div>
 
     <div style="width:100%;max-width:320px;">
       <!-- SIGN UP FORM -->

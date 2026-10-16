@@ -30,6 +30,7 @@ const WEB_FILES = [
   'native-bridge.js', // window.MGNative, loaded by a <script> tag in <head>
   'sw.js',            // registered on the web; WKWebView has no service workers
   'icon.png',
+  'vendor',           // bundled Inter font + Lottie player (with licences)
   // NOT exercise-media/: the iOS app shows text form guides only (the wger
   // loops stay web-only until their licence chain is confirmed).
 ];
