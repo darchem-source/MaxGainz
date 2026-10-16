@@ -23348,13 +23348,140 @@ renderTodayToggle();
 renderToday();
 renderProgrammeFeed();
 
+// ── AUTH EMAIL LINKS (password reset, sign-up confirmation) ──
+// Supabase sends the user back to `redirect_to` with the session in the URL
+// fragment: #access_token=…&refresh_token=…&type=recovery|signup. The web
+// app is sent to the site URL; the iOS app to its own scheme (maxgainz://auth),
+// which Capacitor's App plugin delivers as an appUrlOpen event. Both land here.
+// Supabase → Authentication → URL Configuration must allow-list both URLs.
+const MG_SITE_URL = 'https://maxgainz.netlify.app';
+const MG_NATIVE_AUTH_URL = 'maxgainz://auth';
+function _authRedirectTo(){ return MG_NATIVE ? MG_NATIVE_AUTH_URL : MG_SITE_URL + '/'; }
+let _recoverySession = null; // {access_token, refresh_token} while a reset is in progress
+
+function _parseAuthLink(urlString){
+  try{
+    const u = new URL(String(urlString));
+    const frag = (u.hash || '').replace(/^#/, '');
+    const q = new URLSearchParams(frag || u.search.replace(/^\?/, ''));
+    const out = {};
+    ['access_token','refresh_token','type','error','error_code','error_description'].forEach(k => { const v = q.get(k); if(v) out[k] = v; });
+    return (out.access_token || out.error) ? out : null;
+  }catch(e){ return null; }
+}
+// Returns true when the URL was an auth link and has been handled.
+function _handleAuthLink(urlString){
+  const p = _parseAuthLink(urlString);
+  if(!p) return false;
+  if(!MG_NATIVE){ try{ history.replaceState(null, '', location.pathname + location.search); }catch(e){} }
+  const showAuth = () => {
+    const _splashImg = document.querySelector('.splash-logo img');
+    const _authIcon = document.getElementById('authScreenIcon');
+    if(_splashImg && _authIcon && _splashImg.src) _authIcon.src = _splashImg.src;
+    const splash = document.getElementById('splash');
+    if(splash){ splash.classList.add('fade-out','gone'); splash.style.display = 'none'; }
+    document.querySelector('.app').classList.add('hidden');
+    document.getElementById('authMod').classList.add('show');
+  };
+  if(p.error){
+    showAuth(); showAuthLogin();
+    const msg = (p.error_description || p.error).replace(/\+/g, ' ');
+    showAuthError(/expired|invalid/i.test(msg) ? 'That link has expired or was already used. Request a new one below.' : msg);
+    return true;
+  }
+  if(p.type === 'recovery'){
+    _recoverySession = { access_token: p.access_token, refresh_token: p.refresh_token || null };
+    showAuth(); showSetNewPassword();
+    return true;
+  }
+  // Sign-up confirmation (or magic link): the fragment carries a full session.
+  fetch(SB_URL + '/auth/v1/user', { headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + p.access_token } })
+    .then(r => r.ok ? r.json() : null)
+    .then(u => {
+      if(!u || !u.id){ showAuth(); showAuthLogin(); showAuthError('That link has expired or was already used. Please sign in.'); return; }
+      _completeAuthWithSession(u, p.access_token, p.refresh_token || null);
+      showToast('✅ Email confirmed — you\'re signed in', { duration: 3000 });
+    }).catch(() => { showAuth(); showAuthLogin(); });
+  return true;
+}
+// Enter the app with a session obtained from an email link (keeps guest data).
+function _completeAuthWithSession(user, token, refreshToken){
+  const savedAuth = localStorage.getItem('maxgainz_auth');
+  let savedName = null; try{ savedName = savedAuth ? JSON.parse(savedAuth)?.user?.name : null; }catch(e){}
+  saveAuthState({ id: user.id, email: user.email, name: savedName || (user.email || '').split('@')[0] }, token, refreshToken);
+  const _adopt = _beginGuestAdoption();
+  document.getElementById('authMod').classList.remove('show');
+  document.getElementById('authError').style.display = 'none';
+  const app = document.querySelector('.app');
+  const splash = document.getElementById('splash');
+  app.classList.remove('hidden');
+  if(splash) splash.style.display = 'none';
+  updateProfileButton();
+  setSyncStatus('syncing');
+  cloudLoadAll().then(synced => {
+    _finishGuestAdoption(_adopt, synced);
+    _afterEnterApp(synced || !!_adopt);
+  });
+}
+function showSetNewPassword(){
+  ['authForm','authLoginForm','authResetForm'].forEach(id => { document.getElementById(id).style.display = 'none'; });
+  document.getElementById('authNewPasswordForm').style.display = 'block';
+  document.getElementById('authError').style.display = 'none';
+  const row = document.getElementById('authGuestRow'); if(row) row.style.display = 'none';
+  document.getElementById('newPassword').focus();
+}
+async function submitNewPassword(){
+  const pw = document.getElementById('newPassword').value;
+  const pw2 = document.getElementById('newPasswordConfirm').value;
+  if(pw.length < 8){ showAuthError('Password must be at least 8 characters'); return; }
+  if(pw !== pw2){ showAuthError('Passwords do not match — please check and try again'); return; }
+  if(!_recoverySession){ showAuthError('This reset link is no longer valid. Request a new one.'); return; }
+  const btn = document.getElementById('newPasswordBtn');
+  if(btn){ btn.textContent = 'Saving…'; btn.disabled = true; }
+  try{
+    const res = await fetch(SB_URL + '/auth/v1/user', {
+      method: 'PUT',
+      headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + _recoverySession.access_token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw })
+    });
+    const data = await res.json().catch(() => ({}));
+    if(!res.ok) throw new Error(data.error_description || data.msg || data.message || 'Could not update the password');
+    const sess = _recoverySession; _recoverySession = null;
+    document.getElementById('newPassword').value = ''; document.getElementById('newPasswordConfirm').value = '';
+    document.getElementById('authNewPasswordForm').style.display = 'none';
+    const row = document.getElementById('authGuestRow'); if(row) row.style.display = '';
+    _completeAuthWithSession(data.id ? data : { id: null, email: '' }, sess.access_token, sess.refresh_token);
+    showToast('✅ Password updated', { duration: 3000 });
+  }catch(e){
+    showAuthError(/expired|invalid|jwt/i.test(e.message) ? 'That reset link has expired. Request a new one.' : e.message);
+  }finally{
+    if(btn){ btn.textContent = 'Save new password'; btn.disabled = false; }
+  }
+}
+// The auth screen mark-up sits after this script, so link handling waits for
+// the DOM. Native: links to maxgainz://auth arrive through Capacitor's App
+// plugin, at launch (getLaunchUrl) and while running (appUrlOpen).
+function _whenDomReady(fn){ if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn); else fn(); }
+if(MG_NATIVE){
+  try{
+    const AppPlugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+    if(AppPlugin){
+      AppPlugin.addListener('appUrlOpen', ev => { if(ev && ev.url) _whenDomReady(() => _handleAuthLink(ev.url)); });
+      if(typeof AppPlugin.getLaunchUrl === 'function') AppPlugin.getLaunchUrl().then(r => { if(r && r.url) _whenDomReady(() => _handleAuthLink(r.url)); }).catch(()=>{});
+    }
+  }catch(e){}
+}
+
 // ── SPLASH SCREEN ──
 // Load auth state FIRST before splash timer
 loadAuthState();
+// A password-reset or confirmation link takes over from the splash + auth gate.
+const _bootAuthLink = !MG_NATIVE && !!_parseAuthLink(location.href);
+if(_bootAuthLink){ const _lnk = location.href; _whenDomReady(() => _handleAuthLink(_lnk)); }
 
 // dismissSplash is already callable — splash element has onclick="dismissSplash()" in HTML
 // Auto dismiss after 3 seconds
-const splashTimer = setTimeout(dismissSplash, 3000);
+const splashTimer = _bootAuthLink ? null : setTimeout(dismissSplash, 3000);
 
 // Show local file warning if opened from file:// AND not already logged in
 if(window.location.protocol === 'file:' && !isAuthenticated()){
@@ -23369,21 +23496,15 @@ function switchAuthMode(){
   const signupForm = document.getElementById('authForm');
   const loginForm = document.getElementById('authLoginForm');
   const resetForm = document.getElementById('authResetForm');
-  const resendForm = document.getElementById('authResendForm');
-  const confirmScreen = document.getElementById('authConfirm');
-  if(signupForm.style.display === 'none' && confirmScreen.style.display === 'none'){
+  if(signupForm.style.display === 'none'){
     signupForm.style.display = 'block';
     loginForm.style.display = 'none';
     resetForm.style.display = 'none';
-    resendForm.style.display = 'none';
-    confirmScreen.style.display = 'none';
     document.getElementById('authEmail').focus();
   } else {
     signupForm.style.display = 'none';
     loginForm.style.display = 'block';
     resetForm.style.display = 'none';
-    resendForm.style.display = 'none';
-    confirmScreen.style.display = 'none';
     document.getElementById('loginEmail').focus();
   }
   document.getElementById('authError').style.display = 'none';
@@ -23393,7 +23514,6 @@ function showAuthLogin(){
   document.getElementById('authForm').style.display = 'none';
   document.getElementById('authLoginForm').style.display = 'block';
   document.getElementById('authResetForm').style.display = 'none';
-  document.getElementById('authResendForm').style.display = 'none';
   document.getElementById('authError').style.display = 'none';
   document.getElementById('loginEmail').focus();
 }
@@ -23402,7 +23522,6 @@ function showPasswordReset(){
   document.getElementById('authForm').style.display = 'none';
   document.getElementById('authLoginForm').style.display = 'none';
   document.getElementById('authResetForm').style.display = 'block';
-  document.getElementById('authResendForm').style.display = 'none';
   document.getElementById('authError').style.display = 'none';
   document.getElementById('resetEmail').focus();
 }
@@ -23439,7 +23558,7 @@ async function authSignup(){
 
   try{
     // Call Supabase auth signup endpoint
-    const result = await fetch(SB_URL + '/auth/v1/signup', {
+    const result = await fetch(SB_URL + '/auth/v1/signup?redirect_to=' + encodeURIComponent(_authRedirectTo()), {
       method: 'POST',
       headers: {
         'apikey': SB_KEY,
@@ -23457,8 +23576,10 @@ async function authSignup(){
     const token = data.session?.access_token || data.access_token || null;
     const refreshToken = data.session?.refresh_token || data.refresh_token || null;
     if(!token){
-      // Email confirmation still enabled in Supabase dashboard — prompt user to disable it
-      showAuthError('⚠️ Account created but email confirmation is still enabled. Please sign in once you confirm your email, or disable email confirmation in your Supabase dashboard.');
+      // Email confirmation is on for this project: the link in the email
+      // signs the user in (see _handleAuthLink).
+      showInfoModal('📧 Check your email', 'We sent a confirmation link to ' + email + '.\n\nTap the link to activate your account — it will sign you in. Check your spam folder if it does not arrive.');
+      showAuthLogin();
       return;
     }
 
@@ -23618,7 +23739,6 @@ function authLogout(){
   document.getElementById('authForm').style.display = 'block';
   document.getElementById('authLoginForm').style.display = 'none';
   document.getElementById('authResetForm').style.display = 'none';
-  document.getElementById('authConfirm').style.display = 'none';
   document.getElementById('authError').style.display = 'none';
 
   // Clear form fields (safe — some may not exist depending on current auth screen)
@@ -23638,7 +23758,7 @@ async function sendPasswordReset(){
   
   try{
     // Call Supabase password recovery endpoint
-    const result = await fetch(SB_URL + '/auth/v1/recover', {
+    const result = await fetch(SB_URL + '/auth/v1/recover?redirect_to=' + encodeURIComponent(_authRedirectTo()), {
       method: 'POST',
       headers: {
         'apikey': SB_KEY,
@@ -23653,45 +23773,9 @@ async function sendPasswordReset(){
     }
     
     document.getElementById('resetEmail').value = '';
-    showInfoModal('📧 Reset link sent', 'We sent a password reset link to ' + email + '.\n\nCheck your email (including spam folder) and click the link to create a new password.');
+    showInfoModal('📧 Reset link sent', 'If an account exists for ' + email + ', we sent it a password reset link.\n\nOpen the link on this device to choose a new password. Check your spam folder if it does not arrive.');
     showAuthLogin();
   }catch(e){
-    showAuthError(e.message);
-  }
-}
-
-// Resend confirmation email for unconfirmed accounts
-async function sendConfirmationEmail(){
-  const email = document.getElementById('resendEmail').value.trim();
-
-  if(!email.includes('@')){
-    showAuthError('Please enter a valid email');
-    return;
-  }
-
-  try{
-    // Call Supabase resend endpoint
-    const result = await fetch(SB_URL + '/auth/v1/resend', {
-      method: 'POST',
-      headers: {
-        'apikey': SB_KEY,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({email, type: 'signup'})
-    });
-
-    console.log('[RESEND] Response status:', result.status);
-    const data = await result.json();
-
-    if(!result.ok){
-      throw new Error(data.message || `Failed to send confirmation email (${result.status})`);
-    }
-
-    document.getElementById('resendEmail').value = '';
-    showInfoModal('📧 Confirmation email sent', 'We sent a confirmation email to ' + email + '.\n\nCheck your email (including spam folder) and click the link to activate your account.');
-    showAuthLogin();
-  }catch(e){
-    console.error('[RESEND] Error:', e);
     showAuthError(e.message);
   }
 }
@@ -24324,15 +24408,18 @@ window.addEventListener('offline', updateOnlineStatus);
         <div style="font-size:12px;color:#8888aa;margin-top:16px;text-align:center;">Check your inbox and spam folder for the reset link.</div>
       </div>
 
-      <!-- RESEND CONFIRMATION EMAIL FORM -->
-      <div id="authResendForm" style="display:none;">
-        <div style="font-size:13px;font-weight:700;color:#f0f0f0;margin-bottom:12px;">Resend confirmation email</div>
-        <div style="margin-bottom:24px;">
-          <input type="email" id="resendEmail" placeholder="you@example.com" style="width:100%;padding:12px;background:#14141c;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;font-size:14px;box-sizing:border-box;color:#f0f0f0;">
+      <!-- SET NEW PASSWORD (after a reset link) -->
+      <div id="authNewPasswordForm" style="display:none;">
+        <div style="font-size:13px;font-weight:700;color:#f0f0f0;margin-bottom:12px;">Choose a new password</div>
+        <div style="margin-bottom:16px;">
+          <label style="font-size:12px;font-weight:700;color:#8888aa;display:block;margin-bottom:6px;">New password (at least 8 chars)</label>
+          <input type="password" id="newPassword" placeholder="••••••••" autocomplete="new-password" style="width:100%;padding:12px;background:#14141c;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;font-size:14px;box-sizing:border-box;color:#f0f0f0;outline:none;">
         </div>
-        <button class="btn-p" style="width:100%;margin-bottom:12px;font-size:15px;padding:14px;" onclick="sendConfirmationEmail()">Send Confirmation Link</button>
-        <button style="width:100%;background:#1e1e2a;color:#f0f0f0;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;font-size:15px;padding:14px;font-weight:700;cursor:pointer;" onclick="showAuthLogin()">Back to Sign In</button>
-        <div style="font-size:12px;color:#8888aa;margin-top:16px;text-align:center;">We'll send a fresh confirmation link with the correct redirect. Check your inbox and spam folder.</div>
+        <div style="margin-bottom:24px;">
+          <label style="font-size:12px;font-weight:700;color:#8888aa;display:block;margin-bottom:6px;">Confirm new password</label>
+          <input type="password" id="newPasswordConfirm" placeholder="••••••••" autocomplete="new-password" style="width:100%;padding:12px;background:#14141c;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;font-size:14px;box-sizing:border-box;color:#f0f0f0;outline:none;">
+        </div>
+        <button id="newPasswordBtn" class="btn-p" style="width:100%;margin-bottom:12px;font-size:15px;padding:14px;" onclick="submitNewPassword()">Save new password</button>
       </div>
 
       <!-- Guest mode: the app works from this device alone; an account adds backup + sync -->
@@ -24344,16 +24431,6 @@ window.addEventListener('offline', updateOnlineStatus);
       </div>
       <div id="authError" style="display:none;margin-top:16px;padding:12px;background:rgba(255,77,106,0.1);border-radius:8px;border:0.5px solid rgba(255,77,106,0.25);color:#ff4d6a;font-size:13px;font-weight:700;"></div>
 
-      <!-- EMAIL CONFIRMATION SCREEN -->
-      <div id="authConfirm" style="display:none;text-align:center;padding:8px 0;">
-        <div style="font-size:48px;margin-bottom:16px;">📧</div>
-        <div style="font-size:20px;font-weight:800;color:#f0f0f0;margin-bottom:12px;">Check your email</div>
-        <div style="font-size:14px;color:#8888aa;margin-bottom:8px;">We sent a confirmation link to:</div>
-        <div style="font-size:14px;font-weight:700;color:#c8ff00;margin-bottom:24px;" id="authConfirmEmail"></div>
-        <div style="font-size:13px;color:#8888aa;margin-bottom:32px;line-height:1.6;">Click the link in the email to activate your account, then come back and sign in.</div>
-        <button class="btn-p" style="width:100%;margin-bottom:12px;font-size:15px;padding:14px;" onclick="switchAuthMode()">Go to Sign In</button>
-        <div style="font-size:12px;color:#8888aa;margin-top:8px;">Didn't receive it? Check your spam folder.</div>
-      </div>
     </div>
 
     <div style="margin-top:40px;font-size:11px;color:#8888aa;text-align:center;">Your data is encrypted and private. Only you can see your workouts.</div>
