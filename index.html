@@ -23487,7 +23487,9 @@ let _paywallBusy = false;
 
 function isProUnlocked(){
   if(!MG_NATIVE) return true;                     // web: free, everything on
-  if(!window.MGNative || !window.MGNative.purchases || !window.MGNative.purchases.available) return true; // no store in this build (e.g. dev)
+  // Second safety net: an app build without a configured store is LOCKED
+  // (the paywall then says subscriptions are not available), never unlocked.
+  if(!window.MGNative || !window.MGNative.purchases || !window.MGNative.purchases.available) return false;
   return !!_pro.active;
 }
 // Gate: true when the caller may proceed; otherwise opens the paywall.
@@ -23670,7 +23672,7 @@ function _renderPaywall(state, err){
       <div style="font-size:13px;color:var(--text2);margin-top:4px;line-height:1.5;">Training Paths and programmes, HIIT, the live session coach, progress analytics and achievements. Your history, export and settings always stay open.</div>
     </div>`;
   if(state === 'loading'){ box.innerHTML = header + '<div style="text-align:center;padding:24px;color:var(--text2);font-size:13px;">Loading plans…</div>' + legal; return; }
-  if(state === 'unavailable'){ box.innerHTML = header + '<div style="text-align:center;padding:16px;color:var(--text2);font-size:13px;">Subscriptions are not available in this build.</div>' + legal; return; }
+  if(state === 'unavailable'){ box.innerHTML = header + '<div style="text-align:center;padding:16px;color:var(--text2);font-size:13px;line-height:1.5;">Subscriptions are not available in this build. Please update Max Gainz from the App Store, or contact support.</div>' + legal; return; }
   if(state === 'error'){
     box.innerHTML = header + `<div style="text-align:center;padding:12px;color:var(--text2);font-size:13px;line-height:1.5;">Couldn't load the plans${err && err.network ? ' — check your connection' : ''}.</div>
       <button class="btn-p" style="width:100%;padding:14px;font-size:15px;margin-top:6px;" onclick="_renderPaywall('loading');_loadPaywall()">Try again</button>

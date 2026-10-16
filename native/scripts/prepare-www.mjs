@@ -62,10 +62,14 @@ for (const rel of WEB_FILES) {
   const bridgePath = join(OUT, 'native-bridge.js');
   const bridge = readFileSync(bridgePath, 'utf8');
   if (!bridge.includes("'__MG_RC_API_KEY__'")) fail('native-bridge.js has no __MG_RC_API_KEY__ placeholder');
-  if (/^appl_[A-Za-z]+$/.test(key)) {
+  // A build without the key would ship an app whose paywall cannot work, so
+  // this is fatal. Set MG_ALLOW_NO_RC_KEY=1 only for a local simulator run.
+  if (/^appl_[A-Za-z0-9]+$/.test(key)) {
     writeFileSync(bridgePath, bridge.replace("'__MG_RC_API_KEY__'", JSON.stringify(key)));
+  } else if (process.env.MG_ALLOW_NO_RC_KEY === '1') {
+    console.warn('prepare-www: WARNING building WITHOUT a RevenueCat key (MG_ALLOW_NO_RC_KEY=1): subscriptions stay locked with "not available"');
   } else {
-    console.warn('prepare-www: WARNING no RevenueCat public key in capacitor.config.json (plugins.MaxGainzNative.revenueCatApiKey) — purchases will be unavailable in this build');
+    fail('no RevenueCat public key: set plugins.MaxGainzNative.revenueCatApiKey in native/capacitor.config.json (an appl_… key from RevenueCat → API keys). The placeholder is not accepted. For a local run without purchases set MG_ALLOW_NO_RC_KEY=1.');
   }
 }
 
