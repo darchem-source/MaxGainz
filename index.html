@@ -24232,7 +24232,7 @@ goTab = function(name, btn){
 // supabase/delete_my_account.sql) removes every row and the login in a single
 // transaction. The device is wiped only after the server says ok:true.
 // Spec: appstore-team/backend-client-spec.md.
-const DELETE_SUPPORT = 'support@maxgainz.app'; // TODO owner: confirm support contact
+const DELETE_SUPPORT = '[SUPPORT EMAIL]'; // TODO owner: replace with the real support address (same value as the [SUPPORT EMAIL] placeholder in privacy/terms/support.html)
 function initiateAccountDeletion(){
   if(!isAuthenticated()){ showToast('Guests have no account to delete. Use "Clear local data" instead.', { duration: 3500 }); return; }
   document.getElementById('deleteAccountMod').classList.add('open');
