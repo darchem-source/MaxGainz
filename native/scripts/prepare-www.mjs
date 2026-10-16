@@ -3,9 +3,9 @@
 //
 //   npm run prepare-www        (then: npx cap sync ios)
 //
-// Copies exactly what index.html loads from its own origin into www/
-// (Capacitor's webDir). It has no dependencies and changes nothing on the
-// web: Netlify still publishes the repo root as-is. www/ is gitignored.
+// Copies exactly what the repo-root index.html loads from its own origin into
+// native/www/ (Capacitor's webDir). It has no dependencies and changes nothing
+// on the web: Netlify still publishes the repo root as-is. www/ is gitignored.
 //
 // Three steps:
 //   1. Copy the files in WEB_FILES into a fresh www/ (skipping dotfiles).
@@ -20,8 +20,9 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statS
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const OUT = join(ROOT, 'www');
+const NATIVE = join(dirname(fileURLToPath(import.meta.url)), '..'); // native/
+const ROOT = join(NATIVE, '..');                                      // repo root (the web app)
+const OUT = join(NATIVE, 'www');
 
 // Everything the page loads locally. Add new local assets here.
 const WEB_FILES = [
@@ -72,8 +73,8 @@ if (!existsSync(join(OUT, 'exercise-media'))) missing.push('exercise-media/');
 if (missing.length) fail('index.html references files that are not in www/: ' + missing.join(', '));
 
 // ── 3. Keep the Xcode bundle ID in step with capacitor.config.json ───────
-const config = JSON.parse(readFileSync(join(ROOT, 'capacitor.config.json'), 'utf8'));
-const pbxPath = join(ROOT, 'ios/App/App.xcodeproj/project.pbxproj');
+const config = JSON.parse(readFileSync(join(NATIVE, 'capacitor.config.json'), 'utf8'));
+const pbxPath = join(NATIVE, 'ios/App/App.xcodeproj/project.pbxproj');
 if (existsSync(pbxPath)) {
   const pbx = readFileSync(pbxPath, 'utf8');
   const re = /PRODUCT_BUNDLE_IDENTIFIER = ("?)([^";\n]+)\1;/g;
@@ -82,7 +83,7 @@ if (existsSync(pbxPath)) {
   if (found.some((id) => id !== config.appId)) {
     writeFileSync(pbxPath, pbx.replace(re, 'PRODUCT_BUNDLE_IDENTIFIER = ' + config.appId + ';'));
     console.log('prepare-www: Xcode bundle ID ' + [...new Set(found)].join(', ') + ' -> ' + config.appId +
-      ' (from capacitor.config.json; commit ios/App/App.xcodeproj/project.pbxproj)');
+      ' (from capacitor.config.json; commit native/ios/App/App.xcodeproj/project.pbxproj)');
   }
 }
 

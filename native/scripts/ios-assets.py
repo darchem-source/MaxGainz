@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regenerate the iOS app icon and launch-screen images from icon.png.
 
-    python3 scripts/ios-assets.py        (needs Pillow: python3 -m pip install pillow)
+    python3 native/scripts/ios-assets.py        (needs Pillow: python3 -m pip install pillow)
 
 Run it only when icon.png or the --bg colour in index.html changes, then
 commit the PNGs it writes. It is not part of the build.
@@ -21,8 +21,9 @@ import sys
 
 from PIL import Image
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ASSETS = os.path.join(ROOT, 'ios', 'App', 'App', 'Assets.xcassets')
+NATIVE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # native/
+ROOT = os.path.dirname(NATIVE)                                        # repo root
+ASSETS = os.path.join(NATIVE, 'ios', 'App', 'App', 'Assets.xcassets')
 SPLASH_SIZE = 2732
 SPLASH_ICON = 376  # px inside the 2732 px square
 
