@@ -34,6 +34,9 @@ jobs:
         run: npm ci
       - name: Build www folder
         working-directory: native
+        # The quick check only parses; the real build (below) requires the RevenueCat key.
+        env:
+          MG_ALLOW_NO_RC_KEY: "1"
         run: npm run prepare-www
       - name: Parse-check inline JavaScript in index.html
         run: |
@@ -169,23 +172,34 @@ jobs:
           ls -l build/export
           test -f build/export/App.ipa
 
-      - name: Upload to TestFlight
+      - name: Upload to TestFlight (xcodebuild -exportArchive, destination upload)
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          # altool finds AuthKey_<ASC_KEY_ID>.p8 in ~/.appstoreconnect/private_keys (written above).
-          xcrun altool --upload-app \
-            --type ios \
-            --file build/export/App.ipa \
-            --apiKey "$ASC_KEY_ID" \
-            --apiIssuer "$ASC_ISSUER_ID" \
-            --output-format json \
+          # Same export, but Xcode uploads the build itself (Apple's documented path,
+          # replaces the deprecated altool). The .ipa exported above is kept as an artifact.
+          sed 's#<string>export</string>#<string>upload</string>#' build/ExportOptions.plist > build/UploadOptions.plist
+          plutil -lint build/UploadOptions.plist
+          xcodebuild -exportArchive \
+            -archivePath build/App.xcarchive \
+            -exportPath build/upload \
+            -exportOptionsPlist build/UploadOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             2>&1 | tee build/upload.log
-          # altool can exit 0 while reporting errors in its output; fail loudly if so.
-          if grep -qiE '"errors"|ITMS-[0-9]+|Validation failed|UPLOAD FAILED' build/upload.log; then
-            echo "::error::Upload reported errors. See upload.log artifact and the runbook."
+          # xcodebuild's exit status (pipefail) is the verdict. ITMS warnings are fine;
+          # only an ITMS line that is an error, or "EXPORT FAILED", fails the job.
+          if grep -iE 'ITMS-[0-9]+' build/upload.log | grep -qivE 'warning'; then
+            echo "::error::App Store Connect reported an ITMS error. See upload.log artifact and the runbook."
+            exit 1
+          fi
+          if grep -q 'EXPORT FAILED' build/upload.log; then
+            echo "::error::Upload export failed. See upload.log artifact."
             exit 1
           fi
 
@@ -212,5 +226,7 @@ jobs:
             build/ExportOptions.plist
             build/export/*.log
             build/export/*.plist
+            build/upload/*.log
+            build/upload/*.plist
           if-no-files-found: ignore
           retention-days: 14
