@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Max Gainz app privacy manifest (App target, copied to the bundle root).
+
+  Required-reason APIs: only the code compiled into the app is declared here.
+  Capacitor and CapacitorCordova ship their own manifests (no API entries), so
+  they are not repeated. Re-check with Xcode's "Generate Privacy Report" on an
+  archive whenever a plugin is added.
+    - UserDefaults / CA92.1: @capacitor/preferences stores app-only key/values
+      in UserDefaults.standard.
+    - FileTimestamp / C617.1: @capacitor/filesystem and its ion-ios-filesystem
+      dependency read creation/modification dates of files inside the app
+      container (used for share-sheet temp files).
+-->
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array>
+		<!--
+		  TODO (App Store listing): before submission, list every data type the
+		  app collects here, matching the App Privacy answers in App Store
+		  Connect (one dict per type with NSPrivacyCollectedDataType,
+		  NSPrivacyCollectedDataTypeLinked, NSPrivacyCollectedDataTypeTracking,
+		  NSPrivacyCollectedDataTypePurposes). While this array is empty the
+		  manifest says the app collects nothing, which is not true: it syncs
+		  account and workout data to Supabase.
+		-->
+	</array>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
