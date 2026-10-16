@@ -2085,6 +2085,10 @@ function dismissSplash() {
     // console.log('❌ Splash element not found');
     return;
   }
+  // Runs once: a tap on the splash AND the 3 s auto-dismiss timer both call
+  // this, and the second run used to start a second cloud load (which, right
+  // after a guest signs up, could reset the profile before its upload landed).
+  if(splash.classList.contains('fade-out')) return;
   
   // console.log('isAuthenticated:', isAuthenticated());
   splash.classList.add('fade-out');
@@ -2092,8 +2096,15 @@ function dismissSplash() {
     splash.classList.add('gone');
     splash.style.display = 'none';
     
-    // After splash fades, show auth if not logged in, otherwise show app
-    if(!isAuthenticated()){
+    // After splash fades: signed in → app + cloud load; guest → app from
+    // local data; otherwise the auth screen.
+    if(isGuest()){
+      app.classList.remove('hidden');
+      authMod.classList.remove('show');
+      updateProfileButton();
+      setSyncStatus('local');
+      _afterEnterApp(false);
+    } else if(!isAuthenticated()){
       // console.log('👤 Showing auth modal');
       // Copy splash icon base64 src to auth screen icon (avoids 404 for icon.png)
       const splashImg = document.querySelector('.splash-logo img');
@@ -2110,31 +2121,7 @@ function dismissSplash() {
       // Paint the profile button immediately from the local cache — no network wait
       updateProfileButton();
       setSyncStatus('syncing');
-      cloudLoadAll().then(synced => {
-        if(synced){
-          applyCustomWeights();
-          renderToday();
-          renderProgress();
-        }
-        // Refresh again after cloud sync in case the image changed on another device
-        updateProfileButton();
-        // Check if first-time user needs onboarding
-        if(typeof checkOnboarding === 'function') checkOnboarding();
-        // Advance path week / mark completed if needed (also archives)
-        checkPathWeekProgression();
-        // Celebrate a just-completed path before anything else path-related.
-        const _celebratedPath = maybeCelebratePathCompletion();
-        if(!_celebratedPath) maybeShowLadderExpanded();
-        // Auto-open path wizard if user has no active path, hasn't skipped,
-        // onboarding isn't blocking, and we're not about to celebrate a
-        // completed path (let them dismiss that first).
-        if(!_celebratedPath && !isPathActive() && isAuthenticated()
-          && !localStorage.getItem('maxgainz_path_skipped')
-          && !document.getElementById('onboardMod').classList.contains('open')){
-          _pathWizardAutoOpened = true;
-          setTimeout(() => openPathWizard(), 800);
-        }
-      });
+      cloudLoadAll().then(synced => _afterEnterApp(synced));
     }
   }, 850);
 }
@@ -3037,6 +3024,168 @@ async function refreshAuthToken(){
 // Check if user is authenticated
 function isAuthenticated(){
   return !!currentUser && !!authToken;
+}
+
+// ── GUEST MODE ──
+// "Continue without an account": the whole app runs from localStorage with
+// no cloud calls (every cloud* function already returns null when signed
+// out). The flag only records the choice so the auth screen stays out of the
+// way on later launches; signing up or in later adopts the local data (see
+// _beginGuestAdoption / _finishGuestAdoption) so nothing is lost.
+function isGuest(){
+  return !isAuthenticated() && localStorage.getItem('maxgainz_guest') === '1';
+}
+// Signed in OR a guest: the app (onboarding, path wizard, logging) may run.
+function canUseApp(){
+  return isAuthenticated() || isGuest();
+}
+function continueAsGuest(){
+  localStorage.setItem('maxgainz_guest', '1');
+  document.getElementById('authMod').classList.remove('show');
+  document.getElementById('authError').style.display = 'none';
+  const app = document.querySelector('.app');
+  const splash = document.getElementById('splash');
+  app.classList.remove('hidden');
+  if(splash) splash.style.display = 'none';
+  updateProfileButton();
+  setSyncStatus('local');
+  if(typeof updateCloudStatus === 'function') try{ updateCloudStatus(); }catch(e){}
+  _afterEnterApp(false);
+}
+// Shared post-entry sequence (boot, guest entry, sign-up, sign-in): refresh
+// the UI, then onboarding, then the path wizard for anyone without a path.
+function _afterEnterApp(synced){
+  if(synced){
+    applyCustomWeights();
+    renderToday();
+    renderProgress();
+  }
+  updateProfileButton();
+  checkPathWeekProgression();
+  const _celebratedPath = maybeCelebratePathCompletion();
+  if(!_celebratedPath) maybeShowLadderExpanded();
+  if(typeof checkOnboarding === 'function') checkOnboarding();
+  if(!_celebratedPath && !isPathActive() && canUseApp()
+    && !localStorage.getItem('maxgainz_path_skipped')
+    && !document.getElementById('onboardMod').classList.contains('open')){
+    _pathWizardAutoOpened = true;
+    setTimeout(() => openPathWizard(), 800);
+  }
+}
+// Open the auth screen from inside the app (guest wanting to sign up).
+function openAuthForSignup(){
+  const _splashImg = document.querySelector('.splash-logo img');
+  const _authIcon = document.getElementById('authScreenIcon');
+  if(_splashImg && _authIcon && _splashImg.src) _authIcon.src = _splashImg.src;
+  document.getElementById('authForm').style.display = 'block';
+  document.getElementById('authLoginForm').style.display = 'none';
+  document.getElementById('authResetForm').style.display = 'none';
+  document.getElementById('authError').style.display = 'none';
+  const back = document.getElementById('authGuestBack');
+  if(back) back.style.display = isGuest() ? 'block' : 'none';
+  document.getElementById('authMod').classList.add('show');
+  document.querySelector('.app').classList.add('hidden');
+}
+// Guest tapped "Back" on the auth screen: return to the app unchanged.
+function closeAuthToGuest(){
+  if(!isGuest()) return;
+  document.getElementById('authMod').classList.remove('show');
+  document.querySelector('.app').classList.remove('hidden');
+}
+
+// ── Guest → account adoption ──
+// Called around cloudLoadAll() when a guest signs up or in. cloudLoadAll()
+// resets the profile, clears the path and only merges local sessions whose
+// cache is stamped with the SAME user id, so without this a guest's data
+// would vanish at sign-up. Design:
+//   1. Before the load: stamp the local cache with the new user id (so the
+//      session merge keeps + re-uploads every local session) and snapshot
+//      everything the profile blob carries.
+//   2. After the load: if the cloud had no profile blob (brand-new account,
+//      or the load failed) restore the snapshot wholesale; if it had one
+//      (existing account signing in on a guest device) keep the cloud copy
+//      and add the local-only items (weights, logs, notes, custom workouts,
+//      path if the cloud has none). Then push the merged blob + weights.
+let _lastCloudHadProfile = false;
+function _beginGuestAdoption(){
+  if(!isGuest() && localStorage.getItem('maxgainz_guest') !== '1') return null;
+  let cHIITs = [];
+  try { cHIITs = JSON.parse(localStorage.getItem('maxgainz_custom_hiits') || '[]'); } catch(e){}
+  const snap = {
+    userProfile: JSON.parse(JSON.stringify(userProfile)),
+    todayProg,
+    userPath: userPath ? JSON.parse(JSON.stringify(userPath)) : null,
+    pathHistory: Array.isArray(pathHistory) ? pathHistory.slice() : [],
+    customWorkouts: (typeof customWorkouts !== 'undefined') ? customWorkouts.slice() : [],
+    customHIITs: cHIITs,
+    bodyWeightLog: Array.isArray(bodyWeightLog) ? bodyWeightLog.slice() : [],
+    measurementsLog: Array.isArray(measurementsLog) ? measurementsLog.slice() : [],
+    dailyNotes: Object.assign({}, dailyNotes || {}),
+    pbLifts: Array.isArray(pbLifts) ? pbLifts.slice() : [],
+    weights: Object.assign({}, customWeights),
+    onboarded: !!localStorage.getItem('maxgainz_onboarded'),
+    sessionCount: completedSessions.length
+  };
+  localStorage.removeItem('maxgainz_guest');
+  saveLocalCache(); // stamps userId = the new account → sessions merge + re-upload
+  return snap;
+}
+function _finishGuestAdoption(snap, synced){
+  if(!snap) return;
+  const cloudHadProfile = synced && _lastCloudHadProfile;
+  const byDate = (arr, add) => {
+    const have = new Set((arr || []).map(x => x && x.date));
+    (add || []).forEach(x => { if(x && !have.has(x.date)) arr.push(x); });
+    arr.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    return arr;
+  };
+  if(!cloudHadProfile){
+    Object.keys(userProfile).forEach(k => delete userProfile[k]);
+    Object.assign(userProfile, snap.userProfile);
+    todayProg = snap.todayProg;
+    userPath = snap.userPath;
+    if(userPath) localStorage.setItem('maxgainz_path', JSON.stringify(userPath));
+    pathHistory = snap.pathHistory;
+    bodyWeightLog = snap.bodyWeightLog;
+    measurementsLog = snap.measurementsLog;
+    dailyNotes = snap.dailyNotes;
+    pbLifts = snap.pbLifts;
+    if(typeof customWorkouts !== 'undefined'){ customWorkouts.length = 0; snap.customWorkouts.forEach(w => customWorkouts.push(w)); }
+    localStorage.setItem('maxgainz_custom_hiits', JSON.stringify(snap.customHIITs));
+  } else {
+    // Existing account: cloud wins, local-only items are added.
+    if(!userPath && snap.userPath){ userPath = snap.userPath; localStorage.setItem('maxgainz_path', JSON.stringify(userPath)); }
+    byDate(bodyWeightLog, snap.bodyWeightLog);
+    byDate(measurementsLog, snap.measurementsLog);
+    Object.keys(snap.dailyNotes).forEach(d => { if(!dailyNotes[d]) dailyNotes[d] = snap.dailyNotes[d]; });
+    const histIds = new Set((pathHistory || []).map(p => p && p.id));
+    snap.pathHistory.forEach(p => { if(p && p.id && !histIds.has(p.id)) pathHistory.push(p); });
+    if(typeof customWorkouts !== 'undefined'){
+      const names = new Set(customWorkouts.map(w => w && w.name));
+      snap.customWorkouts.forEach(w => { if(w && !names.has(w.name)) customWorkouts.push(w); });
+    }
+    try {
+      const cur = JSON.parse(localStorage.getItem('maxgainz_custom_hiits') || '[]');
+      const names = new Set(cur.map(w => w && w.name));
+      snap.customHIITs.forEach(w => { if(w && !names.has(w.name)) cur.push(w); });
+      localStorage.setItem('maxgainz_custom_hiits', JSON.stringify(cur));
+    } catch(e){}
+    snap.pbLifts.forEach(l => { if(pbLifts.indexOf(l) < 0) pbLifts.push(l); });
+  }
+  if(snap.onboarded) localStorage.setItem('maxgainz_onboarded', '1');
+  localStorage.setItem('maxgainz_pathHistory', JSON.stringify(pathHistory));
+  if(typeof customWorkouts !== 'undefined') localStorage.setItem('maxgainz_custom', JSON.stringify(customWorkouts));
+  // Working weights: keep the local value where the cloud has none.
+  Object.keys(snap.weights).forEach(name => {
+    if(name.startsWith('__')) return;
+    if(customWeights[name] === undefined){
+      customWeights[name] = snap.weights[name];
+      if(synced) cloudSaveWeight(name, snap.weights[name]).catch(()=>{});
+    }
+  });
+  saveLocalCache();
+  if(synced) cloudSaveProfile();
+  console.log('[guest] adopted local data into account:', snap.sessionCount, 'session(s)');
 }
 
 // Get current user ID for data isolation
@@ -3942,9 +4091,11 @@ async function cloudLoadAll() {
   }
 
   // Load weights + profile blob
+  _lastCloudHadProfile = false;
   if (Array.isArray(weightRows)) {
     weightRows.forEach(r => {
       if (r.exercise_name === '__profile__' && r.notes) {
+        _lastCloudHadProfile = true;
         // Restore profile, preferences, custom workouts from cloud
         try {
           const blob = JSON.parse(r.notes);
@@ -4742,7 +4893,7 @@ function setSyncStatus(status){
 bus.on('sync:status', ({ status }) => {
   const el = document.getElementById('syncStatus');
   if(!el) return;
-  const states = { syncing:'🔄 Syncing…', synced:'☁️ Synced', offline:'📱 Offline (local)', error:'⚠️ Sync failed' };
+  const states = { syncing:'🔄 Syncing…', synced:'☁️ Synced', offline:'📱 Offline (local)', error:'⚠️ Sync failed', local:'📱 Saved on this device' };
   el.textContent = states[status] || '';
   el.style.color = status === 'synced' ? 'var(--green)' : status === 'offline' ? 'var(--orange)' : 'var(--text2)';
 });
@@ -14159,7 +14310,7 @@ function _obComplete(skipSetup) {
 }
 
 function checkOnboarding() {
-  if(!localStorage.getItem('maxgainz_onboarded') && isAuthenticated()) {
+  if(!localStorage.getItem('maxgainz_onboarded') && canUseApp()) {
     renderOnboardStep(0);
     document.getElementById('onboardMod').classList.add('open');
   }
@@ -23314,6 +23465,7 @@ async function authSignup(){
     // Go straight in — no confirmation required
     const user = {id: data.user.id, email: data.user.email, name: name};
     saveAuthState(user, token, refreshToken);
+    const _adopt = _beginGuestAdoption(); // keep a guest's local data
 
     // Hide auth modal and show app
     document.getElementById('authMod').classList.remove('show');
@@ -23326,22 +23478,8 @@ async function authSignup(){
     // Load cloud data
     setSyncStatus('syncing');
     cloudLoadAll().then(synced => {
-      if(synced){
-        applyCustomWeights();
-        renderToday();
-        renderProgress();
-      }
-      updateProfileButton();
-      checkPathWeekProgression();
-      const _celebratedPath = maybeCelebratePathCompletion();
-      if(!_celebratedPath) maybeShowLadderExpanded();
-      // Show onboarding for brand-new users BEFORE path wizard
-      if(typeof checkOnboarding === 'function') checkOnboarding();
-      if(!_celebratedPath && !isPathActive() && !localStorage.getItem('maxgainz_path_skipped')
-        && !document.getElementById('onboardMod').classList.contains('open')){
-        _pathWizardAutoOpened = true;
-        setTimeout(() => openPathWizard(), 800);
-      }
+      _finishGuestAdoption(_adopt, synced);
+      _afterEnterApp(synced || !!_adopt);
     });
   }catch(e){
     console.error('Signup error:', e);
@@ -23412,6 +23550,7 @@ async function authLogin(){
     localStorage.removeItem('maxgainz_pending_email');
 
     saveAuthState({id: data.user.id, email: data.user.email, name: userName}, data.access_token, data.refresh_token);
+    const _adopt = _beginGuestAdoption(); // keep a guest's local data
     document.getElementById('authMod').classList.remove('show');
     
     // Hide auth modal and show app without reload
@@ -23425,23 +23564,8 @@ async function authLogin(){
     // Load cloud data
     setSyncStatus('syncing');
     cloudLoadAll().then(synced => {
-      if(synced){
-        applyCustomWeights();
-        renderToday();
-        renderProgress();
-      }
-      // Refresh after cloud sync picks up any updated profile image
-      updateProfileButton();
-      checkPathWeekProgression();
-      const _celebratedPath = maybeCelebratePathCompletion();
-      if(!_celebratedPath) maybeShowLadderExpanded();
-      // Show onboarding for first-time users BEFORE path wizard
-      if(typeof checkOnboarding === 'function') checkOnboarding();
-      if(!_celebratedPath && !isPathActive() && isAuthenticated() && !localStorage.getItem('maxgainz_path_skipped')
-        && !document.getElementById('onboardMod').classList.contains('open')){
-        _pathWizardAutoOpened = true;
-        setTimeout(() => openPathWizard(), 800);
-      }
+      _finishGuestAdoption(_adopt, synced);
+      _afterEnterApp(synced || !!_adopt);
     });
   }catch(e){
     console.error('❌ Login error:', e);
@@ -23477,6 +23601,7 @@ function authLogout(){
   localStorage.removeItem('maxgainz_path');
   localStorage.removeItem('maxgainz_path_skipped');
   localStorage.removeItem('maxgainz_onboarded');
+  localStorage.removeItem('maxgainz_guest');
 
   // ── Clear auth tokens ──
   saveAuthState(null, null);
@@ -23588,15 +23713,12 @@ function updateCloudStatus(){
       }
     };
   } else {
-    statusEl.textContent = '📱 Not authenticated';
+    statusEl.textContent = '📱 On this device only';
     statusEl.style.color = 'var(--text2)';
-    emailEl.textContent = 'Please sign in to use cloud sync';
-    toggleBtn.textContent = 'Sign In';
+    emailEl.textContent = 'Create a free account to back up and sync your workouts. Everything you have logged comes with you.';
+    toggleBtn.textContent = 'Create account';
     toggleBtn.style.background = 'var(--accent)';
-    toggleBtn.onclick = function() {
-      document.getElementById('authMod').classList.add('show');
-      document.querySelector('.app').classList.add('hidden');
-    };
+    toggleBtn.onclick = openAuthForSignup;
   }
 }
 
@@ -24213,6 +24335,13 @@ window.addEventListener('offline', updateOnlineStatus);
         <div style="font-size:12px;color:#8888aa;margin-top:16px;text-align:center;">We'll send a fresh confirmation link with the correct redirect. Check your inbox and spam folder.</div>
       </div>
 
+      <!-- Guest mode: the app works from this device alone; an account adds backup + sync -->
+      <div id="authGuestRow" style="margin-top:4px;">
+        <div style="display:flex;align-items:center;gap:10px;margin:14px 0;"><div style="flex:1;height:0.5px;background:rgba(255,255,255,0.12);"></div><div style="font-size:11px;color:#8888aa;">or</div><div style="flex:1;height:0.5px;background:rgba(255,255,255,0.12);"></div></div>
+        <button style="width:100%;background:transparent;color:#f0f0f0;border:0.5px solid rgba(255,255,255,0.2);border-radius:8px;font-size:14px;padding:13px;font-weight:700;cursor:pointer;" onclick="continueAsGuest()">Continue without an account</button>
+        <div style="font-size:11px;color:#8888aa;margin-top:8px;text-align:center;line-height:1.5;">Your workouts stay on this device. You can create an account later to back them up and sync — nothing is lost.</div>
+        <button id="authGuestBack" style="display:none;width:100%;background:transparent;color:#c8ff00;border:none;font-size:13px;padding:12px 0 0;font-weight:700;cursor:pointer;" onclick="closeAuthToGuest()">← Back to my workouts</button>
+      </div>
       <div id="authError" style="display:none;margin-top:16px;padding:12px;background:rgba(255,77,106,0.1);border-radius:8px;border:0.5px solid rgba(255,77,106,0.25);color:#ff4d6a;font-size:13px;font-weight:700;"></div>
 
       <!-- EMAIL CONFIRMATION SCREEN -->
