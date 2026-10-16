@@ -19,11 +19,13 @@
 //   happens when the user accepts the "Update available" banner. This
 //   avoids changing the running page out from under a user mid-workout.
 
-const CACHE_NAME = 'maxgainz-v2';
+const CACHE_NAME = 'maxgainz-v3';
 
 const SHELL = [
   '/',
   '/index.html',
+  // window.MGNative, loaded by a <script> tag in index.html's <head>.
+  '/native-bridge.js',
   // Inter variable font — CSS resolves to woff2 files cached lazily by
   // the cache-first handler below.
   'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap',
@@ -76,6 +78,23 @@ self.addEventListener('fetch', e => {
   // Never intercept the ExerciseDB proxy — media URLs rotate weekly and the
   // plan forbids caching, so these must always hit the network fresh.
   if (url.pathname.startsWith('/api/')) return;
+
+  // Native bridge script: network-first, cache fallback (same as the HTML),
+  // so a fresh deploy is picked up online and the page still gets it offline.
+  if (url.origin === self.location.origin && url.pathname === '/native-bridge.js') {
+    e.respondWith(
+      fetch(e.request)
+        .then(res => {
+          if (res.ok) {
+            const clone = res.clone();
+            caches.open(CACHE_NAME).then(c => c.put('/native-bridge.js', clone));
+          }
+          return res;
+        })
+        .catch(() => caches.match('/native-bridge.js'))
+    );
+    return;
+  }
 
   // Navigation requests (HTML): network-first, cache fallback.
   if (e.request.mode === 'navigate') {
