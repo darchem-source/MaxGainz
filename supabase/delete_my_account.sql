@@ -30,9 +30,10 @@
 --   • Every row in every public table that has a user_id column. Today that is:
 --       sessions        workout history
 --       custom_weights  working weights, plus the "__profile__" row (name, email,
---                       date of birth, body-weight log, measurements, daily
---                       notes, custom workouts, preferences) and the
---                       "__dashboard__" summary row
+--                       date of birth, profile photo, onboarding answers,
+--                       body-weight log, measurements, daily notes, custom
+--                       workouts, preferences) and the "__dashboard__"
+--                       summary row
 --       feedback        feedback sent while signed in, including attached
 --                       screenshots (also matched by the account's email)
 --     It also covers any table added later that has a user_id column.
