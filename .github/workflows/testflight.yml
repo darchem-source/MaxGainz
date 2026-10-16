@@ -46,7 +46,8 @@ jobs:
             let m, n = 0;
             while ((m = re.exec(html))) {
               if (/type\s*=\s*["\x27](?!module|text\/javascript)/i.test(m[1])) continue;
-              const file = `/tmp/inline-${n++}.mjs`;
+              // .js = classic script (sloppy mode), which is how the browser runs an inline <script>
+              const file = `/tmp/inline-${n++}.js`;
               fs.writeFileSync(file, m[2]);
               execFileSync("node", ["--check", file], { stdio: "inherit" });
             }

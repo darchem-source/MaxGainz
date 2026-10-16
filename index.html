@@ -5183,10 +5183,6 @@ function renderTodayCustom(wk){
     </div>`).join('');
 }
 
-function startCustomWorkoutByName(name){
-  const idx=customWorkouts.findIndex(w=>w.name===name);
-  if(idx>=0) startCustomWorkout(idx);
-}
 
 // ── HIIT TODAY VIEW ──
 function renderTodayHIIT(){
