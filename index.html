@@ -14533,7 +14533,7 @@ function generateShareCard(){
   const stats = [
     { label: 'DURATION', value: time, color: '#c8ff00' },
     { label: 'SETS', value: sets, color: '#00d4ff' },
-    { label: 'VOLUME', value: vol + 'kg', color: '#4caf50' }
+    { label: 'VOLUME', value: /kg$/i.test(vol) ? vol : vol + ' kg', color: '#4caf50' } // finVol is '1.8k' or '850'
   ];
   stats.forEach((s, i) => {
     const x = 70 + i * (boxW + boxGap);
