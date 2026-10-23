@@ -3,8 +3,8 @@
 // Strategy:
 //   - Navigations (HTML page load): network-first with cache fallback.
 //     Fresh deploys reach users on next online launch; offline still works.
-//   - Static external assets (Google Fonts CSS+woff2, Lottie CDN):
-//     cache-first. They rarely change and we want fast offline launch.
+//   - Bundled static assets (vendor/: Inter font, Lottie player): cache-first.
+//     They are versioned with the shell and we want a fast offline launch.
 //   - Supabase API: never intercepted — let it fail naturally when offline.
 //
 // Versioning:
@@ -19,20 +19,20 @@
 //   happens when the user accepts the "Update available" banner. This
 //   avoids changing the running page out from under a user mid-workout.
 
-const CACHE_NAME = 'maxgainz-v2';
+const CACHE_NAME = 'maxgainz-v4';
 
 const SHELL = [
   '/',
   '/index.html',
-  // Inter variable font — CSS resolves to woff2 files cached lazily by
-  // the cache-first handler below.
-  'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap',
-  // Lottie player used for completion celebrations.
-  'https://unpkg.com/lottie-web@5.12.2/build/player/lottie_light.min.js'
+  // window.MGNative, loaded by a <script> tag in index.html's <head>.
+  '/native-bridge.js',
+  // Bundled Inter variable font and the Lottie player (no third-party CDNs).
+  '/vendor/inter-latin-wght-normal.woff2',
+  '/vendor/lottie_light.min.js'
 ];
 
-// Hosts whose responses we cache lazily on first successful fetch.
-const STATIC_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com', 'unpkg.com'];
+// Same-origin paths cached lazily (cache-first) on first successful fetch.
+const STATIC_PREFIX = '/vendor/';
 
 // ── INSTALL: pre-cache the app shell ──
 self.addEventListener('install', e => {
@@ -77,6 +77,23 @@ self.addEventListener('fetch', e => {
   // plan forbids caching, so these must always hit the network fresh.
   if (url.pathname.startsWith('/api/')) return;
 
+  // Native bridge script: network-first, cache fallback (same as the HTML),
+  // so a fresh deploy is picked up online and the page still gets it offline.
+  if (url.origin === self.location.origin && url.pathname === '/native-bridge.js') {
+    e.respondWith(
+      fetch(e.request)
+        .then(res => {
+          if (res.ok) {
+            const clone = res.clone();
+            caches.open(CACHE_NAME).then(c => c.put('/native-bridge.js', clone));
+          }
+          return res;
+        })
+        .catch(() => caches.match('/native-bridge.js'))
+    );
+    return;
+  }
+
   // Navigation requests (HTML): network-first, cache fallback.
   if (e.request.mode === 'navigate') {
     e.respondWith(
@@ -97,15 +114,13 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // Static external assets (font CSS, woff2, Lottie player): cache-first.
-  if (STATIC_HOSTS.includes(url.hostname)) {
+  // Bundled static assets (font, Lottie player): cache-first.
+  if (url.origin === self.location.origin && url.pathname.startsWith(STATIC_PREFIX)) {
     e.respondWith(
       caches.match(e.request).then(cached => {
         if (cached) return cached;
         return fetch(e.request).then(res => {
-          // Cache both regular (CORS) and opaque (no-CORS) responses so
-          // cross-origin font/JS assets work offline.
-          if (res && (res.ok || res.type === 'opaque')) {
+          if (res && res.ok) {
             const clone = res.clone();
             caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
           }

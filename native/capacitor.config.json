@@ -1,0 +1,38 @@
+{
+  "appId": "com.maxgainz.app",
+  "appName": "Max Gainz",
+  "webDir": "www",
+  "backgroundColor": "#0a0a0f",
+  "loggingBehavior": "debug",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#0a0a0f",
+    "scheme": "capacitor",
+    "limitsNavigationsToAppBoundDomains": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": true,
+      "launchShowDuration": 3000,
+      "backgroundColor": "#0a0a0f",
+      "showSpinner": false
+    },
+    "SystemBars": {
+      "style": "DARK"
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "overlaysWebView": true
+    },
+    "CapacitorHttp": {
+      "enabled": false
+    },
+    "CapacitorCookies": {
+      "enabled": false
+    },
+    "MaxGainzNative": {
+      "_comment": "RevenueCat PUBLIC Apple SDK key (starts with appl_). From RevenueCat \u2192 Project \u2192 Apps \u2192 Max Gainz (App Store). Copied into www/native-bridge.js by prepare-www; never commit a secret key here.",
+      "revenueCatApiKey": "appl_REPLACE_WITH_REVENUECAT_PUBLIC_KEY"
+    }
+  }
+}

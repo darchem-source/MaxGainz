@@ -1,3 +1,6 @@
+# The web app has no build step: Netlify publishes the repo root as-is.
+# The iOS shell's npm project lives in native/ (not the repo root), so Netlify
+# finds no package.json here and never runs npm install.
 [build]
   publish = "."
 
