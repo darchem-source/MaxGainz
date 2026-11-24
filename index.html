@@ -1165,8 +1165,9 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
           <div style="background:var(--surface2);border-radius:12px;padding:14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;">
             <div>
               <div style="font-size:13px;color:var(--text);" id="storageBadge">💾 0 sessions saved</div>
-              <div style="font-size:11px;color:var(--text2);margin-top:2px;" id="syncStatus">☁️ Syncing…</div>
+              <div style="font-size:11px;color:var(--text2);margin-top:2px;" id="syncStatus" role="status" aria-live="polite">💾 Saved on this device</div>
             </div>
+            <button id="syncRetryBtn" onclick="retrySync()" style="display:none;flex-shrink:0;background:var(--surface3);border:0.5px solid var(--border);border-radius:10px;color:var(--text);font-size:12px;font-weight:700;padding:8px 12px;cursor:pointer;">Retry</button>
           </div>
           
           <!-- Data actions -->
@@ -3730,7 +3731,8 @@ async function sbFetch(path, options = {}, _isRetry = false) {
         // force-logging out (which would destroy in-progress sessions / race with
         // other concurrent sbFetch calls all hitting 401 simultaneously).
         console.warn('Token refresh failed after 401 — session data saved locally');
-        setSyncStatus('offline');
+        _lastSyncError = 'auth'; // retrying can't help until the user signs in again
+        setSyncStatus('auth');
         if(!_authExpiredToastShown){
           _authExpiredToastShown = true;
           showToast('⚠️ Session expired — please sign in again to sync', 5000);
@@ -3744,10 +3746,13 @@ async function sbFetch(path, options = {}, _isRetry = false) {
     const text = await res.text();
     if (!res.ok) {
       console.warn('Supabase error', res.status, text);
+      _lastSyncError = 'http';
       return null;
     }
+    _lastSyncError = null;
     return text ? JSON.parse(text) : [];
   } catch(e) {
+    _lastSyncError = e.name === 'AbortError' ? 'timeout' : 'network';
     if(e.name === 'AbortError'){
       console.warn('Supabase request timed out:', path);
       if(!options.silent) showToast('⚠️ Sync timed out — saved locally'); // silent: background writes nobody asked for
@@ -3760,16 +3765,249 @@ async function sbFetch(path, options = {}, _isRetry = false) {
   }
 }
 
+// ── PENDING SYNC QUEUE ──
+// Local-first: every write lands on this device first. Anything that has not
+// been CONFIRMED by the cloud is tracked here so the UI never claims "synced"
+// for data that only exists locally, and so failed writes are retried
+// (online / app resume / backoff timer / manual Retry) instead of silently lost.
+//   profile      — the __profile__ blob has local changes the cloud hasn't confirmed
+//   weights      — exercise_name → weight awaiting a confirmed upsert
+//   deletes      — cloud session ids whose DELETE hasn't been confirmed
+//   deletedKeys  — _sessionKey()s deleted locally before they had a cloud_id
+// Sessions themselves need no entry: a session without cloud_id IS pending.
+// Persisted per account (stamped userId; a different account ignores it) and
+// wiped by authLogout(). `var` + lazy init: safe if touched during early boot.
+var PENDING_KEY = 'maxgainz_pending_v1';
+var LAST_SYNC_KEY = 'maxgainz_last_synced';
+var HYDRATED_KEY = 'maxgainz_hydrated_uid';
+var _pending = null;
+var _lastSyncError = null;      // 'auth' | 'timeout' | 'network' | 'http' | null (set by sbFetch)
+var _syncInFlight = null;       // promise of the running flushPending(), if any
+var _syncRetryTimer = null;
+var _syncBackoff = 0;
+var _cloudLoadInFlight = false;
+var _cloudLoadedThisPage = false; // sessions are only re-uploaded after a load has merged (dedupes lost-response uploads)
+var _sessUploading = new Set();   // _sessionKey()s with a POST in flight
+var _profileRev = 0, _profileQueued = null, _profileChain = Promise.resolve();
+
+function _emptyPending(userId){
+  return { userId: userId || null, profile: false, weights: {}, deletes: [], deletedKeys: [] };
+}
+// Pure: normalise a stored pending record for `userId`; anything else → empty.
+function _normalisePending(raw, userId){
+  if(!userId || !raw || typeof raw !== 'object' || raw.userId !== userId) return _emptyPending(userId);
+  const out = _emptyPending(userId);
+  out.profile = raw.profile === true;
+  if(raw.weights && typeof raw.weights === 'object' && !Array.isArray(raw.weights)){
+    Object.keys(raw.weights).forEach(k => {
+      const w = raw.weights[k];
+      if(typeof k === 'string' && !k.startsWith('__') && typeof w === 'number' && isFinite(w)) out.weights[k] = w;
+    });
+  }
+  if(Array.isArray(raw.deletes)) out.deletes = raw.deletes.filter(id => typeof id === 'string' || typeof id === 'number');
+  if(Array.isArray(raw.deletedKeys)) out.deletedKeys = raw.deletedKeys.filter(k => typeof k === 'string');
+  return out;
+}
+function _P(){
+  const uid = (typeof getCurrentUserId === 'function') ? getCurrentUserId() : null;
+  if(!_pending || _pending.userId !== uid){
+    _pending = _normalisePending(uid ? lsGet(PENDING_KEY, null) : null, uid);
+  }
+  return _pending;
+}
+function _savePending(){
+  const p = _P();
+  if(!p.userId) return;
+  lsSet(PENDING_KEY, p);
+}
+function _unsyncedSessionCount(){
+  try {
+    if(typeof isAuthenticated !== 'function' || !isAuthenticated()) return 0;
+    return completedSessions.filter(s => s && !s.cloud_id).length;
+  } catch(e){ return 0; }
+}
+// Pure counter over a pending record (+ number of sessions lacking a cloud_id).
+function _countPending(p, unsyncedSessions){
+  if(!p) return unsyncedSessions || 0;
+  return (p.profile ? 1 : 0) + Object.keys(p.weights || {}).length + (p.deletes || []).length + (unsyncedSessions || 0);
+}
+function _pendingCount(){ return _countPending(_P(), _unsyncedSessionCount()); }
+
+function _isHydrated(){
+  const uid = getCurrentUserId();
+  return !!uid && lsGetRaw(HYDRATED_KEY) === uid;
+}
+function _markSynced(){
+  const uid = getCurrentUserId();
+  if(uid) lsSet(LAST_SYNC_KEY, { userId: uid, at: new Date().toISOString() });
+}
+function _lastSyncedAt(){
+  const v = lsGet(LAST_SYNC_KEY, null);
+  return (v && v.userId === getCurrentUserId() && v.at) ? v.at : null;
+}
+
+// Pure: the status line text. status ∈ syncing|uploading|synced|local|offline|error|auth.
+function _syncLabel(status, pendingCount, lastSyncedIso, signedIn, nowMs){
+  const n = pendingCount || 0;
+  const waiting = n ? ' · ' + n + ' waiting to sync' : '';
+  if(!signedIn) return '💾 Saved on this device · not signed in';
+  if(status === 'syncing' || status === 'uploading') return '🔄 Syncing…';
+  if(status === 'synced'){
+    let when = '';
+    if(lastSyncedIso){
+      const d = new Date(lastSyncedIso);
+      if(!isNaN(d)){
+        const now = new Date(typeof nowMs === 'number' ? nowMs : Date.now());
+        const hm = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+        when = ' · ' + (d.toDateString() === now.toDateString() ? hm : d.toLocaleDateString('en-GB',{day:'numeric',month:'short'}) + ' ' + hm);
+      }
+    }
+    return '☁️ Synced to account' + when;
+  }
+  if(status === 'auth')    return '⚠️ Sign in again to sync · saved on this device' + waiting;
+  if(status === 'offline') return '📱 Offline · saved on this device' + waiting;
+  if(status === 'error')   return '⚠️ Sync failed · saved on this device' + waiting;
+  return '💾 Saved on this device' + waiting; // 'local'
+}
+
+// Derive the honest status from real state and publish it.
+function _recomputeSyncStatus(){
+  if(typeof isAuthenticated !== 'function' || !isAuthenticated()){ setSyncStatus('local'); return; }
+  if(_cloudLoadInFlight){ setSyncStatus('syncing'); return; }
+  if(_syncInFlight || _sessUploading.size){ setSyncStatus('uploading'); return; }
+  if(_pendingCount() > 0){
+    setSyncStatus(_lastSyncError === 'auth' ? 'auth' : (navigator.onLine === false ? 'offline' : (_lastSyncError ? 'error' : 'local')));
+    return;
+  }
+  setSyncStatus('synced');
+}
+
+function _scheduleRetry(){
+  if(typeof isAuthenticated !== 'function' || !isAuthenticated()) return;
+  if(_lastSyncError === 'auth' || _syncRetryTimer) return;
+  if(_pendingCount() === 0) return;
+  _syncBackoff = Math.min(60000, Math.max(2000, _syncBackoff * 2));
+  _syncRetryTimer = setTimeout(() => {
+    _syncRetryTimer = null;
+    if(navigator.onLine === false) return; // the 'online' event resumes it
+    if(!_cloudLoadedThisPage) cloudLoadAll(); // load first (merges, then flushes)
+    else flushPending();
+  }, _syncBackoff);
+}
+
+// Upload one session; assigns cloud_id only on a confirmed insert.
+async function _uploadSession(s){
+  if(!s || s.cloud_id) return true;
+  const k = _sessionKey(s);
+  if(_sessUploading.has(k)) return false;
+  _sessUploading.add(k);
+  try {
+    const res = await cloudSaveSession(s, { silent: true });
+    const id = Array.isArray(res) && res[0] && res[0].id;
+    if(!id) return false;
+    const p = _P();
+    const di = p.deletedKeys.indexOf(k);
+    if(di >= 0){
+      // Deleted locally while the POST was in flight → delete the new cloud row too.
+      p.deletedKeys.splice(di, 1);
+      if(!p.deletes.includes(id)) p.deletes.push(id);
+      _savePending();
+    } else {
+      // cloudLoadAll's merge may have swapped `s` for a copy while the POST was
+      // in flight — tag the live copy too, or it would be uploaded twice.
+      let live = null;
+      try { live = completedSessions.find(x => x && x !== s && !x.cloud_id && _sessionKey(x) === k) || null; } catch(e){}
+      [s, live].forEach(o => { if(o){ o.cloud_id = id; delete o._needsUpload; } });
+      saveLocalCache();
+    }
+    _markSynced();
+    return true;
+  } finally {
+    _sessUploading.delete(k);
+  }
+}
+
+// Push every pending change. Single-flight; failures stay queued and back off.
+function flushPending(){
+  if(typeof isAuthenticated !== 'function' || !isAuthenticated()) return Promise.resolve(false);
+  if(_syncInFlight) return _syncInFlight;
+  _syncInFlight = (async () => {
+    _recomputeSyncStatus();
+    let ok = true;
+    const p = _P();
+    const same = () => getCurrentUserId() === p.userId; // abort if the account changes mid-flush
+    if(p.profile && _isHydrated()){
+      if(await cloudSaveProfile({ silent: true }) === null) ok = false;
+    }
+    for(const name of Object.keys(p.weights)){
+      if(!same()) return false;
+      if(await cloudSaveWeight(name, p.weights[name], { silent: true }) === null) ok = false;
+    }
+    for(const id of p.deletes.slice()){
+      if(!same()) return false;
+      const r = await sbFetch('sessions?id=eq.' + encodeURIComponent(id), { method: 'DELETE', silent: true });
+      if(r === null){ ok = false; continue; }
+      const i = p.deletes.indexOf(id);
+      if(i >= 0) p.deletes.splice(i, 1);
+      _savePending(); _markSynced();
+    }
+    if(_cloudLoadedThisPage){
+      for(const s of completedSessions.filter(x => x && !x.cloud_id)){
+        if(!same()) return false;
+        if(!(await _uploadSession(s))) ok = false;
+      }
+    }
+    return ok;
+  })().finally(() => {
+    _syncInFlight = null;
+    if(_pendingCount() === 0) _syncBackoff = 0;
+    else _scheduleRetry();
+    _recomputeSyncStatus();
+  });
+  return _syncInFlight;
+}
+
+// Manual "Retry" from the status line.
+async function retrySync(){
+  if(!isAuthenticated()){ showToast('Sign in to sync your data'); return; }
+  if(navigator.onLine === false){ showToast('📵 Still offline — your data is saved on this device'); return; }
+  clearTimeout(_syncRetryTimer); _syncRetryTimer = null; _syncBackoff = 0; _lastSyncError = null;
+  let ok;
+  if(!_cloudLoadedThisPage){
+    ok = await cloudLoadAll();
+    if(ok){ if(typeof applyCustomWeights === 'function') applyCustomWeights(); renderToday(); renderProgress(); }
+  } else {
+    ok = await flushPending();
+  }
+  if(_syncInFlight) await _syncInFlight;
+  const left = _pendingCount();
+  showToast(left === 0 ? '☁️ Synced to your account'
+    : _lastSyncError === 'auth' ? '⚠️ Session expired — sign in again to sync'
+    : '⚠️ ' + left + ' change' + (left === 1 ? '' : 's') + ' still waiting — saved on this device', { duration: 2600 });
+}
+
+// Toast for a user-initiated save: say WHERE it is saved, then the cloud outcome.
+function _announceSave(what, cloudPromise){
+  if(!isAuthenticated()){ showToast('✅ ' + what + ' saved on this device'); return; }
+  showToast('✅ ' + what + ' saved on this device · syncing…');
+  Promise.resolve(cloudPromise).then(res => {
+    showToast(res !== null && res !== undefined
+      ? '☁️ ' + what + ' saved and synced to your account'
+      : '💾 ' + what + ' saved on this device · will sync automatically', { duration: 2600 });
+  }).catch(() => {});
+}
+
 // ── CLOUD SYNC ──
 // Architecture: localStorage = fast cache, Supabase = source of truth
 // On login: always load from Supabase (overrides local cache)
 // On write: write-through to Supabase immediately, update local cache
 // On load without auth: fall back to local cache
 
-async function cloudSaveSession(s) {
+async function cloudSaveSession(s, opts) {
   if(!isAuthenticated()) return null;
   const result = await sbFetch('sessions', {
     method: 'POST',
+    silent: !!(opts && opts.silent),
     body: JSON.stringify({
       user_id: getCurrentUserId(),
       date: s.date instanceof Date ? s.date.toISOString() : s.date,
@@ -3789,25 +4027,64 @@ async function cloudSaveSession(s) {
   return result;
 }
 
+// Pending-aware: the delete is queued BEFORE the request and only dequeued on
+// a confirmed DELETE, so a failed/offline delete is retried instead of the
+// session resurrecting on the next cloudLoadAll().
 async function cloudDeleteSession(s) {
-  if (!s.cloud_id) return;
-  return sbFetch('sessions?id=eq.' + s.cloud_id, { method: 'DELETE' });
+  if (!s || typeof isAuthenticated !== 'function' || !isAuthenticated()) return null;
+  const p = _P();
+  if (!s.cloud_id) {
+    // Never confirmed in the cloud — but its POST may be in flight, or may have
+    // landed with the response lost. Remember the key so either outcome is undone.
+    const k = _sessionKey(s);
+    if (!p.deletedKeys.includes(k)) { p.deletedKeys.push(k); _savePending(); }
+    _recomputeSyncStatus();
+    return null;
+  }
+  const id = s.cloud_id;
+  if (!p.deletes.includes(id)) { p.deletes.push(id); _savePending(); }
+  const res = await sbFetch('sessions?id=eq.' + encodeURIComponent(id), { method: 'DELETE' });
+  if (res !== null) {
+    const i = _P().deletes.indexOf(id);
+    if (i >= 0) { _P().deletes.splice(i, 1); _savePending(); }
+    _markSynced();
+  } else {
+    _scheduleRetry();
+  }
+  _recomputeSyncStatus();
+  return res;
 }
 
 // Write-through: save a single weight to Supabase immediately
-async function cloudSaveWeight(name, weight) {
+// Pending-aware: queued before the request, dequeued only on a confirmed upsert
+// of the SAME value (a newer local change made meanwhile stays queued).
+async function cloudSaveWeight(name, weight, opts) {
   if(!isAuthenticated()) return null;
   if(typeof name !== 'string' || name.startsWith('__')) return null; // '__' names are reserved system rows
-  return sbFetch('custom_weights', {
+  const uid = getCurrentUserId();
+  if(typeof weight === 'number' && isFinite(weight)){ _P().weights[name] = weight; _savePending(); }
+  const res = await sbFetch('custom_weights', {
     method: 'POST',
+    silent: !!(opts && opts.silent),
     extraHeaders: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
     body: JSON.stringify({
-      user_id: getCurrentUserId(),
+      user_id: uid,
       exercise_name: name,
       weight,
       updated_at: new Date().toISOString()
     })
   });
+  if(getCurrentUserId() === uid){
+    const p = _P();
+    if(res !== null){
+      if(p.weights[name] === weight){ delete p.weights[name]; _savePending(); }
+      _markSynced();
+    } else {
+      _scheduleRetry();
+    }
+    _recomputeSyncStatus();
+  }
+  return res;
 }
 
 // Write-through: save user profile + preferences to Supabase
@@ -3815,9 +4092,23 @@ async function cloudSaveWeight(name, weight) {
 //   __profile_a__ and __profile_b__ (split to stay under weight field limit)
 // NOTE: requires 'notes' column on custom_weights — see CLOUD_SETUP.md
 // Falls back gracefully if column doesn't exist
-async function cloudSaveProfile() {
+async function cloudSaveProfile(opts) {
   if(!isAuthenticated()) return null;
   if(typeof scheduleDashboardSummary === 'function') scheduleDashboardSummary(); // path/prefs changes reach the profile blob only
+  // Pending-aware: mark dirty first; cleared only when the cloud confirms an
+  // upload of THIS revision (or a later one). Until this device has loaded the
+  // account from the cloud at least once (_isHydrated), never upload: in-memory
+  // state may still be defaults and would overwrite the real cloud profile.
+  const uid = getCurrentUserId();
+  _profileRev++; _P().profile = true; _savePending();
+  if(!_isHydrated()){ _recomputeSyncStatus(); return null; }
+  // Serialise uploads (an older blob must never land after a newer one) and
+  // coalesce bursts: callers arriving before the queued upload starts share it.
+  if(_profileQueued) return _profileQueued;
+  const run = _profileChain.then(async () => {
+  _profileQueued = null;
+  if(getCurrentUserId() !== uid || !isAuthenticated()) return null;
+  const rev = _profileRev;
   // Read customHIITs from localStorage at save time (it may not be defined globally yet on first call)
   let cHIITs = [];
   try { cHIITs = JSON.parse(localStorage.getItem('maxgainz_custom_hiits') || '[]'); } catch(e){}
@@ -3844,52 +4135,89 @@ async function cloudSaveProfile() {
       demoSex:      userPreferences.demoSex === 'female' ? 'female' : 'male'
     }
   });
-  // Try to upsert — will silently fail if notes column doesn't exist yet
-  try {
-    return await sbFetch('custom_weights?on_conflict=user_id,exercise_name', {
-      method: 'POST',
-      extraHeaders: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
-      body: JSON.stringify({
-        user_id: getCurrentUserId(),
-        exercise_name: '__profile__',
-        weight: 0,
-        updated_at: new Date().toISOString(),
-        notes: blob
-      })
-    });
-  } catch(e) {
-    console.warn('cloudSaveProfile: notes column may not exist yet. Run the migration in Supabase SQL editor:\nALTER TABLE custom_weights ADD COLUMN IF NOT EXISTS notes TEXT;');
-    return null;
+  const res = await sbFetch('custom_weights?on_conflict=user_id,exercise_name', {
+    method: 'POST',
+    silent: !!(opts && opts.silent),
+    extraHeaders: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify({
+      user_id: uid,
+      exercise_name: '__profile__',
+      weight: 0,
+      updated_at: new Date().toISOString(),
+      notes: blob
+    })
+  });
+  if(getCurrentUserId() === uid){
+    if(res !== null){
+      if(rev === _profileRev){ _P().profile = false; _savePending(); }
+      _markSynced();
+    } else {
+      _scheduleRetry();
+    }
+    _recomputeSyncStatus();
   }
+  return res;
+  });
+  _profileQueued = run;
+  _profileChain = run.catch(() => null);
+  return run;
 }
 
 // Load everything from Supabase — sessions, weights, profile
 // This is the source of truth on login and app start
 async function cloudLoadAll() {
   if(!isAuthenticated()) return false;
-  setSyncStatus('syncing');
-  _dashWeightsOk = false; // state is reset below; no dashboard push until weights+profile reload
   const userId = getCurrentUserId();
-
-  // Reset profile to defaults before loading — ensures a new user never inherits
-  // a previous user's in-memory state if their Supabase account has no profile blob yet
-  Object.keys(userProfile).forEach(k => delete userProfile[k]);
-  Object.assign(userProfile, { firstName:'', lastName:'', email:'', gender:'', dob:'', heightCM:180, weight:80 });
-  // Always clear path before cloud load — cloud is source of truth
-  userPath = null;
-  localStorage.removeItem('maxgainz_path');
-  let sessRows, weightRows;
+  // FETCH FIRST. Nothing local is reset until BOTH requests have succeeded: a
+  // failed or partial load must leave this device's data exactly as it was
+  // (previously the profile/path were wiped up front, and a later save could
+  // then upload that blank state over the real cloud profile).
+  _cloudLoadInFlight = true;
+  setSyncStatus('syncing');
+  let sessRows = null, weightRows = null;
   try {
     [sessRows, weightRows] = await Promise.all([
       sbFetch('sessions?user_id=eq.' + userId + '&order=date.asc&limit=500'),
       sbFetch('custom_weights?user_id=eq.' + userId)
     ]);
   } catch(e) {
-    setSyncStatus('offline');
+    sessRows = weightRows = null;
+  } finally {
+    _cloudLoadInFlight = false;
+  }
+
+  if (!Array.isArray(sessRows) || !Array.isArray(weightRows) || getCurrentUserId() !== userId) {
+    // Failed, partial, or the account changed mid-request: report it honestly
+    // and keep everything local. Never "synced".
+    if (getCurrentUserId() === userId) {
+      setSyncStatus(_lastSyncError === 'auth' ? 'auth' : (navigator.onLine === false ? 'offline' : 'error'));
+      _scheduleRetry();
+    }
     return false;
   }
 
-  if (sessRows === null) { setSyncStatus('offline'); return false; }
+  _dashWeightsOk = false; // state is reset below; no dashboard push until weights+profile reload
+  const _pend = _P();
+  // Drop sessions whose delete is still queued, and undo uploads that landed for
+  // sessions deleted before they had a cloud_id (key match) — queue those ids.
+  sessRows = sessRows.filter(r => !_pend.deletes.includes(r.id));
+  const _profileRow = weightRows.find(r => r && r.exercise_name === '__profile__' && r.notes);
+  // Local profile changes the cloud never confirmed win over the cloud copy —
+  // but only once this device has been hydrated from the cloud for this account
+  // (otherwise "local" may just be defaults), or when the cloud has no blob yet.
+  const _profileLocalWins = _pend.profile && (_isHydrated() || !_profileRow);
+  if (_pend.profile && !_profileLocalWins) { _pend.profile = false; _savePending(); }
+
+  if (!_profileLocalWins) {
+    // Reset profile to defaults before applying the cloud blob — ensures a new
+    // user never inherits a previous user's in-memory state if their Supabase
+    // account has no profile blob yet. Safe now: both fetches succeeded.
+    Object.keys(userProfile).forEach(k => delete userProfile[k]);
+    Object.assign(userProfile, { firstName:'', lastName:'', email:'', gender:'', dob:'', heightCM:180, weight:80 });
+    // Cloud is source of truth for the path
+    userPath = null;
+    localStorage.removeItem('maxgainz_path');
+  }
 
   // Cloud is authoritative, BUT we no longer blindly discard local sessions —
   // that silently lost any workout logged offline that never reached the cloud.
@@ -3917,41 +4245,52 @@ async function cloudLoadAll() {
       activityEmoji: r.activity_emoji,
       intensity: r.intensity,
       xpAwarded: r.xp_awarded
-    }));
+    })).filter(c => {
+      const k = _sessionKey(c);
+      if (!_pend.deletedKeys.includes(k)) return true;
+      if (!_pend.deletes.includes(c.cloud_id)) _pend.deletes.push(c.cloud_id);
+      _pend.deletedKeys.splice(_pend.deletedKeys.indexOf(k), 1);
+      _savePending();
+      return false;
+    });
+    // A deleted key with no cloud row and no upload in flight is settled.
+    const _before = _pend.deletedKeys.length;
+    _pend.deletedKeys = _pend.deletedKeys.filter(k => _sessUploading.has(k));
+    if (_pend.deletedKeys.length !== _before) _savePending();
 
     const merged = _mergeSessions(_localSnapshot, cloudArr).map(s => _validateSession(s) || s);
     completedSessions.length = 0;
     merged.forEach(s => completedSessions.push(s));
     _normalizeSessionWeights(completedSessions); // repair amended-weight sessions
 
-    // Re-upload any local-only (offline) sessions that never reached the cloud.
-    const _toUpload = completedSessions.filter(s => s._needsUpload);
-    _toUpload.forEach(s => {
-      delete s._needsUpload;
-      if(typeof cloudSaveSession === 'function'){
-        cloudSaveSession(s).then(res => {
-          if(Array.isArray(res) && res[0] && res[0].id){ s.cloud_id = res[0].id; saveLocalCache(); }
-        }).catch(()=>{});
-      }
-    });
-    if(_toUpload.length){ console.log('[sync] recovered', _toUpload.length, 'offline session(s)'); saveLocalCache(); }
+    // Local-only (offline) sessions are re-uploaded by flushPending() below —
+    // it keeps them queued until the cloud confirms, with retry/backoff.
+    const _toUpload = completedSessions.filter(s => !s.cloud_id).length;
+    if(_toUpload){ console.log('[sync] recovering', _toUpload, 'offline session(s)'); saveLocalCache(); }
   }
 
   // Load weights + profile blob
   if (Array.isArray(weightRows)) {
     weightRows.forEach(r => {
-      if (r.exercise_name === '__profile__' && r.notes) {
+      if (r.exercise_name === '__profile__' && r.notes && _profileLocalWins) {
+        // This device holds newer, unconfirmed profile changes — keep them;
+        // flushPending() below uploads them. (Cloud blob intentionally skipped.)
+      } else if (r.exercise_name === '__profile__' && r.notes) {
         // Restore profile, preferences, custom workouts from cloud
         try {
           const blob = JSON.parse(r.notes);
-          if (blob.userProfile) Object.assign(userProfile, blob.userProfile);
-          if (blob.todayProg) todayProg = blob.todayProg;
-          if (blob.customWorkouts) {
+          // Cloud data is untrusted input: sanitise user-named collections
+          // (names reach HTML) when the sanitisers are available.
+          if (Array.isArray(blob.customWorkouts) && typeof _sanitiseCustomWorkouts === 'function') blob.customWorkouts = _sanitiseCustomWorkouts(blob.customWorkouts);
+          if (Array.isArray(blob.customHIITs) && typeof _sanitiseCustomHIITs === 'function') blob.customHIITs = _sanitiseCustomHIITs(blob.customHIITs);
+          if (blob.userProfile && typeof blob.userProfile === 'object' && !Array.isArray(blob.userProfile)) Object.assign(userProfile, blob.userProfile);
+          if (typeof blob.todayProg === 'string' && blob.todayProg) todayProg = blob.todayProg;
+          if (Array.isArray(blob.customWorkouts)) {
             customWorkouts.length = 0;
             blob.customWorkouts.forEach(w => customWorkouts.push(w));
             localStorage.setItem('maxgainz_custom', JSON.stringify(customWorkouts));
           }
-          if (blob.customHIITs) {
+          if (Array.isArray(blob.customHIITs)) {
             // Update local store and merge into runtime HIIT array
             localStorage.setItem('maxgainz_custom_hiits', JSON.stringify(blob.customHIITs));
             if(typeof customHIITs !== 'undefined'){
@@ -4036,6 +4375,8 @@ async function cloudLoadAll() {
       } else if (typeof r.exercise_name === 'string' && r.exercise_name.startsWith('__')) {
         // Reserved system rows (__profile__ without notes, the __dashboard__
         // summary) are never exercise weights — skip them.
+      } else if (Object.prototype.hasOwnProperty.call(_pend.weights, r.exercise_name)) {
+        // A local weight change the cloud hasn't confirmed — keep the local value.
       } else {
         customWeights[r.exercise_name] = r.weight;
       }
@@ -4046,7 +4387,14 @@ async function cloudLoadAll() {
 
   // Update local cache from cloud data
   saveLocalCache();
-  setSyncStatus('synced');
+  lsSetRaw(HYDRATED_KEY, userId); // this device now holds the account's real cloud state
+  _markSynced();
+  _cloudLoadedThisPage = true;
+  // Push anything still pending (offline sessions, queued deletes, local-wins
+  // profile, unconfirmed weights). The status stays "Syncing…" until it's done,
+  // and only reads "Synced to account" when nothing is left.
+  flushPending();
+  _recomputeSyncStatus();
   return true;
 }
 
@@ -4166,9 +4514,12 @@ function openDataHealth(){
   // 3) Sync state (only meaningful when signed in)
   if(typeof isAuthenticated === 'function' && isAuthenticated()){
     const unsynced = all.filter(s => !s.cloud_id).length;
+    const _pq = _P();
+    const otherPending = (_pq.profile ? 1 : 0) + Object.keys(_pq.weights).length + _pq.deletes.length;
     checks.push(unsynced === 0
       ? ['ok', 'Every session is backed up to the cloud']
-      : ['warn', `${unsynced} session(s) not yet synced — they'll re-upload on next online load`]);
+      : ['warn', `${unsynced} session(s) saved on this device only — they upload automatically when you're online (or tap Retry in Settings)`]);
+    if(otherPending) checks.push(['warn', `${otherPending} other change(s) (profile, weights or deletions) waiting to sync`]);
   } else {
     checks.push(['info', 'Not signed in — data is local only']);
   }
@@ -4478,6 +4829,10 @@ function _refreshNotificationButton(){
 // Fire OS notification when the app becomes visible (tab focus / app foreground)
 document.addEventListener('visibilitychange', () => {
   if(document.visibilityState === 'visible'){
+    // Resume: retry anything the cloud hasn't confirmed (no-op when nothing is pending).
+    if(typeof flushPending === 'function' && isAuthenticated() && navigator.onLine !== false && _lastSyncError !== 'auth' && _pendingCount() > 0){
+      if(_cloudLoadedThisPage) flushPending(); else cloudLoadAll();
+    }
     maybeFireOSNotification();
     // Refresh the time-of-day greeting on resume — a PWA foregrounded hours
     // (or a day) after it was last rendered would otherwise keep the stale
@@ -4691,17 +5046,12 @@ async function saveStore(newSession = null, newWeights = null) {
   saveLocalCache(); // immediate local update
   const promises = [];
 
-  if (newSession) {
-    setSyncStatus('syncing');
-    promises.push(
-      cloudSaveSession(newSession).then(result => {
-        if (Array.isArray(result) && result[0]?.id) {
-          newSession.cloud_id = result[0].id;
-          saveLocalCache(); // re-cache with cloud_id
-        }
-        setSyncStatus(Array.isArray(result) ? 'synced' : 'offline');
-      })
-    );
+  if (newSession && isAuthenticated()) {
+    // Pending until the cloud returns an id (a session without cloud_id IS the
+    // queue entry); failures are retried by flushPending() with backoff.
+    const up = _uploadSession(newSession);
+    _recomputeSyncStatus();
+    promises.push(up.then(ok => { if(!ok) _scheduleRetry(); }));
   }
 
   if (newWeights) {
@@ -4712,6 +5062,7 @@ async function saveStore(newSession = null, newWeights = null) {
   }
 
   await Promise.allSettled(promises);
+  if (isAuthenticated()) _recomputeSyncStatus();
   updateStorageBadge();
 }
 
@@ -4725,6 +5076,12 @@ function _isColdSyncing(){
 }
 
 function setSyncStatus(status){
+  // Honesty guard: callers may say 'synced' after a load, but if anything is
+  // still unconfirmed by the cloud the account is NOT fully synced.
+  if(status === 'synced' && typeof _pendingCount === 'function'){
+    if(_syncInFlight || (_sessUploading && _sessUploading.size)) status = 'uploading';
+    else if(_pendingCount() > 0) status = _lastSyncError === 'auth' ? 'auth' : (navigator.onLine === false ? 'offline' : (_lastSyncError ? 'error' : 'local'));
+  }
   const wasCold = _isColdSyncing();
   _isCloudSyncing = (status === 'syncing');
   bus.emit('sync:status', { status, wasCold, isCold: _isColdSyncing() });
@@ -4738,9 +5095,13 @@ function setSyncStatus(status){
 bus.on('sync:status', ({ status }) => {
   const el = document.getElementById('syncStatus');
   if(!el) return;
-  const states = { syncing:'🔄 Syncing…', synced:'☁️ Synced', offline:'📱 Offline (local)', error:'⚠️ Sync failed' };
-  el.textContent = states[status] || '';
-  el.style.color = status === 'synced' ? 'var(--green)' : status === 'offline' ? 'var(--orange)' : 'var(--text2)';
+  const signedIn = typeof isAuthenticated === 'function' && isAuthenticated();
+  const pending = (typeof _pendingCount === 'function') ? _pendingCount() : 0;
+  el.textContent = _syncLabel(status, pending, (typeof _lastSyncedAt === 'function' && signedIn) ? _lastSyncedAt() : null, signedIn);
+  el.style.color = status === 'synced' ? 'var(--green)'
+    : (status === 'offline' || status === 'error' || status === 'auth') ? 'var(--orange)' : 'var(--text2)';
+  const btn = document.getElementById('syncRetryBtn');
+  if(btn) btn.style.display = (signedIn && status !== 'syncing' && status !== 'uploading' && status !== 'synced' && status !== 'auth' && (pending > 0 || status === 'error')) ? 'inline-block' : 'none';
 });
 
 // Floating sync banner — only show during cold-start sync (no cached data)
@@ -16206,10 +16567,10 @@ function saveBWEntry() {
   userProfile.bodyWeight = weightKg;
   userProfile.bodyWeightUnit = 'kg';
   saveLocalCache();
-  cloudSaveProfile();
+  const _cloud = cloudSaveProfile();
   renderBWRecentList();
   renderBWChart();
-  showToast('✅ Weight logged!');
+  _announceSave('Weight', _cloud);
 }
 
 function deleteBWEntry(date) {
@@ -16281,10 +16642,10 @@ function saveMeasureEntry(){
   if(idx >= 0) measurementsLog[idx] = entry; else measurementsLog.push(entry);
   measurementsLog.sort((a,b) => String(a.date).localeCompare(String(b.date)));
   saveLocalCache();
-  if(typeof cloudSaveProfile === 'function') cloudSaveProfile();
+  const _cloud = cloudSaveProfile();
   renderMeasureRecentList();
   renderMeasureCard();
-  showToast('✅ Measurements logged!');
+  _announceSave('Measurements', _cloud);
 }
 function deleteMeasureEntry(date){
   measurementsLog = measurementsLog.filter(e => e.date !== date);
@@ -18193,7 +18554,7 @@ function renderMuscleBalance(){
 function deleteSession(idx){
   if(!confirm('Delete this session? This cannot be undone.')) return;
   const s = completedSessions[idx];
-  cloudDeleteSession(s);
+  cloudDeleteSession(s); // queued + retried until the cloud confirms (see cloudDeleteSession)
   completedSessions.splice(idx,1);
   saveLocalFallback();
   renderProgress();
@@ -18799,11 +19160,11 @@ function saveDailyNote(){
   if(typeof dailyNotes !== 'object' || !dailyNotes) dailyNotes = {};
   if(text) dailyNotes[key] = text; else delete dailyNotes[key];
   if(typeof saveLocalCache === 'function') saveLocalCache();
-  if(typeof cloudSaveProfile === 'function') cloudSaveProfile();
+  const _cloud = cloudSaveProfile();
   const mod = document.getElementById('dailyNoteMod');
   if(mod) mod.classList.remove('open');
   _dailyNoteEditKey = null;
-  if(typeof showToast === 'function') showToast(text ? '📝 Note saved' : 'Note cleared', 1600);
+  _announceSave(text ? 'Note' : 'Note removal', _cloud);
   if(typeof renderToday === 'function') renderToday();
   if(typeof renderCalendar === 'function') renderCalendar();
 }
@@ -22645,7 +23006,12 @@ async function confirmClear(){
   completedSessions.length=0;
   localStorage.removeItem(STORAGE_KEY);
   saveLocalFallback();
-  if(signedIn) setSyncStatus('synced');
+  if(signedIn){
+    // Every cloud session is gone, so queued session deletes are moot.
+    const _pq = _P(); _pq.deletes = []; _pq.deletedKeys = []; _savePending();
+    _markSynced();
+    _recomputeSyncStatus();
+  }
   renderProgress();
   renderToday();
 }
@@ -22812,6 +23178,9 @@ function deleteManualActivity(idx){
   if(!s || !s.manualActivity) return;
   const label = s.day || 'this activity';
   if(!confirm(`Delete "${label}"? This will remove it from your log and refund the XP awarded.`)) return;
+  // Delete the cloud copy too (queued + retried) — previously only the local
+  // copy was removed, so the activity came back on the next cloud load.
+  if(typeof cloudDeleteSession === 'function') cloudDeleteSession(s);
   completedSessions.splice(idx, 1);
   // Persist via saveStore — pass null so it just updates the local cache
   // and triggers the cloud sync of completedSessions.
@@ -23172,10 +23541,11 @@ function saveProfile(){
 
   // Save to cloud + local cache
   saveLocalCache();
-  cloudSaveProfile();
-  
-  // Show confirmation
-  showToast('✅ Profile saved!');
+  const _cloud = cloudSaveProfile();
+
+  // Confirmation names WHERE it's saved; the cloud outcome follows (never a
+  // blanket "saved!" while only the local copy is guaranteed).
+  _announceSave('Profile', _cloud);
   renderToday(); // Update greeting if name changed
   renderBWChart(); // Reflect new weight in body weight graph
 }
@@ -23501,6 +23871,13 @@ function authLogout(){
   // Form-guide usage is the previous user's activity and feeds an achievement
   // ("Always Learning", +100 XP), so leaving it also inflates the next user's XP.
   localStorage.removeItem('maxgainz_fg_seen');
+  // Pending-sync queue + sync markers belong to this account: drop them so the
+  // next account can never upload (or be shown) the previous one's changes.
+  _pending = null; clearTimeout(_syncRetryTimer); _syncRetryTimer = null; _syncBackoff = 0;
+  _cloudLoadedThisPage = false; _lastSyncError = null; _sessUploading.clear(); _profileQueued = null;
+  localStorage.removeItem(PENDING_KEY);
+  localStorage.removeItem(LAST_SYNC_KEY);
+  localStorage.removeItem(HYDRATED_KEY);
 
   // ── Clear auth tokens ──
   saveAuthState(null, null);
@@ -23601,7 +23978,8 @@ function updateCloudStatus(){
   const emailEl = document.getElementById('cloudEmail');
   const toggleBtn = document.getElementById('cloudToggle');
   if(isAuthenticated()){
-    statusEl.textContent = '✅ Cloud synced';
+    // Signed in ≠ synced: the real sync state lives in #syncStatus.
+    statusEl.textContent = '✅ Signed in';
     statusEl.style.color = 'var(--green)';
     emailEl.textContent = getCurrentUserEmail();
     toggleBtn.textContent = 'Sign Out';
@@ -24172,10 +24550,11 @@ function updateOnlineStatus(){
     // Reconnected — retry cloud sync
     if(currentUser && authToken){
       showToast('🌐 Back online — syncing…');
-      setSyncStatus('syncing');
+      clearTimeout(_syncRetryTimer); _syncRetryTimer = null; _syncBackoff = 0;
+      if(_lastSyncError !== 'auth') _lastSyncError = null;
+      // cloudLoadAll merges, then flushPending() uploads everything queued while offline.
       cloudLoadAll().then(synced => {
         if(synced){ applyCustomWeights(); renderToday(); renderProgress(); }
-        setSyncStatus(synced ? 'synced' : 'offline');
         checkPathWeekProgression();
       });
     }

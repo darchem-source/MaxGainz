@@ -919,24 +919,245 @@ def gate_logout_scrub(js):
           f'cloudSaveProfile() uploads')
     return True
 
+# ── GATE: sync honesty (save/sync status accuracy + retry) ─────────────────
+# Drives the REAL sync functions (extracted by name) inside JavaScriptCore's
+# `jsc` shell — unlike JXA it drains microtasks, so async code really runs —
+# against a stubbed sbFetch that fails on demand (failure injection). Encodes
+# audit P1 "Save and sync status can overstate success":
+#   - a failed cloud write is a visible pending operation, never "synced"
+#   - a failed/partial cloudLoadAll leaves local state untouched
+#   - pending work survives a reload, is account-scoped, and is retried
+JSC = '/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc'
+
+SYNC_FUNCS = ['_emptyPending', '_normalisePending', '_P', '_savePending', '_unsyncedSessionCount',
+              '_countPending', '_pendingCount', '_isHydrated', '_markSynced', '_lastSyncedAt',
+              '_syncLabel', '_recomputeSyncStatus', '_scheduleRetry', '_uploadSession', 'flushPending',
+              'cloudSaveSession', 'cloudDeleteSession', 'cloudSaveWeight', 'cloudSaveProfile',
+              'cloudLoadAll', '_mergeSessions', '_validateSession', '_sessionKey',
+              '_normalizeSessionWeights', 'lsGet', 'lsSet', 'lsGetRaw', 'lsSetRaw', 'setSyncStatus']
+
+SYNC_PRELUDE = r'''
+var console = { log(){}, warn(){}, error(){}, info(){} };
+var __ls = {};
+var localStorage = { getItem(k){ return Object.prototype.hasOwnProperty.call(__ls,k) ? __ls[k] : null; },
+  setItem(k,v){ __ls[k] = String(v); }, removeItem(k){ delete __ls[k]; } };
+var navigator = { onLine: true };
+var __st = { auth: true, uid: 'userA' };
+function isAuthenticated(){ return __st.auth; }
+function getCurrentUserId(){ return __st.auth ? __st.uid : null; }
+var __calls = [], __timers = [], __toasts = [], __statuses = [];
+function setTimeout(f, ms){ __timers.push(ms); return __timers.length; }
+function clearTimeout(){}
+function showToast(m){ __toasts.push(String(m)); }
+var __net = function(path, opts){ return []; };
+async function sbFetch(path, opts){ opts = opts || {}; __calls.push({ path: path, method: opts.method || 'GET', body: opts.body || null }); return __net(path, opts); }
+var bus = { emit(ev, d){ __statuses.push(d.status); } };
+function _isColdSyncing(){ return false; }
+var _isCloudSyncing = false;
+function saveLocalCache(){} function applyCustomWeights(){}
+var STORAGE_KEY = 'maxgainz_v1';
+var _dashWeightsOk = false;
+var completedSessions = [], customWeights = {}, customWorkouts = [], HIIT = [];
+var userProfile = { firstName: 'Local', weight: 80 };
+var userPreferences = { audioEnabled: true };
+var todayProg = 'ULF', userPath = { id: 'p1' }, pathHistory = [], bodyWeightLog = [], measurementsLog = [], dailyNotes = {}, pbLifts = [];
+localStorage.setItem('maxgainz_path', JSON.stringify(userPath));
+function last(){ return __statuses[__statuses.length - 1]; }
+function posts(re){ return __calls.filter(c => c.method === 'POST' && re.test(c.path)).length; }
+'''
+
+SYNC_SCENARIOS = {
+    'profile save failure stays pending, persisted, retried, never synced': r'''
+      localStorage.setItem(HYDRATED_KEY, 'userA');
+      __net = () => null;
+      const r = await cloudSaveProfile();
+      const stored = JSON.parse(localStorage.getItem(PENDING_KEY) || '{}');
+      return r === null && _P().profile === true && stored.profile === true && __timers.length > 0 && last() !== 'synced';
+    ''',
+    'profile save success clears pending and records last-synced': r'''
+      localStorage.setItem(HYDRATED_KEY, 'userA');
+      __net = () => [];
+      await cloudSaveProfile();
+      return _P().profile === false && !!_lastSyncedAt() && last() === 'synced';
+    ''',
+    'un-hydrated device never uploads the profile blob (may be defaults)': r'''
+      __net = () => [];
+      const r = await cloudSaveProfile();
+      return r === null && posts(/custom_weights/) === 0 && _P().profile === true && last() !== 'synced';
+    ''',
+    'weight write failure queues, later success clears': r'''
+      __net = () => null;
+      await cloudSaveWeight('Bench Press', 80);
+      const queued = _P().weights['Bench Press'] === 80 && last() !== 'synced';
+      __net = () => [];
+      await cloudSaveWeight('Bench Press', 80);
+      return queued && !('Bench Press' in _P().weights) && last() === 'synced';
+    ''',
+    'failed delete is queued and filtered out of the next cloud load': r'''
+      __net = (p, o) => (o.method === 'DELETE') ? null : (/^sessions/.test(p) ? [{ id: 'c1', date: '2026-11-01T10:00:00Z', day: 'Push' }] : []);
+      await cloudDeleteSession({ cloud_id: 'c1', date: new Date('2026-11-01T10:00:00Z'), day: 'Push' });
+      const queued = _P().deletes.indexOf('c1') >= 0;
+      const ok = await cloudLoadAll();
+      if (_syncInFlight) await _syncInFlight;
+      return queued && ok === true && !completedSessions.some(s => s.cloud_id === 'c1');
+    ''',
+    'partial load (weights fail) keeps local profile/path and is not synced': r'''
+      __net = (p) => /^sessions/.test(p) ? [] : null;
+      const ok = await cloudLoadAll();
+      return ok === false && userProfile.firstName === 'Local' && userPath && userPath.id === 'p1'
+        && localStorage.getItem('maxgainz_path') !== null && __statuses.indexOf('synced') < 0;
+    ''',
+    'total load failure keeps local state and schedules a retry': r'''
+      __net = () => null;
+      completedSessions.push({ date: new Date('2026-11-02T10:00:00Z'), day: 'Legs' });
+      const ok = await cloudLoadAll();
+      return ok === false && userProfile.firstName === 'Local' && completedSessions.length === 1
+        && __timers.length > 0 && __statuses.indexOf('synced') < 0;
+    ''',
+    'pending local profile wins over the cloud blob on a hydrated device, then uploads': r'''
+      localStorage.setItem(HYDRATED_KEY, 'userA');
+      __net = () => null; await cloudSaveProfile();            // fails → pending
+      const blob = JSON.stringify({ userProfile: { firstName: 'Cloud' } });
+      __net = (p, o) => o.method === 'POST' ? [] : (/^sessions/.test(p) ? [] : [{ exercise_name: '__profile__', notes: blob }]);
+      const ok = await cloudLoadAll();
+      if (_syncInFlight) await _syncInFlight;
+      const up = __calls.filter(c => c.method === 'POST' && /custom_weights/.test(c.path)).pop();
+      return ok && userProfile.firstName === 'Local' && up && up.body.indexOf('Local') >= 0 && _P().profile === false && last() === 'synced';
+    ''',
+    'un-hydrated device takes the cloud blob over pending defaults': r'''
+      __net = () => [];
+      await cloudSaveProfile();                                 // not hydrated → pending, no upload
+      const blob = JSON.stringify({ userProfile: { firstName: 'Cloud' } });
+      __net = (p, o) => o.method === 'POST' ? [] : (/^sessions/.test(p) ? [] : [{ exercise_name: '__profile__', notes: blob }]);
+      const ok = await cloudLoadAll();
+      if (_syncInFlight) await _syncInFlight;
+      return ok && userProfile.firstName === 'Cloud' && _P().profile === false;
+    ''',
+    'offline session uploads after load; synced only once confirmed': r'''
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: 'userA' }));
+      completedSessions.push({ date: new Date('2026-11-03T10:00:00Z'), day: 'Pull' });
+      __net = (p, o) => o.method === 'POST' && /^sessions/.test(p) ? [{ id: 'new1' }] : [];
+      const ok = await cloudLoadAll();
+      if (_syncInFlight) await _syncInFlight;
+      return ok && completedSessions.length === 1 && completedSessions[0].cloud_id === 'new1' && last() === 'synced';
+    ''',
+    'failed session upload stays pending with a visible count': r'''
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: 'userA' }));
+      completedSessions.push({ date: new Date('2026-11-03T10:00:00Z'), day: 'Pull' });
+      __net = (p, o) => o.method === 'POST' ? null : [];
+      await cloudLoadAll();
+      if (_syncInFlight) await _syncInFlight;
+      const label = _syncLabel(last(), _pendingCount(), null, true);
+      return !completedSessions[0].cloud_id && last() !== 'synced' && /waiting to sync/.test(label) && /Saved on this device/.test(label);
+    ''',
+    'expired token stops retries and says sign in again': r'''
+      localStorage.setItem(HYDRATED_KEY, 'userA');
+      __net = () => { _lastSyncError = 'auth'; return null; };
+      await cloudSaveProfile();
+      return __timers.length === 0 && last() === 'auth' && /Sign in again/.test(_syncLabel('auth', 1, null, true));
+    ''',
+    'pending queue is account-scoped': r'''
+      __net = () => null;
+      await cloudSaveWeight('Squat', 100);
+      const a = _pendingCount();
+      __st.uid = 'userB';
+      const b = _pendingCount();
+      __st.uid = 'userA';
+      return a === 1 && b === 0 && _pendingCount() === 1;
+    ''',
+    'setSyncStatus refuses to claim synced while work is pending': r'''
+      __net = () => null;
+      await cloudSaveWeight('Row', 60);
+      __statuses.length = 0;
+      setSyncStatus('synced');
+      return __statuses[0] !== 'synced';
+    ''',
+    'status labels name where data is saved': r'''
+      return /Saved on this device/.test(_syncLabel('local', 2, null, true))
+        && /2 waiting to sync/.test(_syncLabel('local', 2, null, true))
+        && _syncLabel('syncing', 0, null, true) === '🔄 Syncing…'
+        && /^☁️ Synced to account · \d\d:\d\d$/.test(_syncLabel('synced', 0, new Date().toISOString(), true))
+        && /not signed in/.test(_syncLabel('synced', 0, null, false));
+    ''',
+}
+
+def _sync_module_vars(js):
+    """The `var` state block of the pending-sync module (declarations only)."""
+    m = re.search(r'// ── PENDING SYNC QUEUE ──([\s\S]*?)\nfunction _emptyPending', js)
+    if not m: return None
+    return '\n'.join(l for l in m.group(1).split('\n') if l.startswith('var '))
+
+def gate_sync(js):
+    if not os.path.exists(JSC):
+        print(f'  ✗ jsc not found at {JSC} — cannot run sync failure-injection tests'); return False
+    vars_src = _sync_module_vars(js)
+    if not vars_src:
+        print('  ✗ pending-sync module (// ── PENDING SYNC QUEUE ──) not found'); return False
+    srcs = []
+    for fn in SYNC_FUNCS:
+        src = extract_async_decl(js, fn)
+        if not src:
+            print(f'  ✗ {fn}() not found — update SYNC_FUNCS'); return False
+        srcs.append(src)
+    # Static ordering: cloudLoadAll must not reset local state before its fetch,
+    # and must not hard-code a 'synced' status.
+    load = extract_async_decl(js, 'cloudLoadAll')
+    fetch_at = load.find('await Promise.all')
+    problems = []
+    for pat in ['delete userProfile[', 'userPath = null', "removeItem('maxgainz_path')"]:
+        at = load.find(pat)
+        if fetch_at < 0 or (0 <= at < fetch_at):
+            problems.append(f'cloudLoadAll resets local state ({pat}) before the network fetch')
+    if "setSyncStatus('synced')" in load:
+        problems.append("cloudLoadAll hard-codes setSyncStatus('synced') — derive it via _recomputeSyncStatus()")
+    lo = extract_async_decl(js, 'authLogout') or ''
+    for pat in ['_pending = null', 'removeItem(PENDING_KEY)', 'removeItem(LAST_SYNC_KEY)', 'removeItem(HYDRATED_KEY)']:
+        if pat not in lo: problems.append(f'authLogout() does not reset sync queue state ({pat})')
+    dma = extract_async_decl(js, 'deleteManualActivity') or ''
+    if 'cloudDeleteSession' not in dma:
+        problems.append('deleteManualActivity() never deletes the cloud copy (activity resurrects on next load)')
+    for p in problems: print('  ✗ ' + p)
+    ok = not problems
+    base = SYNC_PRELUDE + '\n' + vars_src + '\n' + '\n'.join(srcs) + '\n'
+    passed = 0
+    for name, body in SYNC_SCENARIOS.items():
+        script = base + ('(async function(){ ' + body + ' })().then(r => print(r === true ? "PASS" : "FAIL " + JSON.stringify(r)), '
+                         'e => print("ERROR " + e + " " + (e && e.stack || "")));')
+        with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as t:
+            t.write(script); path = t.name
+        try:
+            out = subprocess.run([JSC, path], capture_output=True, text=True, timeout=60)
+            res = (out.stdout.strip() or out.stderr.strip()).split('\n')[-1]
+        finally:
+            os.unlink(path)
+        if res == 'PASS':
+            passed += 1
+        else:
+            ok = False; print(f'  ✗ {name}: {res[:300]}')
+    if ok:
+        print(f'  ✓ sync honesty: {passed} failure-injection scenarios + static ordering/sign-out checks')
+    return ok
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/6] parse')
+    print('[1/7] parse')
     p = gate_parse(js)
-    print('[2/6] invariants')
+    print('[2/7] invariants')
     inv = gate_invariants(js)
-    print('[3/6] video map')
+    print('[3/7] video map')
     vm = gate_videomap(js)
-    print('[4/6] inline handler wiring')
+    print('[4/7] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/6] auth log hygiene')
+    print('[5/7] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/6] sign-out scrub')
+    print('[6/7] sign-out scrub')
     sc = gate_logout_scrub(js)
+    print('[7/7] sync honesty')
+    sy = gate_sync(js)
     print()
-    if p and inv and vm and wi and au and sc:
+    if p and inv and vm and wi and au and sc and sy:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 
