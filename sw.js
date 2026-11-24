@@ -6,6 +6,8 @@
 //   - Static external assets (Google Fonts CSS+woff2, Lottie CDN):
 //     cache-first. They rarely change and we want fast offline launch.
 //   - Supabase API: never intercepted — let it fail naturally when offline.
+//   - Self-hosted exercise-media/: served from the user's offline download
+//     (MEDIA_CACHE) when present, else network; never cached implicitly.
 //
 // Versioning:
 //   Bump CACHE_NAME whenever the SHELL list changes (e.g. you add a new
@@ -20,6 +22,14 @@
 //   avoids changing the running page out from under a user mid-workout.
 
 const CACHE_NAME = 'maxgainz-v2';
+// Offline exercise media (Phase 3). A SEPARATE, long-lived cache the page fills
+// on request ("Download for offline"). Entries are keyed
+// exercise-media/{id}/{file}?v={hash8}; the page deletes entries whose hash no
+// longer matches EX_MEDIA_FILES, so a shell update never re-downloads media.
+// Bump the suffix only if the key SCHEMA changes — older media caches are then
+// deleted on activate. Must equal MEDIA_CACHE_NAME in index.html (gate 19).
+const MEDIA_CACHE = 'maxgainz-media-v1';
+const MEDIA_PREFIX = 'maxgainz-media-';
 
 const SHELL = [
   '/',
@@ -49,15 +59,55 @@ self.addEventListener('install', e => {
   );
 });
 
+// Which caches an activating worker may delete: older app-shell caches and
+// older media-cache SCHEMAS only. The current media cache (the user's offline
+// download) and any cache this app does not own are never touched.
+function _swStaleCache(k){
+  if(k === CACHE_NAME || k === MEDIA_CACHE) return false;
+  if(k.startsWith(MEDIA_PREFIX)) return true;
+  return /^maxgainz-v\d+$/.test(k);
+}
+
 // ── ACTIVATE: delete old caches, take control ──
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+      Promise.all(keys.filter(_swStaleCache).map(k => caches.delete(k)))
     )
   );
   self.clients.claim();
 });
+
+// A video element asks for byte ranges; iOS Safari will not play a clip that
+// answers a Range request with a full 200. Build the 206 from the cached body.
+function _swParseRange(h, size){
+  const m = /^bytes=(\d*)-(\d*)$/.exec(String(h || '').trim());
+  if(!m || (m[1] === '' && m[2] === '')) return null;
+  let start, end;
+  if(m[1] === ''){ const n = +m[2]; if(!(n > 0)) return null; start = Math.max(0, size - n); end = size - 1; }
+  else { start = +m[1]; end = m[2] === '' ? size - 1 : Math.min(+m[2], size - 1); }
+  if(!(start >= 0) || start > end || start >= size) return null;
+  return { start, end };
+}
+async function _swMediaResponse(req){
+  const cache = await caches.open(MEDIA_CACHE);
+  // Keys carry ?v=hash; the page requests the bare path. The page removes
+  // entries whose hash is stale, so at most one version of a file is present.
+  const hit = await cache.match(req.url.split('?')[0], { ignoreSearch: true, ignoreVary: true });
+  if(!hit) return fetch(req);          // not downloaded: plain network, never cached here
+  const range = req.headers.get('range');
+  if(!range) return hit;
+  const buf = await hit.arrayBuffer();
+  const r = _swParseRange(range, buf.byteLength);
+  const type = hit.headers.get('content-type') || 'application/octet-stream';
+  if(!r) return new Response(null, { status: 416, headers: { 'Content-Range': 'bytes */' + buf.byteLength } });
+  return new Response(buf.slice(r.start, r.end + 1), { status: 206, headers: {
+    'Content-Type': type,
+    'Content-Range': 'bytes ' + r.start + '-' + r.end + '/' + buf.byteLength,
+    'Content-Length': String(r.end - r.start + 1),
+    'Accept-Ranges': 'bytes'
+  }});
+}
 
 // ── MESSAGE: page taps "Update available" → activate the new SW ──
 self.addEventListener('message', e => {
@@ -76,6 +126,15 @@ self.addEventListener('fetch', e => {
   // Never intercept the ExerciseDB proxy — media URLs rotate weekly and the
   // plan forbids caching, so these must always hit the network fresh.
   if (url.pathname.startsWith('/api/')) return;
+
+  // Self-hosted exercise media: served from the offline download when present,
+  // otherwise straight from the network (nothing is cached lazily — the media
+  // cache only ever holds what the user chose to download). Same origin only:
+  // ExerciseDB GIFs/V2 clips never reach this branch.
+  if (url.origin === self.location.origin && url.pathname.includes('/exercise-media/') && e.request.method === 'GET') {
+    e.respondWith(_swMediaResponse(e.request).catch(() => fetch(e.request)));
+    return;
+  }
 
   // Navigation requests (HTML): network-first, cache fallback.
   if (e.request.mode === 'navigate') {
