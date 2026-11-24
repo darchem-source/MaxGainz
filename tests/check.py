@@ -3405,8 +3405,9 @@ eq('AI two exercises → ask', sets(_nlFromAi({sets:[{ex:'E1', weight:80, unit:n
 eq('AI clarify passes through', _nlFromAi({sets:[], clarify:'Which exercise?'}, ctx(), MAP).question, 'Which exercise?');
 eq('custom names are masked in the typed text (any case, longest first)', _nlMaskNames('my Zercher Squat 80x8 and zercher squat pause', [{ph:'Exercise 2', real:'Zercher Squat'}, {ph:'Bench Press', real:'Bench Press'}, {ph:'Exercise 3', real:'Zercher Squat Pause'}]), 'my Exercise 2 80x8 and Exercise 3');
 eq('regex characters in a custom name are safe', _nlMaskNames('a+b (x) 5x5', [{ph:'Exercise 1', real:'a+b (x)'}]), 'Exercise 1 5x5');
-eq('AI reading far above today\'s weight → asked (injection-proof sanity)', sets(_nlFromAi({sets:[{ex:'E1', weight:500, unit:null, reps:100, rpe:null}], clarify:null}, ctx(), MAP)), 'clarify:ai');
-eq('AI reading far below today\'s weight → asked', sets(_nlFromAi({sets:[{ex:'E1', weight:5, unit:null, reps:8, rpe:null}], clarify:null}, ctx(), MAP)), 'clarify:ai');
+eq('AI reading far above today\'s weight → asked (injection-proof sanity)', sets(_nlFromAi({sets:[{ex:'E1', weight:500, unit:null, reps:100, rpe:null}], clarify:null}, ctx(), MAP)), 'clarify:aiweight');
+eq('AI reading far below today\'s weight → asked', sets(_nlFromAi({sets:[{ex:'E1', weight:30, unit:null, reps:8, rpe:null}], clarify:null}, ctx(), MAP)), 'clarify:aiweight');
+eq('…and "Yes — 30 kg" confirms it (no retype loop)', sets(_nlFromAi({sets:[{ex:'E1', weight:30, unit:null, reps:8, rpe:null}], clarify:null}, ctx(), MAP, {confirmWeight:true})), [0, [0,30,8,null]]);
 eq('AI count question answered with trim', sets(_nlFromAi({sets:[1,2,3,4].map(function(){ return {ex:'E1', weight:80, unit:null, reps:8, rpe:null}; }), clarify:null}, ctx(), MAP, {countMode:'trim'})), [0, [0,80,8,null], [1,80,8,null], [2,80,8,null]]);
 eq('AI too many sets → same count question', sets(_nlFromAi({sets:[1,2,3,4].map(function(){ return {ex:'E1', weight:80, unit:null, reps:8, rpe:null}; }), clarify:null}, ctx(), MAP)), 'clarify:count');
 JSON.stringify(fails);
@@ -3490,7 +3491,7 @@ def gate_nl_log(html, js):
     if len(calls) != 1 or "btn('Save ' + p.sets.length" not in rend or "'nlSave()', true)" not in rend:
         lint.append('nlSave() must be reachable only from the preview\'s Save button')
     if "if(!p || p.status !== 'ok') return;" not in (extract_decl(js, 'nlSave') or ''): lint.append('nlSave must refuse anything but a previewed ok parse')
-    allowed = {"'nlEdit()'", "'nlCancel()'", "'nlSave()'", "'nlChoose(' + k + ')'", "\"nlUnit('kg')\"", "\"nlUnit('lb')\"", "\"nlCount('trim')\"", "\"nlCount('add')\"", "\"nlShape('sets')\"", "\"nlShape('weight')\""}
+    allowed = {"'nlEdit()'", "'nlCancel()'", "'nlSave()'", "'nlChoose(' + k + ')'", "\"nlUnit('kg')\"", "\"nlUnit('lb')\"", "\"nlCount('trim')\"", "\"nlCount('add')\"", "\"nlShape('sets')\"", "\"nlShape('weight')\"", "'nlConfirmWeight()'"}
     found = list(re.finditer(r"btn\((?:[^,()]|\([^()]*\))+, ((?:'[^']*'(?: \+ k \+ '[^']*')?)|\"[^\"]*\")", rend))
     for m in found:
         if m.group(1) not in allowed: lint.append(f'_nlRender handler is not a fixed call: {m.group(1)}')
@@ -3556,6 +3557,17 @@ var good = {headline:'1 of 3 sessions so far', body:'L1 went up 2.5 kg to 62.5 k
 eq('a faithful recap passes', _aiCheckOutput('recap', good, F), {ok:true, reason:''});
 eq('an invented number fails', _aiCheckOutput('recap', {headline:'Great week', body:'You lifted 4,000 kg. It is early days with 2 sessions.', mentionsSmallSample:true}, F).reason, 'ungrounded');
 eq('a small sample must be admitted', _aiCheckOutput('recap', {headline:'1 of 3 sessions', body:'L1 went up to 62.5 kg.', mentionsSmallSample:false}, F).reason, 'small sample');
+var F1 = F;   // 1 PB, small sample, no trend
+eq('a label for a PB that does not exist fails', _aiCheckOutput('recap', {headline:'1 of 3', body:'L1 and L3 are flying. Still early, with only 2 sessions.', mentionsSmallSample:true}, F1).reason, 'label');
+eq('exercise ids never appear in a recap', _aiCheckOutput('recap', {headline:'1 of 3', body:'E9 is up. Still early, with only 2 sessions.', mentionsSmallSample:true}, F1).reason, 'label');
+eq('"3 new PBs" with 1 PB fails', _aiCheckOutput('recap', {headline:'3 new PBs', body:'Still early, with only 2 sessions.', mentionsSmallSample:true}, F1).reason, 'pb count');
+eq('a percentage with no trend fails', _aiCheckOutput('recap', {headline:'1 of 3', body:'Volume up 3%. Still early, with only 2 sessions.', mentionsSmallSample:true}, F1).reason, 'direction');
+var FD = Object.assign(JSON.parse(JSON.stringify(F)), {trend:{dir:'down', pct:-15}});
+eq('"up 15%" when volume went down fails', _aiCheckOutput('recap', {headline:'1 of 3', body:'Volume up 15% on last week. Still early, with only 2 sessions.', mentionsSmallSample:true}, FD).reason, 'direction');
+ok('"down 15%" when volume went down passes', _aiCheckOutput('recap', {headline:'1 of 3', body:'Volume was 15% lower than usual. Still early, with only 2 sessions.', mentionsSmallSample:true}, FD).ok);
+eq('the word "only" alone does not admit a small sample', _aiCheckOutput('recap', {headline:'1 of 3', body:'Only L1 moved, to 62.5 kg.', mentionsSmallSample:true}, F1).reason, 'small sample');
+eq('"two thousand" can never be grounded', _aiCheckOutput('recap', {headline:'1 of 3', body:'Two thousand kg moved. Still early, with only 2 sessions.', mentionsSmallSample:true}, F1).reason, 'ungrounded');
+eq('a wild trend percentage is left out of the facts', _recapFacts(Object.assign({}, B2, {trend:{dir:'up', pct:5000, text:''}}), 8).trend, null);
 eq('medical talk fails', _aiCheckOutput('recap', {headline:'1 of 3', body:'Rest that sore knee. Still early, only 2 sessions.', mentionsSmallSample:true}, F).reason, 'medical');
 // names back, escaped
 var html = _recapAiHtml('L1 <b>up</b> & L2', ['<img src=x onerror=1>', 'Squat']);
@@ -3565,34 +3577,63 @@ JSON.stringify(fails);
 """
 RECAP_GLUE_PRELUDE = r"""
 var __ls = {}; var localStorage = { getItem:function(k){ return k in __ls ? __ls[k] : null; }, setItem:function(k, v){ __ls[k] = String(v); }, removeItem:function(k){ delete __ls[k]; } };
-var document = { getElementById:function(){ return null; } };
-var __flag = true, __calls = [], __metrics = [], __events = [];
+var __open = true, __slot = { innerHTML:'' };
+var document = { getElementById:function(id){ if(id === 's-progress') return { classList:{ contains:function(){ return __open; } } }; if(id === 'recapSlot') return __slot; return null; } };
+var __flag = true, __consent = true, __uid = 'u1', __calls = [], __metrics = [], __events = [], __reply = null;
 function _aiFlagOn(){ return __flag; } function _aiDayKey(){ return __day; } var __day = '2026-11-24';
+function _aiUid(){ return __uid; } function _aiConsented(){ return __consent; } var userPreferences = { ai:{} };
 function _aiHash(s){ return String(s); } function _aiMetricBump(n){ __metrics.push(n); } function _aiAuditEvent(id, e){ __events.push(e); }
-function _aiCall(task, facts){ __calls.push([task, facts]); return new Promise(function(){}); }
+function _aiCall(task, facts){ __calls.push([task, facts]); return __reply ? Promise.resolve(__reply) : new Promise(function(){}); }
+function count(m){ return __metrics.filter(function(x){ return x === m; }).length; }
 var completedSessions = [{}, {}];
 var B = { empty:false, weekStartMs:1, done:1, planned:3, plannedSource:'plan', activities:0, daysLeft:5, trend:null, newPBs:[{name:'Bench', weight:62.5, prev:60}], underTrained:null, balanced:false, smallSample:true, action:{text:'Fit in 2 more sessions by Sunday.'} };
-var fails = []; function ok(label, cond){ if(!cond) fails.push(label); }
 function cache(){ return JSON.parse(__ls[AI_CACHE_KEY] || '{}').recap; }
 """
 RECAP_GLUE_ASSERTIONS = r"""
+var fails = []; function ok(label, cond){ if(!cond) fails.push(label); }
 __flag = false; var r0 = _renderRecap(B);
 ok('flag off: no summary, no request, nothing counted', r0 === '' && __calls.length === 0 && __metrics.length === 0);
-__flag = true; var r1 = _renderRecap(B);
-ok('first view asks once and shows nothing yet (briefing still drawn by the caller)', r1 === '' && __calls.length === 1 && __calls[0][0] === 'recap' && __metrics.indexOf('recap_views') !== -1);
-var r2 = _renderRecap(B);
-ok('same facts → no second request', __calls.length === 1);
-var c = cache(); c.text = {headline:'1 of 3', body:'L1 up to 62.5 kg. Still early.'}; __ls[AI_CACHE_KEY] = JSON.stringify({recap:c});
-var r3 = _renderRecap(B);
-ok('cached answer is shown with the name put back', r3.indexOf('<strong>Bench</strong>') !== -1 && __calls.length === 1);
-var views = __metrics.filter(function(m){ return m === 'recap_views'; }).length;
-ok('briefing views counted once a day', views === 1);
+__flag = true; __open = false; _renderRecap(B);
+ok('background render (Progress not open): no request, no view counted', __calls.length === 0 && __metrics.length === 0);
+__open = true; __consent = false; _renderRecap(B);
+ok('no consent: view counted, nothing asked, no audit noise', __calls.length === 0 && count('recap_views') === 1 && __events.length === 0);
+__consent = true; __ls = {}; __metrics = []; var r1 = _renderRecap(B);
+ok('open + consent: asks once, shows nothing yet', r1 === '' && __calls.length === 1 && __calls[0][0] === 'recap' && count('recap_views') === 1);
+_renderRecap(B); B.daysLeft = 4; _renderRecap(B);
+ok('same facts (days left ticking down) → no second request', __calls.length === 1);
+var c = cache(); c.text = {headline:'1 of 3', body:'L1 up to 62.5 kg. Still early.'}; c.auditId = 'a_1'; __ls[AI_CACHE_KEY] = JSON.stringify({recap:c, coachDay:{day:'2026-11-24', entries:{k:{key:'k'}}}});
+var r3 = _renderRecap(B); _renderRecap(B);
+ok('cached answer shown with the name put back', r3.indexOf('<strong>Bench</strong>') !== -1 && __calls.length === 1);
+ok('views and AI-shown counted once a day', count('recap_views') === 1 && count('recap_ai_shown') === 1);
+ok('coach entries in the same store survive', JSON.parse(__ls[AI_CACHE_KEY]).coachDay.entries.k.key === 'k');
 B.done = 2; _renderRecap(B); B.done = 3; _renderRecap(B); B.done = 0; _renderRecap(B); B.done = 1; B.planned = 4; _renderRecap(B);
 ok('changed facts re-ask at most RECAP_MAX_GENS_PER_DAY times a day', __calls.length === RECAP_MAX_GENS_PER_DAY);
 __day = '2026-11-25'; B.planned = 5; _renderRecap(B);
-ok('a new day may ask again, and counts a new view', __calls.length === RECAP_MAX_GENS_PER_DAY + 1 && __metrics.filter(function(m){ return m === 'recap_views'; }).length === 2);
+ok('a new day may ask again, and counts a new view', __calls.length === RECAP_MAX_GENS_PER_DAY + 1 && count('recap_views') === 2);
+__uid = 'u2'; var before = __calls.length; var r4 = _renderRecap(B);
+ok('another account never sees this account\'s cached recap', r4 === '' && __calls.length === before + 1);
 JSON.stringify(fails);
 """
+RECAP_REQUEST_SCENARIOS = {
+  'a validated answer fills the slot once and is counted once': r"""
+    __reply = {ok:true, out:{headline:'1 of 3', body:'L1 up to 62.5 kg. Still early.'}, auditId:'a_7'};
+    _renderRecap(B); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    var c = cache();
+    return (__slot.innerHTML.indexOf('<strong>Bench</strong>') !== -1 && count('recap_ai_shown') === 1 && __events.indexOf('shown') !== -1 && c.text && c.auditId === 'a_7') || [__slot.innerHTML, __metrics, c];""",
+  'an answer arriving after Progress was left is stored, not shown or counted': r"""
+    __reply = {ok:true, out:{headline:'1 of 3', body:'L1 up to 62.5 kg. Still early.'}, auditId:'a_8'};
+    _renderRecap(B); __open = false; await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    return (__slot.innerHTML === '' && count('recap_ai_shown') === 0 && !!cache().text) || [__slot.innerHTML, __metrics];""",
+  'a failed answer shows nothing': r"""
+    __reply = {ok:false, reason:'invalid', auditId:'a_9'};
+    _renderRecap(B); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    return (__slot.innerHTML === '' && count('recap_ai_shown') === 0 && cache().text === null) || [__slot.innerHTML, cache()];""",
+  'an answer for facts that changed meanwhile is dropped': r"""
+    var res; __reply = null; _aiCall = function(){ return new Promise(function(r){ res = r; }); };
+    _renderRecap(B); B.done = 2; __ls[AI_CACHE_KEY] = JSON.stringify({recap:Object.assign(cache(), {key:'other'})});
+    res({ok:true, out:{headline:'x', body:'y'}, auditId:'a_10'}); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    return (__slot.innerHTML === '' && cache().key === 'other' && !cache().text) || cache();""",
+}
 
 def gate_recap(html, js):
     problems = []
@@ -3610,6 +3651,7 @@ def gate_recap(html, js):
         out, _ = run_jxa(glue + '\n' + RECAP_GLUE_PRELUDE + RECAP_GLUE_ASSERTIONS)
         try: problems += json.loads(out)
         except Exception: problems.append('recap glue runner errored: ' + out[:300])
+        problems += _run_jsc_scenarios(glue + '\n' + RECAP_GLUE_PRELUDE, RECAP_REQUEST_SCENARIOS)
     lint = []
     wb = extract_decl(js, '_weeklyBriefing') or ''
     for d in ['up', 'down', 'steady']:

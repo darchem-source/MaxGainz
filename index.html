@@ -5958,7 +5958,7 @@ function _aiIsObj(o, keys){
 function _aiNumbersIn(text){
   const raw = String(text == null ? '' : text);
   const out = [];
-  if(/[¼-¾⅐-⅟⁄∕]/.test(raw)) out.push(NaN);
+  if(/[¼-¾⅐-⅟⁄∕]/.test(raw) || /\b(thousand|million|billion)\b/i.test(raw)) out.push(NaN);
   const s = raw.normalize('NFKC')
     .replace(/\{EX\}/g, ' ')
     .replace(/\b[LE]\d{1,2}\b/g, ' ')
@@ -6113,7 +6113,17 @@ function _aiCheckOutput(task, out, f){
     const derived = f.pbs.map(p => Math.round((p.weight - p.prev) * 100) / 100)
       .concat([Math.max(0, f.planned - f.done), f.daysLeft + 1, Math.abs(f.trend ? f.trend.pct : 0)]);
     if(!_aiGrounded(all, _aiFactNumbers(f).concat(derived)).ok) return { ok:false, reason:'ungrounded' };
-    if(f.smallSample && (!out.mentionsSmallSample || !/\b(early|so far|few|small|limited|only|not enough|still building)\b/i.test(all))) return { ok:false, reason:'small sample' };
+    // Labels: only L1..Ln for the PBs that exist; never exercise ids.
+    const labels = all.match(/\b[LE]\d+\b/g) || [];
+    if(labels.some(l => l[0] === 'E' || +l.slice(1) < 1 || +l.slice(1) > f.pbs.length)) return { ok:false, reason:'label' };
+    // "N PBs / records" must be the real count.
+    const pbClaim = all.match(/\b(\d+|one|two|three|four|five)\s+(?:new\s+)?(?:pbs?|personal\s+(?:bests?|records?)|records?)\b/i);
+    if(pbClaim && _aiNumbersIn(pbClaim[1])[0] !== f.pbs.length) return { ok:false, reason:'pb count' };
+    // A sentence with a percentage must point the same way as the trend.
+    const up = /\b(up|above|higher|more|increas\w*|rose|grew|gain\w*)\b/i, down = /\b(down|below|lower|less|decreas\w*|fell|dropped|lighter)\b/i;
+    const wrongWay = all.split(/[.!?]/).some(s => /%/.test(s) && !!f.trend && ((f.trend.dir === 'down' && up.test(s) && !down.test(s)) || (f.trend.dir === 'up' && down.test(s) && !up.test(s)) || (f.trend.dir === 'steady' && (up.test(s) || down.test(s)))));
+    if(/%/.test(all) && (!f.trend || wrongWay)) return { ok:false, reason:'direction' };
+    if(f.smallSample && (!out.mentionsSmallSample || !/\b(early|so far|few|small sample|limited|not enough|still building)\b|\bonly (?:\d+|one|two|three|four|five) sessions?\b/i.test(all))) return { ok:false, reason:'small sample' };
     return { ok:true, reason:'' };
   }
   return { ok:false, reason:'task' };
@@ -7066,8 +7076,9 @@ function _nlFromAi(out, ctx, idMap, opts){
   });
   // Same sanity as the app's own reading: far above/below today's weight → ask.
   const planned = Number(ex.weight) || 0;
-  if(!ex.bw && planned > 0 && sets.some(s => s.w > planned * 1.8 || (s.w > 0 && s.w < planned * 0.4)))
-    return { status:'clarify', kind:'ai', question:'Is ' + sets.map(s => s.w).filter((v, i, a) => a.indexOf(v) === i).join(' / ') + ' kg right for ' + ex.name + '? Today\'s weight is ' + planned + ' kg — retype it to confirm.' };
+  const odd = sets.map(s => s.w).filter((v, i, a) => a.indexOf(v) === i && (v > planned * 1.8 || (v > 0 && v < planned * 0.4)));
+  if(!ex.bw && planned > 0 && odd.length && !(opts && opts.confirmWeight))
+    return { status:'clarify', kind:'aiweight', question:'Is ' + odd.join(' / ') + ' kg right for ' + ex.name + '? Today\'s weight is ' + planned + ' kg.', w: odd.join(' / ') };
   if(out.sets.some(s => s.weight === null)) notes.push('Weight not given — using today\'s ' + (Number(ex.weight) || 0) + ' kg.');
   if(out.sets.some(s => s.unit === 'lb')) notes.push('Converted from lb.');
   const b = _nlBuild(ex, sets, { notes }, opts || {});
@@ -7164,6 +7175,7 @@ function nlChoose(k){
 function nlUnit(u){ if(u === 'kg' || u === 'lb') _nlReparse({ forceUnit:u }); }
 function nlCount(mode){ if(mode === 'trim' || mode === 'add') _nlReparse({ countMode:mode }); }
 function nlShape(s){ if(s === 'sets' || s === 'weight') _nlReparse({ shape:s }); }
+function nlConfirmWeight(){ _nlReparse({ confirmWeight:true }); }
 function nlEdit(){ const i = document.getElementById('nlInput'); if(i){ i.focus(); i.select(); } }
 function nlCancel(){
   if(_nlState && _nlState.parse && _nlState.parse.status === 'ok'){ _aiMetricBump('nl_cancelled'); if(_nlState.auditId) _aiAuditEvent(_nlState.auditId, 'cancelled'); }
@@ -7230,6 +7242,7 @@ function _nlRender(){
     let choices = '';
     if(p.kind === 'exercise' && Array.isArray(p.choices)) choices = p.choices.map((ix, k) => sessExs[ix] ? btn(sessExs[ix].name, 'nlChoose(' + k + ')') : '').join('');
     else if(p.kind === 'unit') choices = btn('kg', "nlUnit('kg')") + btn('lb', "nlUnit('lb')");
+    else if(p.kind === 'aiweight') choices = btn('Yes — ' + p.w + ' kg', 'nlConfirmWeight()');
     else if(p.kind === 'shape') choices = btn(p.a + ' sets of ' + p.b, "nlShape('sets')") + btn(p.a + ' kg × ' + p.b, "nlShape('weight')");
     else if(p.kind === 'count' && p.left > 0) choices = btn('Log the first ' + p.left, "nlCount('trim')") + (p.canAdd ? btn('Add ' + p.extra + ' set' + (p.extra === 1 ? '' : 's'), "nlCount('add')") : '');
     el.innerHTML = `<p class="nl-q">${esc(p.question)}</p><div class="coach-actions">${choices}${btn('Edit', 'nlEdit()')}${btn('Cancel', 'nlCancel()')}</div>`;
@@ -7256,7 +7269,7 @@ function _recapFacts(B, sessionsLogged){
   if(!B || B.empty) return null;
   const f = {
     done: B.done, planned: B.planned, plannedSource: B.plannedSource, activities: B.activities, daysLeft: B.daysLeft,
-    trend: B.trend && typeof B.trend.pct === 'number' ? { dir: B.trend.dir, pct: B.trend.pct } : null,
+    trend: B.trend && typeof B.trend.pct === 'number' && Math.abs(B.trend.pct) <= 1000 ? { dir: B.trend.dir, pct: B.trend.pct } : null,
     pbs: (B.newPBs || []).slice(0, 3).map((p, i) => ({ ref: 'L' + (i + 1), weight: p.weight, prev: p.prev })),
     under: B.underTrained ? { label: B.underTrained.label, pct: B.underTrained.pct } : null,
     balanced: !!B.balanced, smallSample: !!B.smallSample,
@@ -7294,23 +7307,33 @@ function _recapHtml(entry){
 function _renderRecap(B){
   try {
     if(!_aiFlagOn('recap')) return '';
-    const day = _aiDayKey(Date.now());
-    const c = _recapCacheAll().recap || null;
-    // A briefing view (with or without AI) — once a day.
-    if(!c || c.viewDay !== day){ _aiMetricBump('recap_views'); }
+    const day = _aiDayKey(Date.now()), uid = _aiUid();
+    let c = _recapCacheAll().recap || null;
+    if(c && c.uid !== uid) c = null;                       // another account's entry
     const gym = (completedSessions || []).filter(s => s && !s.manualActivity).length;
     const facts = _recapFacts(B, gym);
-    if(!facts){ if(c){ c.viewDay = day; _recapCachePut(c); } return ''; }
-    const key = B.weekStartMs + ':' + _aiHash(JSON.stringify(facts));
     const names = (B.newPBs || []).slice(0, 3).map(p => p.name);
+    // Background renders (boot, sync, saves) never ask, count or show — only an open Progress screen.
+    const scr = document.getElementById('s-progress');
+    const open = !!(scr && scr.classList.contains('active'));
+    const key = facts ? B.weekStartMs + ':' + _aiHash(JSON.stringify(Object.assign({}, facts, { daysLeft: null }))) : null;
+    if(!open) return (c && key && c.key === key && c.text) ? _recapHtml(Object.assign({}, c, { names })) : '';
+    if(!c || c.viewDay !== day){ _aiMetricBump('recap_views'); }
+    const base = { uid, viewDay: day, shownDay: c ? c.shownDay : null, genDay: c ? c.genDay : null, gens: c ? c.gens : 0 };
+    if(!facts){ _recapCachePut(Object.assign({}, c || {}, base, { key: null, text: null })); return ''; }
     if(c && c.key === key){
-      if(c.viewDay !== day){ c.viewDay = day; _recapCachePut(c); if(c.text){ _aiMetricBump('recap_ai_shown'); if(c.auditId) _aiAuditEvent(c.auditId, 'shown'); } }
-      return _recapHtml(Object.assign({}, c, { names }));
+      const e = Object.assign({}, c, base);
+      if(e.text && e.shownDay !== day){ e.shownDay = day; _aiMetricBump('recap_ai_shown'); if(e.auditId) _aiAuditEvent(e.auditId, 'shown'); }
+      _recapCachePut(e);
+      return _recapHtml(Object.assign({}, e, { names }));
+    }
+    // Nothing is asked for someone who hasn't switched AI on (and no audit noise).
+    if(!_aiConsented(typeof userPreferences === 'object' && userPreferences ? userPreferences.ai : null)){
+      _recapCachePut(Object.assign({}, base, { key: null, text: null })); return '';
     }
     const gens = (c && c.genDay === day) ? (c.gens || 0) : 0;
-    if(gens >= RECAP_MAX_GENS_PER_DAY) return '';
-    const entry = { key, week: B.weekStartMs, text: null, auditId: null, viewDay: day, genDay: day, gens: gens + 1 };
-    _recapCachePut(entry);
+    if(gens >= RECAP_MAX_GENS_PER_DAY){ _recapCachePut(Object.assign({}, c || {}, base, { key: null, text: null })); return ''; }
+    _recapCachePut(Object.assign({}, base, { key, week: B.weekStartMs, text: null, auditId: null, genDay: day, gens: gens + 1 }));
     _recapRequest(facts, key, names);
     return '';
   } catch(e){ return ''; }
@@ -7322,11 +7345,12 @@ async function _recapRequest(facts, key, names){
   c.auditId = r && r.auditId || null;
   if(r && r.ok && r.out){ c.text = { headline: r.out.headline, body: r.out.body }; }
   _recapCachePut(c);
-  if(c.text){
-    _aiMetricBump('recap_ai_shown');
-    if(c.auditId) _aiAuditEvent(c.auditId, 'shown');
-    const slot = document.getElementById('recapSlot');
-    if(slot) slot.innerHTML = _recapHtml(Object.assign({}, c, { names }));
+  const slot = document.getElementById('recapSlot');
+  const scr = document.getElementById('s-progress');
+  if(c.text && slot && scr && scr.classList.contains('active')){
+    slot.innerHTML = _recapHtml(Object.assign({}, c, { names }));
+    const day = _aiDayKey(Date.now());
+    if(c.shownDay !== day){ c.shownDay = day; _recapCachePut(c); _aiMetricBump('recap_ai_shown'); if(c.auditId) _aiAuditEvent(c.auditId, 'shown'); }
   }
 }
 
