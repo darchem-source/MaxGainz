@@ -1708,7 +1708,8 @@ def gate_media_fallback(js, html):
         elif res is not None:
             print(f"  ✓ all {res['n']} programme exercises have text cues ({res['specific']} exercise-specific, rest general); fuzzy lookup stays within movement pattern")
     # (c) static: every self-hosted media element falls back on error
-    fb = extract_decl(js, '_exFallbackBlockHtml')
+    # (the frames layer lives in _exFramesHtml since Phase 3 — loop → frames → text)
+    fb = (extract_decl(js, '_exFallbackBlockHtml') or '') + (extract_decl(js, '_exFramesHtml') or '')
     cd = extract_decl(js, '_renderCooldownStretch')
     if not fb or not cd:
         print('  ✗ could not extract _exFallbackBlockHtml / _renderCooldownStretch'); ok_all = False
@@ -3683,48 +3684,539 @@ def gate_recap(html, js):
     return True
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gate 19 — Phase 3 offline media (download for offline)
+# (a) EX_MEDIA_FILES matches exercise-media/ on disk byte-for-byte (sizes +
+#     sha256 prefixes) and covers every mapped id; (b) sw.js runs for real in
+#     jsc with stubbed caches/fetch: media served from the download, misses go
+#     to the network uncached, ExerciseDB/api never intercepted, byte ranges
+#     answered with a correct 206, activate deletes only stale app caches;
+# (c) the pure planner: every exercise a programme can rotate into is in its
+#     set, tiers, sizes, cache keys, stale-entry cleanup, status, space check,
+#     shared-file-safe removal, flags; (d) fallback order online/offline;
+# (e) the real download runs in jsc against a stubbed Cache API: success,
+#     quota mid-download rolls back only this run's files, corrupt files are
+#     never stored, no-space refuses before any request, cancel keeps nothing;
+# (f) static wiring: flag-gated card, session/finish/form-guide hooks, sign-out.
+# ─────────────────────────────────────────────────────────────────────────────
+SW_PATH = os.path.join(ROOT, 'sw.js')
+
+OFFLINE_FNS = ['_p3FlagsFromQuery', '_p3FlagOn', '_offlineProgrammeNames', '_offlineHiitExercises',
+               '_offlineMediaSet', '_offlineSetBytes', '_offlineCacheKey', '_offlineParseKey',
+               '_offlineStaleKeys', '_offlineStatus', '_offlineSpaceCheck', '_offlineStateLoad',
+               '_offlineStateGet', '_offlineStatePut', '_offlineProgKey', '_offlineSetForKey',
+               '_offlinePathsToRemove', '_offlineNeededPaths', '_exMediaUrl', '_offlineFmtMB', '_offlineHasCacheApi', '_offlineReadCache',
+               '_offlineDeletePaths', '_offlineSha8', '_offlineIsQuota', '_offlineFetchOne',
+               'offlineDownload', 'offlineAddVideo', 'offlineCancel', '_offlineRemoveKey', '_offlineMetric', '_offlineIsOffline',
+               '_offlineNoteSessionStart', '_offlineNoteSessionDone', '_offlineNoteConnectivity',
+               '_exVideoEntry', '_exFallbackBlockHtml', '_exFramesHtml', '_exLoopUsable',
+               '_exVideoBlockHtml', '_exVideoBlockHtmlNoV2', '_offlineCardInner', '_offlineKeyName', '_offlineOtherKeys', 'isCoreCircuit', 'isLibraryProgramme',
+               'getLibraryId', 'getLibraryProgramme', '_aiStoreLoad', '_aiDayKey', 'esc']
+OFFLINE_CONSTS_OBJ = ['ULF_VARIANTS', 'ULF', 'PPL', 'EX_ROTATION_POOLS', 'EX_VIDEO_MAP', 'STRETCH_MEDIA_MAP',
+                      'HIIT_SERIES', 'EX_MEDIA_FILES', 'P3_FLAG_KEYS', 'EX_V2_ID_MAP', 'EX_GIF_MAP']
+OFFLINE_CONSTS_ARR = ['LIBRARY_PROGRAMMES', 'CORE_EXERCISES', 'HIIT', 'OFFLINE_FILE_SLOTS']
+OFFLINE_CONSTS_LINE = ['OFFLINE_JOB_KEY', 'MEDIA_CACHE_NAME', 'OFFLINE_STATE_KEY', 'OFFLINE_METRICS_KEY', 'OFFLINE_SESS_KEY',
+                       'OFFLINE_HEADROOM', 'OFFLINE_CONCURRENCY', 'EX_MEDIA_BASE', 'EDB_GIF_BASE', 'AI_KEEP_DAYS']
+
+OFFLINE_STUBS = r"""
+var print = (typeof print === 'function') ? print : function(){};
+var LS = {}; var localStorage = { getItem: function(k){ return Object.prototype.hasOwnProperty.call(LS, k) ? LS[k] : null; },
+  setItem: function(k, v){ LS[k] = String(v); }, removeItem: function(k){ delete LS[k]; } };
+var navigator = { onLine: true, storage: null };
+var document = { getElementById: function(){ return null; }, addEventListener: function(){}, activeElement: null };
+var window = { addEventListener: function(){} };
+var location = { search: '', pathname: '/', hash: '' };
+var history = { replaceState: function(){} };
+var crypto = undefined;
+function showToast(){}
+function _aiUid(){ return 'u1'; }
+function _offlineRenderCard(){}
+function _offlineRenderProgress(){}
+function _v2Bail(){}
+function _exV2Id(n){ return EX_V2_ID_MAP[n] || null; }
+function _exGifId(n){ return EX_GIF_MAP[n] || null; }
+var userPath = { programme: 'ULF' };
+var sessStartTime = null;
+var _offlineCached = null, _offlineJob = null, _offlineTier = 'images', _offlineLastMsg = '';
+var _offlineCacheErr = false, _offlineSwOk = null, _offlineStaleSeen = new Set(), _offlineOtherSnap = [];
+function _progDisplayName(k){ return k; }
+// ── Cache API stub (absolute keys, like the browser) ──
+var CFG = { quotaAt: null, puts: 0, corrupt: {}, short: {}, fail404: {}, abortAfter: null, fetched: [] };
+function ABS(k){ return /^https?:/.test(k) ? k : 'https://app.test/' + k; }
+function mkCache(){ var m = new Map(); return { m: m,
+  put: function(k, r){ CFG.puts++; if(CFG.quotaAt != null && CFG.puts >= CFG.quotaAt){ var e = new Error('quota'); e.name = 'QuotaExceededError'; return Promise.reject(e); } m.set(ABS(k), r); return Promise.resolve(); },
+  keys: function(){ return Promise.resolve(Array.from(m.keys()).map(function(u){ return { url: u }; })); },
+  delete: function(k){ return Promise.resolve(m.delete(typeof k === 'string' ? ABS(k) : k.url)); } }; }
+var CS = {};
+var caches = { open: function(n){ if(!CS[n]) CS[n] = mkCache(); return Promise.resolve(CS[n]); } };
+function Response(body, init){ this._b = body; this.status = (init && init.status) || 200; this.ok = this.status >= 200 && this.status < 300;
+  var h = (init && init.headers) || {}; this.headers = { get: function(k){ return h[k] || null; } }; }
+Response.prototype.arrayBuffer = function(){ return Promise.resolve(this._b); };
+var BUFPATH = new WeakMap();
+function hex2bytes(h){ var b = new Uint8Array(32); for(var i = 0; i < 4; i++) b[i] = parseInt(h.substr(i*2, 2), 16); return b.buffer; }
+function useDigest(){ crypto = { subtle: { digest: function(a, buf){ var p = BUFPATH.get(buf); var id = p.split('/')[0], f = p.split('/')[1];
+  var row = EX_MEDIA_FILES[id]; var i = f === '0.jpg' ? 1 : f === '1.jpg' ? 3 : 5; return Promise.resolve(hex2bytes(CFG.corrupt[p] ? '00000000' : row[i])); } } }; }
+function fetch(u, o){
+  CFG.fetched.push(u);
+  if(CFG.abortAfter != null && CFG.fetched.length > CFG.abortAfter && _offlineJob && _offlineJob.ctrl) _offlineJob.ctrl.abort();
+  if(o && o.signal && o.signal.aborted){ var e = new Error('aborted'); e.name = 'AbortError'; return Promise.reject(e); }
+  var p = String(u).replace(EX_MEDIA_BASE, ''); var id = p.split('/')[0], f = p.split('/')[1];
+  // Like the real page, this request passes through sw.js, which answers from
+  // the media cache whenever ANY version of the file is there.
+  var mc = CS[MEDIA_CACHE_NAME]; if(mc && mc.m.has(ABS(u))) return Promise.resolve(mc.m.get(ABS(u)));
+  if(CFG.fail404[p]) return Promise.resolve(new Response(null, { status: 404 }));
+  var row = EX_MEDIA_FILES[id]; if(!row) return Promise.resolve(new Response(null, { status: 404 }));
+  var i = f === '0.jpg' ? 0 : f === '1.jpg' ? 2 : 4; var n = row[i] - (CFG.short[p] ? 1 : 0);
+  var buf = new ArrayBuffer(n); BUFPATH.set(buf, p); return Promise.resolve(new Response(buf, { status: 200 }));
+}
+function AbortController(){ var s = { aborted: false }; this.signal = s; this.abort = function(){ s.aborted = true; }; }
+function mediaKeys(){ var c = CS[MEDIA_CACHE_NAME]; return c ? Array.from(c.m.keys()) : []; }
+function mediaPaths(){ return mediaKeys().map(function(u){ var k = _offlineParseKey(u); return k ? k.path : u; }).sort(); }
+function setPaths(s){ return s.map(function(f){ return f.path; }).sort(); }
+function eqA(a, b){ return JSON.stringify(a) === JSON.stringify(b); }
+"""
+
+OFFLINE_PURE = r"""
+var fails = [];
+function ok(l, c){ if(!c) fails.push(l); }
+// Independent walk: every exercise name each programme can show.
+function walkNames(days){ var s = {}; var core = false;
+  days.forEach(function(exs){ (exs || []).forEach(function(e){ if(!e || !e.name) return; s[e.name] = 1;
+    if(e.coreCircuit || e.name === 'Abdominal Work') core = true;
+    (EX_ROTATION_POOLS[e.name] || []).forEach(function(p){ s[p.name] = 1; }); }); });
+  if(core) CORE_EXERCISES.forEach(function(c){ s[c.name] = 1; }); return s; }
+var progs = { 'ULF': [].concat.apply([], Object.keys(ULF_VARIANTS).map(function(d){ return ULF_VARIANTS[d]; })).concat(Object.keys(ULF).map(function(d){ return ULF[d]; })),
+              'PPL': Object.keys(PPL).map(function(d){ return PPL[d]; }) };
+LIBRARY_PROGRAMMES.forEach(function(p){ progs['library:' + p.id] = p.schedule.map(function(d){ return d.exercises; }); });
+var stretchIds = Object.keys(STRETCH_MEDIA_MAP).map(function(k){ return STRETCH_MEDIA_MAP[k]; });
+Object.keys(progs).forEach(function(k){
+  var names = walkNames(progs[k]);
+  var imgs = _offlineMediaSet(k, 'images'), full = _offlineMediaSet(k, 'full');
+  var ip = {}; imgs.forEach(function(f){ ip[f.path] = f; }); var fp = {}; full.forEach(function(f){ fp[f.path] = f; });
+  Object.keys(names).forEach(function(n){ var e = _exVideoEntry(n, EX_VIDEO_MAP); if(!e || !EX_MEDIA_FILES[e.slug]) return;
+    ok(k + ': frames for ' + n, ip[e.slug + '/0.jpg'] && ip[e.slug + '/1.jpg']);
+    if(EX_MEDIA_LOOPS.has(e.slug) && EX_MEDIA_FILES[e.slug][4] > 0) ok(k + ': video tier has the loop for ' + n, fp[e.slug + '/loop.mp4']); });
+  stretchIds.forEach(function(id){ if(EX_MEDIA_FILES[id]) ok(k + ': warm-up/cool-down frames ' + id, ip[id + '/0.jpg']); });
+  ok(k + ': images tier holds no video', imgs.every(function(f){ return !/loop\.mp4$/.test(f.path); }));
+  ok(k + ': video tier = images + loops only', full.filter(function(f){ return !/loop\.mp4$/.test(f.path); }).length === imgs.length);
+  var sum = 0; imgs.forEach(function(f){ var id = f.path.split('/')[0]; var i = /0\.jpg$/.test(f.path) ? 0 : 2; ok(k + ': size/hash from manifest ' + f.path, f.size === EX_MEDIA_FILES[id][i] && f.hash === EX_MEDIA_FILES[id][i+1]); sum += f.size; });
+  ok(k + ': byte total', _offlineSetBytes(imgs) === sum);
+  full.forEach(function(f){ ok(k + ': only self-hosted files ' + f.path, /^[A-Za-z0-9_.()\-]+\/(0\.jpg|1\.jpg|loop\.mp4)$/.test(f.path) && _offlineCacheKey(f).indexOf(EX_MEDIA_BASE) === 0 && _offlineCacheKey(f).indexOf('//') === -1); });
+});
+// Every ULF variant exercise (not only the fallback table) is covered.
+var ulfImgs = setPaths(_offlineMediaSet('ULF', 'images'));
+ok('ULF images ≥ 1 MB (extraction sanity)', _offlineSetBytes(_offlineMediaSet('ULF', 'images')) > 1e6);
+ok('core pool included for ULF (Abdominal Work)', ulfImgs.indexOf(_exVideoEntry('Plank', EX_VIDEO_MAP).slug + '/0.jpg') !== -1);
+// HIIT series includes home/gym swap names.
+var hs = _offlineSetForKey('HIIT:summer-series', 'images');
+var hn = _offlineProgrammeNames('HIIT', 'summer-series');
+ok('HIIT series names collected', hn.length >= 5);
+var swapNames = []; HIIT.forEach(function(h){ if(HIIT_SERIES['summer-series'].rotation.indexOf(h.name) === -1) return;
+  _offlineHiitExercises(h).forEach(function(e){ swapNames.push(e.name); }); });
+ok('HIIT swaps included', swapNames.every(function(n){ return hn.indexOf(n) !== -1; }));
+ok('unknown programme → empty set', _offlineMediaSet('nope', 'images').every(function(f){ return stretchIds.indexOf(f.path.split('/')[0]) !== -1; }));
+// Cache keys + stale cleanup.
+var f0 = _offlineMediaSet('ULF', 'images')[0];
+var key = ABS(_offlineCacheKey(f0));
+ok('parse key round-trips', eqA(_offlineParseKey(key), { path: f0.path, hash: f0.hash }));
+var stale = _offlineStaleKeys([key, key.replace(/v=[0-9a-f]{8}/, 'v=00000000'), ABS('exercise-media/Not_A_Real_Id/0.jpg?v=abcdef12'),
+  ABS('exercise-media/' + f0.path), ABS('https://static.exercisedb.dev/media/x.gif'), ABS('exercise-media/' + f0.path.split('/')[0] + '/loop.mp4?v=abcdef12')]);
+ok('current key kept', stale.indexOf(key) === -1);
+ok('stale hash, unknown id, unversioned, foreign and phantom-loop keys removed (' + stale.length + ')', stale.length === (EX_MEDIA_FILES[f0.path.split('/')[0]][4] > 0 ? 4 : 5));
+// Status.
+var set = _offlineMediaSet('library:sl5x5', 'images');
+var m = new Map(); ok('status none', _offlineStatus(set, m).state === 'none');
+set.forEach(function(f){ m.set(f.path, f.hash); }); ok('status ready', _offlineStatus(set, m).state === 'ready');
+m.delete(set[0].path); var st1 = _offlineStatus(set, m); ok('status partial + bytes', st1.state === 'partial' && st1.bytesMissing === set[0].size);
+m.set(set[0].path, '00000000'); ok('status update (stale hash)', _offlineStatus(set, m).state === 'update');
+ok('status unknown when cache unreadable', _offlineStatus(set, null).state === 'unknown');
+// Space.
+ok('space ok', _offlineSpaceCheck(10e6, { quota: 100e6, usage: 50e6 }).ok === true);
+ok('space refuses without headroom', _offlineSpaceCheck(10e6, { quota: 100e6, usage: 69.5e6 }).ok === false);
+ok('space boundary (need×1.1 + 20 MB)', _offlineSpaceCheck(10e6, { quota: 100e6, usage: 68.5e6 }).ok === true);
+ok('space unknown → allowed', _offlineSpaceCheck(10e6, null).ok === true);
+// Removal never deletes a file another downloaded programme uses.
+var stA = { v:1, progs: { 'library:sl5x5': { tier:'images' }, 'library:starting-strength': { tier:'images' } } };
+var rm = _offlinePathsToRemove(stA, 'library:sl5x5');
+var other = setPaths(_offlineSetForKey('library:starting-strength', 'images'));
+ok('removal spares shared files', rm.every(function(p){ return other.indexOf(p) === -1; }));
+ok('removal deletes own-only files', rm.length > 0 && rm.length < setPaths(_offlineSetForKey('library:sl5x5', 'full')).length);
+ok('removal of an unknown key deletes nothing', _offlinePathsToRemove(stA, 'PPL').length === 0);
+// State validation.
+var sl = _offlineStateLoad(JSON.stringify({ v:1, progs: { 'ULF': { tier:'full', at: 5 }, '<img>': { tier:'full' }, 'library:x': { tier:'weird' } } }));
+ok('state keeps valid keys only', eqA(Object.keys(sl.progs).sort(), ['ULF', 'library:x']) && sl.progs['library:x'].tier === 'images');
+ok('state junk → empty', eqA(_offlineStateLoad('{bad').progs, {}));
+// Flags.
+ok('?p3=all', eqA(_p3FlagsFromQuery('?p3=all'), { offline:true, discover:true, share:true }));
+ok('?p3=offline', eqA(_p3FlagsFromQuery('?x=1&p3=offline'), { offline:true, discover:false, share:false }));
+ok('?p3=0', eqA(_p3FlagsFromQuery('?p3=0'), { offline:false, discover:false, share:false }));
+ok('no ?p3 → null', _p3FlagsFromQuery('?ai=all') === null && _p3FlagsFromQuery('?p3=bogus') === null);
+ok('flag off by default', _p3FlagOn('offline') === false);
+// Fallback order. A loop id with frames:
+var loopId = Array.from(EX_MEDIA_LOOPS)[0]; var loopName = Object.keys(EX_VIDEO_MAP).filter(function(n){ return EX_VIDEO_MAP[n].split('|')[0] === loopId; })[0];
+navigator.onLine = true; _offlineCached = null;
+var h1 = _exFallbackBlockHtml(loopName); ok('online: loop video first', /<video/.test(h1) && /_fgLoopFail\(this\)/.test(h1));
+ok('media URLs carry the manifest version (= cache key)', h1.indexOf(_exMediaUrl(loopId, 'loop.mp4')) !== -1 && /loop\.mp4\?v=[0-9a-f]{8}"/.test(h1) && /0\.jpg\?v=[0-9a-f]{8}"/.test(h1)
+  && _exMediaUrl(loopId, 'loop.mp4') === _offlineCacheKey({ path: loopId + '/loop.mp4', hash: EX_MEDIA_FILES[loopId][5] }));
+navigator.onLine = false; _offlineCached = new Map();
+var h2 = _exFallbackBlockHtml(loopName); ok('offline, loop not downloaded: frames, no video', !/<video/.test(h2) && (h2.match(/<img/g) || []).length === 2);
+_offlineCached.set(loopId + '/loop.mp4', 'stale'); ok('offline, only a stale loop: frames', !/<video/.test(_exFallbackBlockHtml(loopName)));
+_offlineCached.set(loopId + '/loop.mp4', EX_MEDIA_FILES[loopId][5]); ok('offline, loop downloaded: video', /<video/.test(_exFallbackBlockHtml(loopName)));
+var any = Object.keys(EX_V2_ID_MAP)[0]; var h3 = _exVideoBlockHtml(any);
+ok('offline: no ExerciseDB V2/GIF layer rendered', !/fgV2Wrap|fgGifWrap|exercisedb/i.test(h3));
+navigator.onLine = true; _offlineCached = null;
+// Card text is escaped even if a display name carried markup.
+var _pdn = _progDisplayName; _progDisplayName = function(){ return '<img src=x onerror=alert(1)>'; };
+LS[OFFLINE_STATE_KEY] = JSON.stringify({ v:1, progs: { 'PPL': { tier:'images' } } }); userPath = { programme:'ULF' }; _offlineCached = new Map();
+var card = _offlineCardInner(); _progDisplayName = _pdn; delete LS[OFFLINE_STATE_KEY]; _offlineCached = null;
+ok('card escapes names', card.indexOf('<img src=x') === -1 && card.indexOf('&lt;img') !== -1);
+ok('card offers both sizes', /Images only/.test(card) && /Images \+ video/.test(card) && /role="radiogroup"/.test(card));
+ok('other downloads removable by index only', /offlineRemoveOther\(0\)/.test(card));
+_offlineSwOk = false; LS[OFFLINE_STATE_KEY] = JSON.stringify({ v:1, progs: { 'ULF': { tier:'images' } } }); _offlineCached = new Map(_offlineSetForKey('ULF','images').map(function(f){ return [f.path, f.hash]; }));
+var c2 = _offlineCardInner(); ok('old service worker: no "Available offline" claim, update offered', !/Available offline/.test(c2) && /offlineApplyUpdate\(\)/.test(c2) && !/offlineDownload\(\)/.test(c2));
+_offlineSwOk = true; ok('current worker + full set: Available offline', /Available offline/.test(_offlineCardInner()));
+_offlineCached.set(_offlineSetForKey('ULF','images')[0].path, 'stale'); ok('a newer app version: "Update available", not "cleared"', /Update available/.test(_offlineCardInner()));
+_offlineCacheErr = true; ok('Cache API refused: says so, no endless "Checking"', /can't keep demos/.test(_offlineCardInner()) && !/Checking/.test(_offlineCardInner()));
+_offlineCacheErr = false; _offlineSwOk = null; _offlineCached = null; delete LS[OFFLINE_STATE_KEY];
+JSON.stringify(fails);
+"""
+
+OFFLINE_ASYNC = {
+ 'download stores the exact set, versioned, then reports ready': r"""
+   userPath = { programme:'library:sl5x5' }; useDigest();
+   await offlineDownload();
+   var want = setPaths(_offlineSetForKey('library:sl5x5', 'images'));
+   if(!eqA(mediaPaths(), want)) return 'paths ' + JSON.stringify(mediaPaths());
+   if(!mediaKeys().every(function(u){ return /\?v=[0-9a-f]{8}$/.test(u); })) return 'unversioned key';
+   if(!CFG.fetched.every(function(u){ return u.indexOf(EX_MEDIA_BASE) === 0; })) return 'fetched non-media ' + CFG.fetched[0];
+   var st = _offlineStateGet(); if(!st.progs['library:sl5x5'] || st.progs['library:sl5x5'].tier !== 'images') return 'state not saved';
+   if(_offlineStatus(_offlineSetForKey('library:sl5x5', 'images'), _offlineCached).state !== 'ready') return 'not ready';
+   var n = CFG.fetched.length; await offlineDownload(); if(CFG.fetched.length !== n) return 'redownloaded unchanged files';
+   return true;""",
+ 'quota mid-download rolls back only this run, app data untouched': r"""
+   useDigest();
+   LS['maxgainz_v1'] = 'APPDATA'; caches.open('maxgainz-v2');
+   userPath = { programme:'library:starting-strength' }; await offlineDownload();
+   var before = mediaPaths();
+   userPath = { programme:'library:sl5x5' }; CFG.puts = 0; CFG.quotaAt = 2;
+   await offlineDownload();
+   if(!eqA(mediaPaths(), before)) return 'left files / removed shared: ' + JSON.stringify(mediaPaths()) + ' vs ' + JSON.stringify(before);
+   if(_offlineStateGet().progs['library:sl5x5']) return 'state saved after quota';
+   if(!_offlineStateGet().progs['library:starting-strength']) return 'other programme state lost';
+   if(LS['maxgainz_v1'] !== 'APPDATA' || !CS['maxgainz-v2']) return 'app data/shell touched';
+   if(!/full/i.test(_offlineLastMsg)) return 'no quota message';
+   if(_offlineJob !== null) return 'job left running';
+   return true;""",
+ 'quota rollback never deletes a file another download needs': r"""
+   useDigest();
+   userPath = { programme:'library:starting-strength' }; await offlineDownload();
+   var ss = setPaths(_offlineSetForKey('library:starting-strength', 'images'));
+   var mine = setPaths(_offlineSetForKey('library:sl5x5', 'images'));
+   var shared = ss.filter(function(p){ return mine.indexOf(p) !== -1; })[0];
+   if(!shared) return 'fixture: no shared file';
+   await _offlineDeletePaths([shared]);              // evicted by the browser meanwhile
+   var todo = mine.filter(function(p){ return mediaPaths().indexOf(p) === -1; });
+   if(todo.indexOf(shared) === todo.length - 1) return 'fixture: shared file is last';
+   userPath = { programme:'library:sl5x5' }; CFG.puts = 0; CFG.quotaAt = todo.length;   // the last put hits the quota
+   await offlineDownload();
+   if(mediaPaths().indexOf(shared) === -1) return 'rollback deleted a file starting-strength needs';
+   if(_offlineStateGet().progs['library:sl5x5']) return 'state saved after quota';
+   return true;""",
+ 'corrupt or truncated files are never stored': r"""
+   useDigest(); userPath = { programme:'library:sl5x5' };
+   var s = _offlineSetForKey('library:sl5x5', 'images');
+   CFG.corrupt[s[0].path] = 1; CFG.short[s[1].path] = 1; CFG.fail404[s[2].path] = 1;
+   await offlineDownload();
+   var have = mediaPaths();
+   if(have.indexOf(s[0].path) !== -1 || have.indexOf(s[1].path) !== -1 || have.indexOf(s[2].path) !== -1) return 'bad file stored ' + JSON.stringify(have);
+   if(have.length !== s.length - 3) return 'good files missing';
+   if(_offlineStatus(s, _offlineCached).state !== 'partial') return 'status should be partial';
+   if(!/could not be downloaded/.test(_offlineLastMsg)) return 'no failure message';
+   return true;""",
+ 'not enough space refuses before any request': r"""
+   userPath = { programme:'PPL' }; navigator.storage = { estimate: function(){ return Promise.resolve({ quota: 30e6, usage: 25e6 }); }, persist: function(){ return Promise.resolve(false); } };
+   await offlineDownload();
+   if(CFG.fetched.length) return 'fetched despite no space';
+   if(!/Not enough storage/.test(_offlineLastMsg)) return 'no message';
+   return true;""",
+ 'stale versions are removed before refetch, so sw.js never serves them': r"""
+   useDigest(); userPath = { programme:'library:sl5x5' };
+   var s = _offlineSetForKey('library:sl5x5', 'images');
+   var c = await caches.open(MEDIA_CACHE_NAME); await c.put(EX_MEDIA_BASE + s[0].path + '?v=00000000', new Response(new ArrayBuffer(1)));
+   await c.put(EX_MEDIA_BASE + 'Gone_Exercise/0.jpg?v=abcdef12', new Response(new ArrayBuffer(1)));
+   await offlineDownload();
+   var keys = mediaKeys();
+   if(keys.some(function(u){ return /v=00000000|Gone_Exercise/.test(u); })) return 'stale left ' + JSON.stringify(keys);
+   if(_offlineStatus(s, _offlineCached).state !== 'ready') return 'not ready';
+   return true;""",
+ 'cancel keeps nothing; remove keeps shared files': r"""
+   useDigest();
+   userPath = { programme:'library:starting-strength' }; await offlineDownload();
+   var keep = mediaPaths();
+   userPath = { programme:'library:sl5x5' }; CFG.abortAfter = 1;
+   await offlineDownload();
+   if(!eqA(mediaPaths(), keep)) return 'cancel kept files ' + JSON.stringify(mediaPaths());
+   if(!/cancelled/.test(_offlineLastMsg)) return 'no cancel message';
+   CFG.abortAfter = null; await offlineDownload();
+   await _offlineRemoveKey('library:sl5x5');
+   if(!eqA(mediaPaths(), keep)) return 'remove broke the other download ' + JSON.stringify(mediaPaths());
+   await _offlineRemoveKey('library:starting-strength');
+   if(mediaPaths().length) return 'remove left files';
+   return true;""",
+ 'failed "Add video" keeps the saved images state and removes its videos': r"""
+   useDigest(); userPath = { programme:'library:greyskull' }; await offlineDownload();
+   var imgs = mediaPaths();
+   var loops = _offlineSetForKey('library:greyskull', 'full').filter(function(f){ return /loop/.test(f.path); }).length;
+   if(!loops) return 'fixture: greyskull has no loops';
+   CFG.puts = 0; CFG.quotaAt = loops;
+   await offlineAddVideo(); for(var i = 0; i < 50 && _offlineJob; i++) await Promise.resolve();
+   if(_offlineStateGet().progs['library:greyskull'].tier !== 'images') return 'state switched to full before success';
+   if(!eqA(mediaPaths(), imgs)) return 'videos left behind ' + (mediaPaths().length - imgs.length);
+   if(_offlineStatus(_offlineSetForKey('library:greyskull', 'images'), _offlineCached).state !== 'ready') return 'images no longer ready';
+   CFG.quotaAt = null; navigator.onLine = false; await offlineAddVideo(); navigator.onLine = true;
+   if(_offlineStateGet().progs['library:greyskull'].tier !== 'images') return 'offline Add video changed state';
+   return true;""",
+ 'double tap starts one download, Remove waits': r"""
+   useDigest(); userPath = { programme:'library:sl5x5' };
+   var p1 = offlineDownload(); var p2 = offlineDownload(); await _offlineRemoveKey('library:sl5x5');
+   await p1; await p2;
+   var n = _offlineSetForKey('library:sl5x5', 'images').length;
+   if(CFG.fetched.length !== n) return 'fetched ' + CFG.fetched.length + ' for ' + n + ' files';
+   if(_offlineJob !== null) return 'job left set';
+   if(_offlineStatus(_offlineSetForKey('library:sl5x5', 'images'), _offlineCached).state !== 'ready') return 'not ready';
+   return true;""",
+ 'orphans from an interrupted run are swept, but not while a download runs elsewhere': r"""
+   var c = await caches.open(MEDIA_CACHE_NAME); var f = _offlineSetForKey('PPL', 'images')[0];
+   await c.put(_offlineCacheKey(f), new Response(new ArrayBuffer(1)));
+   LS[OFFLINE_JOB_KEY] = JSON.stringify({ t: Date.now() }); await _offlineReadCache({ sweep:true });
+   if(mediaPaths().length !== 1) return 'swept during another tab download';
+   delete LS[OFFLINE_JOB_KEY]; await _offlineReadCache({ sweep:true });
+   if(mediaPaths().length !== 0) return 'orphan kept';
+   useDigest(); userPath = { programme:'library:sl5x5' }; await offlineDownload(); var n = mediaPaths().length;
+   await _offlineReadCache({ sweep:true }); if(mediaPaths().length !== n) return 'swept a recorded download';
+   return true;""",
+ 'an app update shows "Update available" for the changed files': r"""
+   useDigest(); userPath = { programme:'library:sl5x5' }; LS[OFFLINE_STATE_KEY] = JSON.stringify({ v:1, progs: { 'library:sl5x5': { tier:'images' } } });
+   var set = _offlineSetForKey('library:sl5x5', 'images'); var c = await caches.open(MEDIA_CACHE_NAME);
+   for(var i = 0; i < set.length; i++) await c.put(i === 0 ? EX_MEDIA_BASE + set[i].path + '?v=00000000' : _offlineCacheKey(set[i]), new Response(new ArrayBuffer(1)));
+   await _offlineReadCache({ sweep:true });
+   var st = _offlineStatus(set, _offlineCached);
+   if(st.state !== 'update' || st.missing !== 1) return 'state ' + st.state + ' missing ' + st.missing;
+   if(mediaKeys().some(function(u){ return /v=00000000/.test(u); })) return 'old version kept';
+   return true;""",
+ 'offline session metrics: started offline and completed counted once': r"""
+   navigator.onLine = false; sessStartTime = 111; _offlineNoteSessionStart();
+   _offlineNoteSessionDone(111); _offlineNoteSessionDone(111);
+   navigator.onLine = true; sessStartTime = 222; _offlineNoteSessionStart(); navigator.onLine = false; _offlineNoteConnectivity(); navigator.onLine = true;
+   _offlineNoteSessionDone(222);
+   var st = JSON.parse(LS[OFFLINE_METRICS_KEY]); var d = st.days[Object.keys(st.days)[0]];
+   if(d.sess_start_offline !== 1 || d.sess_done_offline !== 1 || d.sess_done_dropped !== 1) return JSON.stringify(d);
+   return true;""",
+}
+
+SW_STUBS = r"""
+var L = {}; var self = { addEventListener: function(t, f){ L[t] = f; }, location: { origin: 'https://app.test' }, clients: { claim: function(){} }, skipWaiting: function(){} };
+function URL(u){ var m = /^(https?:)\/\/([^\/?#]+)([^?#]*)(\?[^#]*)?/.exec(u); this.origin = m[1] + '//' + m[2]; this.hostname = m[2].split(':')[0]; this.pathname = m[3] || '/'; this.search = m[4] || ''; }
+function Response(body, init){ this._b = body; this.status = (init && init.status) || 200; this.ok = this.status >= 200 && this.status < 300; this.type = 'basic';
+  var h = (init && init.headers) || {}; this.headers = { get: function(k){ return h[k] !== undefined ? h[k] : (h[k.toLowerCase()] !== undefined ? h[k.toLowerCase()] : null); } }; }
+Response.prototype.arrayBuffer = function(){ return Promise.resolve(this._b); };
+Response.prototype.clone = function(){ return this; };
+var C = {}; var PUTS = [];
+function mk(name){ var m = new Map(); return { m: m, put: function(k, r){ PUTS.push([name, typeof k === 'string' ? k : k.url]); m.set(typeof k === 'string' ? k : k.url, r); return Promise.resolve(); },
+  match: function(k, o){ var u = typeof k === 'string' ? k : k.url; if(m.has(u)) return Promise.resolve(m.get(u));
+    if(o && o.ignoreSearch){ var b = u.split('?')[0]; var hit = null; m.forEach(function(v, kk){ if(!hit && kk.split('?')[0] === b) hit = v; }); return Promise.resolve(hit || undefined); } return Promise.resolve(undefined); } }; }
+var caches = { open: function(n){ if(!C[n]) C[n] = mk(n); return Promise.resolve(C[n]); },
+  keys: function(){ return Promise.resolve(Object.keys(C)); }, delete: function(n){ var had = !!C[n]; delete C[n]; return Promise.resolve(had); },
+  match: function(r){ var u = typeof r === 'string' ? r : r.url; for(var n in C){ if(C[n].m.has(u)) return Promise.resolve(C[n].m.get(u)); } return Promise.resolve(undefined); } };
+var FETCHED = [];
+function fetch(r){ var u = typeof r === 'string' ? r : r.url; FETCHED.push(u); var b = new ArrayBuffer(10); return Promise.resolve(new Response(b, { status: 200, headers: { 'content-type': 'image/jpeg' } })); }
+function req(u, h, mode){ return { url: u, method: 'GET', mode: mode || 'no-cors', headers: { get: function(k){ return (h || {})[k.toLowerCase()] || null; } } }; }
+function fire(u, h, mode){ var ev = { request: req(u, h, mode), p: null, respondWith: function(p){ this.p = Promise.resolve(p); }, waitUntil: function(){} }; L.fetch(ev); return ev; }
+var console = { warn: function(){}, log: function(){} };
+"""
+
+SW_SCENARIOS = {
+ 'media served from the download; ranges; misses uncached; third parties untouched': r"""
+   var mc = await caches.open(MEDIA_CACHE);
+   var body = new ArrayBuffer(100); var v = new Uint8Array(body); for(var i = 0; i < 100; i++) v[i] = i;
+   await mc.put('https://app.test/exercise-media/X/loop.mp4?v=abcdef12', new Response(body, { status: 200, headers: { 'Content-Type': 'video/mp4' } }));
+   var e0 = fire('https://app.test/exercise-media/X/loop.mp4?v=00000000'); await e0.p;
+   if(FETCHED.length !== 1) return 'another version of the file was served from the cache';
+   var e00 = fire('https://app.test/exercise-media/X/loop.mp4'); await e00.p;
+   if(FETCHED.length !== 2) return 'unversioned request served from the cache'; FETCHED.length = 0;
+   var e1 = fire('https://app.test/exercise-media/X/loop.mp4?v=abcdef12'); var r1 = await e1.p;
+   if(!r1 || r1._b !== body || FETCHED.length) return 'full hit not served from cache';
+   var e2 = fire('https://app.test/exercise-media/X/loop.mp4?v=abcdef12', { range: 'bytes=10-19' }); var r2 = await e2.p;
+   if(r2.status !== 206 || r2.headers.get('Content-Range') !== 'bytes 10-19/100' || new Uint8Array(r2._b)[0] !== 10 || r2._b.byteLength !== 10) return 'range wrong ' + r2.status + ' ' + r2.headers.get('Content-Range');
+   var e3 = fire('https://app.test/exercise-media/X/loop.mp4?v=abcdef12', { range: 'bytes=-5' }); var r3 = await e3.p;
+   if(r3.headers.get('Content-Range') !== 'bytes 95-99/100') return 'suffix range wrong';
+   var e4 = fire('https://app.test/exercise-media/X/loop.mp4?v=abcdef12', { range: 'bytes=200-' }); var r4 = await e4.p;
+   if(r4.status !== 416) return 'unsatisfiable range should be 416';
+   PUTS.length = 0; var e5 = fire('https://app.test/exercise-media/Y/0.jpg'); await e5.p;
+   if(FETCHED.length !== 1 || PUTS.length) return 'miss must go to network without caching ' + JSON.stringify(PUTS);
+   var e6 = fire('https://static.exercisedb.dev/media/abc.gif'); if(e6.p) return 'ExerciseDB GIF intercepted';
+   var e7 = fire('https://app.test/api/edb-video?id=exr_1'); if(e7.p) return '/api/ intercepted';
+   var e8 = fire('https://evil.test/exercise-media/X/loop.mp4'); if(e8.p) return 'cross-origin exercise-media intercepted';
+   var e9 = fire('https://lxudaetjuefylgjddonm.supabase.co/rest/v1/sessions'); if(e9.p) return 'supabase intercepted';
+   return true;""",
+ 'answers MEDIA_CAPS with its media cache': r"""
+   var got = null; L.message({ data: { type:'MEDIA_CAPS' }, ports: [{ postMessage: function(m){ got = m; } }] });
+   return got && got.media === MEDIA_CACHE ? true : 'no reply ' + JSON.stringify(got);""",
+ 'activate deletes only stale app caches, never the download': r"""
+   ['maxgainz-v1', 'maxgainz-v2', MEDIA_CACHE, 'maxgainz-media-v0', 'some-other-app', 'maxgainz-v2-backup'].forEach(function(n){ C[n] = mk(n); });
+   var w = null; L.activate({ waitUntil: function(p){ w = p; } }); await w;
+   var left = Object.keys(C).sort();
+   var want = ['maxgainz-v2', MEDIA_CACHE, 'maxgainz-v2-backup', 'some-other-app'].sort();
+   return JSON.stringify(left) === JSON.stringify(want) ? true : 'left ' + JSON.stringify(left);""",
+}
+
+
+def _offline_manifest_ok(js, root):
+    sys.path.insert(0, os.path.join(root, 'tests'))
+    try:
+        import importlib
+        gm = importlib.import_module('gen_media_manifest')
+        importlib.reload(gm)
+        gm.MEDIA = os.path.join(root, 'exercise-media')
+        want = gm.render(gm.manifest())
+    finally:
+        sys.path.pop(0)
+    i = js.find(gm.BEGIN); j = js.find(gm.END)
+    have = js[i:j + len(gm.END)] if i != -1 and j != -1 else ''
+    return have == want
+
+
+def gate_offline_media(html, js, sw=None, root=None):
+    ok_all = True
+    root = root or ROOT
+    if sw is None:
+        sw = open(SW_PATH, encoding='utf-8').read() if os.path.exists(SW_PATH) else ''
+    # (a) manifest == disk; coverage of every mapped id
+    if not _offline_manifest_ok(js, root):
+        print('  ✗ EX_MEDIA_FILES is out of date with exercise-media/ — run python3 tests/gen_media_manifest.py'); ok_all = False
+    else:
+        print('  ✓ EX_MEDIA_FILES matches exercise-media/ byte-for-byte (sizes + sha256)')
+    # cache-name agreement
+    m1 = re.search(r"const MEDIA_CACHE_NAME = '([^']+)'", js); m2 = re.search(r"const MEDIA_CACHE = '([^']+)'", sw)
+    m3 = re.search(r"const CACHE_NAME = '([^']+)'", sw)
+    if not (m1 and m2 and m3) or m1.group(1) != m2.group(1) or m2.group(1) == m3.group(1) or re.match(r'^maxgainz-v\d+$', m2.group(1)):
+        print('  ✗ media cache name must be identical in index.html and sw.js and distinct from the shell cache'); ok_all = False
+    # (b) sw.js behaviour
+    sw_base = SW_STUBS + sw.replace("self.addEventListener('install'", "self.addEventListener('install_disabled'") + '\n'
+    fails = _run_jsc_scenarios(sw_base, SW_SCENARIOS)
+    for f in fails: print('  ✗ sw.js: ' + f)
+    if fails: ok_all = False
+    else: print('  ✓ sw.js: downloads served (incl. byte ranges, 416), misses never cached, ExerciseDB//api/Supabase untouched, activate spares the download')
+    # (c)+(d)+(e) index.html logic
+    pieces = []; missing = []
+    for n in OFFLINE_CONSTS_OBJ:
+        s = extract_const_object(js, n); (pieces.append(s) if s else missing.append(n))
+    for n in OFFLINE_CONSTS_ARR:
+        s = extract_const_array(js, n); (pieces.append(s) if s else missing.append(n))
+    for n in OFFLINE_CONSTS_LINE:
+        s = extract_const_line(js, n); (pieces.append(s) if s else missing.append(n))
+    ml = re.search(r'const EX_MEDIA_LOOPS = new Set\(\[[\s\S]*?\]\);', js)
+    if ml: pieces.append(ml.group(0))
+    else: missing.append('EX_MEDIA_LOOPS')
+    for n in OFFLINE_FNS:
+        s = extract_decl(js, n)
+        if s and js[max(0, js.find(s) - 6):js.find(s)].endswith('async '): s = 'async ' + s
+        (pieces.append(s) if s else missing.append(n))
+    if missing:
+        print(f'  ✗ could not extract {missing}'); return False
+    base = '\n'.join(pieces).replace('const ', 'var ') + '\n' + OFFLINE_STUBS
+    # pure
+    script = base + '\nprint((function(){ try { ' + OFFLINE_PURE.replace('JSON.stringify(fails);', 'return JSON.stringify(fails);') + ' } catch(e){ return JSON.stringify(["threw " + e + " " + (e.stack||"")]); } })());'
+    with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as t:
+        t.write(script); path = t.name
+    try:
+        out = subprocess.run([JSC, path], capture_output=True, text=True, timeout=120)
+        raw = (out.stdout.strip() or out.stderr.strip()).split('\n')[-1]
+    finally:
+        os.unlink(path)
+    try:
+        pf = json.loads(raw)
+    except Exception:
+        pf = ['runner errored: ' + raw[:400]]
+    for f in pf[:15]: print('  ✗ ' + f)
+    if pf: ok_all = False
+    else: print('  ✓ planner: every rotatable exercise (both ULF variants, pools, core, HIIT swaps, stretches), tiers, sizes, keys, cleanup, status, space, shared-safe removal; fallback order online/offline')
+    af = _run_jsc_scenarios(base, OFFLINE_ASYNC)
+    for f in af: print('  ✗ download: ' + f)
+    if af: ok_all = False
+    else: print(f'  ✓ download ({len(OFFLINE_ASYNC)} scenarios): exact versioned set, quota rollback, corrupt files refused, space check first, stale purge, cancel, shared-safe remove, offline-session metrics')
+    # (f) static wiring
+    problems = []
+    rpa = extract_decl(js, '_renderPathTabActive') or ''
+    if '_offlineCardHtml()' not in rpa: problems.append('Plan card not rendered on the active Plan tab')
+    och = extract_decl(js, '_offlineCardHtml') or ''
+    if "_p3FlagOn('offline')" not in och: problems.append('card not behind the offline flag')
+    inner = extract_decl(js, '_offlineCardInner') or ''
+    if 'esc(_offlineKeyName' not in inner or 'esc(_offlineLastMsg)' not in inner: problems.append('card text not escaped')
+    if re.search(r'on\w+="[^"]*\$\{(?!i\}|t\})', inner): problems.append('interpolated value inside an inline handler in the card')
+    starts = len(re.findall(r'sessStartTime\s*=\s*Date\.now\(\);', js))
+    hooked = len(re.findall(r'sessStartTime\s*=\s*Date\.now\(\);\s*_offlineNoteSessionStart\(\);', js))
+    if starts == 0 or starts != hooked: problems.append(f'session starts hooked {hooked}/{starts}')
+    fin = extract_decl(js, 'finishSession') or ''
+    if '_offlineNoteSessionDone(sessStartTime)' not in fin: problems.append('finishSession does not record offline completion')
+    if '_offlineNoteFormGuideClose()' not in (extract_decl(js, 'closeFormGuide') or ''): problems.append('form guide close does not record the media level')
+    lo = extract_decl(js, 'authLogout') or ''
+    if 'OFFLINE_METRICS_KEY' not in lo or 'OFFLINE_SESS_KEY' not in lo: problems.append('sign-out keeps offline metrics')
+    if '_offlineHealthHtml()' not in (extract_decl(js, 'openDataHealth') or ''): problems.append('Data health lacks offline rows')
+    dua = extract_decl(js, 'deleteUserAccount') or ''
+    if 'caches.delete(MEDIA_CACHE_NAME)' not in dua: problems.append('account deletion leaves the media cache')
+    if re.search(r'\$\{EX_MEDIA_BASE\}\$\{', js): problems.append('an unversioned self-hosted media URL is still rendered')
+    for p in problems: print('  ✗ ' + p)
+    if problems: ok_all = False
+    else: print('  ✓ flag-gated Plan card (escaped), every session start + finish, form-guide level, Data health, sign-out scrub wired')
+    return ok_all
+
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/18] parse')
+    print('[1/19] parse')
     p = gate_parse(js)
-    print('[2/18] invariants')
+    print('[2/19] invariants')
     inv = gate_invariants(js)
-    print('[3/18] video map')
+    print('[3/19] video map')
     vm = gate_videomap(js)
-    print('[4/18] inline handler wiring')
+    print('[4/19] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/18] auth log hygiene')
+    print('[5/19] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/18] sign-out scrub')
+    print('[6/19] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/18] safe rendering of user text')
+    print('[7/19] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/18] sync honesty')
+    print('[8/19] sync honesty')
     sy = gate_sync(js)
-    print('[9/18] media fallback + reminder copy')
+    print('[9/19] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/18] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/19] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/18] core-journey accessibility (session + dialogs)')
+    print('[11/19] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/18] Start today (first-use flow) + shortened Path wizard')
+    print('[12/19] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/18] simplified navigation (flagged)')
+    print('[13/19] simplified navigation (flagged)')
     nv = gate_nav_v2(html, js)
-    print('[14/18] Progress weekly briefing')
+    print('[14/19] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/18] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/19] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/18] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/19] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/18] Phase 2 typed sets (preview before save)')
+    print('[17/19] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
-    print('[18/18] Phase 2 weekly AI recap + measurement')
+    print('[18/19] Phase 2 weekly AI recap + measurement')
     rc = gate_recap(html, js)
+    print('[19/19] Phase 3 offline media (download, cache versioning, fallback order)')
+    om = gate_offline_media(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 
