@@ -3845,6 +3845,7 @@ async function sbFetch(path, options = {}, _isRetry = false) {
     if (!res.ok) {
       console.warn('Supabase error', res.status, text);
       _lastSyncError = 'http';
+      _lastSyncErrorDetail = { status: res.status, text: String(text || '').slice(0, 400) };
       return null;
     }
     _lastSyncError = null;
@@ -3881,14 +3882,34 @@ var HYDRATED_KEY = 'maxgainz_hydrated_uid';
 var PROFILE_SEEN_KEY = 'maxgainz_profile_seen_at'; // updated_at of the cloud profile blob this device last applied/wrote
 var _pending = null;
 var _lastSyncError = null;      // 'auth' | 'timeout' | 'network' | 'http' | null (set by sbFetch)
+var _lastSyncErrorDetail = null; // { status, text } of the last HTTP error (set by sbFetch)
+// Idempotent session inserts: every session carries a client-generated id and is
+// UPSERTed on (user_id, client_id), so a retry after a lost response can never
+// create a second row. Needs supabase/sessions_client_id.sql; until that has run,
+// the first upsert fails with a schema error, this flips to false for the page,
+// and uploads fall back to plain inserts (deduped by the reload+merge path).
+var _sessClientIdSupported = null; // null = unknown, true = confirmed, false = column/constraint missing
 var _syncInFlight = null;       // promise of the running flushPending(), if any
 var _syncRetryTimer = null;
 var _syncBackoff = 0;
 var _cloudLoadInFlight = false;
 var _cloudLoadedThisPage = false; // sessions are only re-uploaded after a load has merged (dedupes lost-response uploads)
 var _sessUploading = new Set();   // _sessionKey()s with a POST in flight
+var _cloudIdsByKey = {};          // _sessionKey → every cloud row id seen for it (pre-existing duplicates)
 var _profileRev = 0, _profileQueued = null, _profileChain = Promise.resolve();
 
+function _newClientId(){
+  try { if(typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID(); } catch(e){}
+  let h = '';
+  for(let i = 0; i < 32; i++) h += Math.floor(Math.random() * 16).toString(16);
+  return h.slice(0,8) + '-' + h.slice(8,12) + '-4' + h.slice(13,16) + '-a' + h.slice(17,20) + '-' + h.slice(20,32);
+}
+// Pure: does this PostgREST error mean "sessions.client_id / its unique constraint isn't there yet"?
+function _isClientIdSchemaError(detail){
+  if(!detail || !detail.text) return false;
+  const t = String(detail.text);
+  return /client_id/i.test(t) || /PGRST204|42703|42P10/.test(t) || /no unique or exclusion constraint/i.test(t);
+}
 function _emptyPending(userId){
   return { userId: userId || null, profile: false, weights: {}, deletes: [], deletedKeys: [] };
 }
@@ -4040,15 +4061,19 @@ async function _uploadSession(s){
   const k = _sessionKey(s);
   if(_sessUploading.has(k)) return false;
   _sessUploading.add(k);
+  // Give the session its idempotency key BEFORE the first attempt and persist
+  // it, so every retry (this page or after a reload) reuses the same id.
+  if(!s.client_id){ s.client_id = _newClientId(); saveLocalCache(); }
   try {
     const res = await cloudSaveSession(s, { silent: true });
     const id = Array.isArray(res) && res[0] && res[0].id;
     if(!id){
       // Outcome unknown (the insert may have landed with the response lost).
-      // Session inserts aren't idempotent, so the next retry must go back
-      // through cloudLoadAll(): its merge adopts a row that did land (same
-      // _sessionKey) and only re-uploads sessions that are really missing.
-      _cloudLoadedThisPage = false;
+      // With confirmed client_id upserts a retry is idempotent. Otherwise plain
+      // inserts aren't, so the next retry must go back through cloudLoadAll():
+      // its merge adopts a row that did land (same _sessionKey) and only
+      // re-uploads sessions that are really missing.
+      if(_sessClientIdSupported !== true) _cloudLoadedThisPage = false;
       return false;
     }
     const p = _P();
@@ -4117,6 +4142,7 @@ function flushPending(){
 // Manual "Retry" from the status line.
 async function retrySync(){
   if(!isAuthenticated()){ showToast('Sign in to sync your data'); return; }
+  if(_lastSyncError === 'auth'){ reauthenticate(); return; }
   if(navigator.onLine === false){ showToast('📵 Still offline — your data is saved on this device'); return; }
   clearTimeout(_syncRetryTimer); _syncRetryTimer = null; _syncBackoff = 0; _lastSyncError = null;
   let ok;
@@ -4131,6 +4157,105 @@ async function retrySync(){
   showToast(left === 0 ? '☁️ Synced to your account'
     : _lastSyncError === 'auth' ? '⚠️ Session expired — sign in again to sync'
     : '⚠️ ' + left + ' change' + (left === 1 ? '' : 's') + ' still waiting — saved on this device', { duration: 2600 });
+}
+
+// ── Keeping unsynced work across sign-out / re-login ──
+// An expired session is fixed by signing in AGAIN IN PLACE (no wipe), and a
+// deliberate sign-out with unsynced work can keep it in a per-account stash
+// that is restored only when the SAME account signs back in.
+var STASH_KEY = 'maxgainz_stash_v1';
+var _reauthMode = false;
+
+// Pure: the unsynced part of an account's local state, as a JSON-safe record.
+function _buildStash(sessions, pending){
+  const p = pending || {};
+  return {
+    at: new Date().toISOString(),
+    sessions: (Array.isArray(sessions) ? sessions : []).filter(s => s && !s.cloud_id)
+      .map(s => { const o = Object.assign({}, s, { date: s.date instanceof Date ? s.date.toISOString() : s.date }); delete o._needsUpload; return o; }),
+    weights: Object.assign({}, p.weights || {}),
+    deletes: Array.isArray(p.deletes) ? p.deletes.slice() : [],
+    deletedKeys: Array.isArray(p.deletedKeys) ? p.deletedKeys.slice() : []
+  };
+}
+function _stashUnsynced(){
+  const uid = getCurrentUserId();
+  if(!uid) return 0;
+  const st = _buildStash(completedSessions, _P());
+  const n = st.sessions.length + Object.keys(st.weights).length + st.deletes.length;
+  if(!n) return 0;
+  const all = lsGet(STASH_KEY, {}) || {};
+  all[uid] = st;
+  lsSet(STASH_KEY, all);
+  return n;
+}
+// Called right after a successful sign-in, before cloudLoadAll().
+function _restoreStash(){
+  const uid = getCurrentUserId();
+  const all = lsGet(STASH_KEY, null);
+  if(!uid || !all || typeof all !== 'object' || !all[uid]) return 0;
+  const st = all[uid];
+  const have = new Set(completedSessions.map(_sessionKey));
+  let n = 0;
+  (Array.isArray(st.sessions) ? st.sessions : []).forEach(raw => {
+    const s = _validateSession(raw);
+    if(!s || have.has(_sessionKey(s))) return;
+    completedSessions.push(s); have.add(_sessionKey(s)); n++;
+  });
+  const p = _P();
+  Object.keys(st.weights || {}).forEach(k => {
+    const w = st.weights[k];
+    if(typeof w === 'number' && isFinite(w) && !k.startsWith('__')){ p.weights[k] = w; customWeights[k] = w; n++; }
+  });
+  (st.deletes || []).forEach(id => { if(!p.deletes.includes(id)){ p.deletes.push(id); n++; } });
+  (st.deletedKeys || []).forEach(k => { if(!p.deletedKeys.includes(k)) p.deletedKeys.push(k); });
+  _savePending();
+  saveLocalCache(); // stamps this account, so cloudLoadAll() merges + uploads them
+  delete all[uid];
+  lsSet(STASH_KEY, all);
+  return n;
+}
+
+// "Sign in again" for an expired session — the app's data stays put.
+function reauthenticate(){
+  _reauthMode = true;
+  document.querySelector('.app').classList.add('hidden');
+  document.getElementById('authMod').classList.add('show');
+  document.getElementById('authForm').style.display = 'none';
+  document.getElementById('authResetForm').style.display = 'none';
+  document.getElementById('authConfirm').style.display = 'none';
+  document.getElementById('authLoginForm').style.display = 'block';
+  const em = document.getElementById('loginEmail');
+  if(em && !em.value) em.value = getCurrentUserEmail() || '';
+  const cancel = document.getElementById('authReauthCancel');
+  if(cancel) cancel.style.display = 'block';
+}
+function cancelReauth(){
+  _reauthMode = false;
+  const cancel = document.getElementById('authReauthCancel');
+  if(cancel) cancel.style.display = 'none';
+  document.getElementById('authMod').classList.remove('show');
+  document.querySelector('.app').classList.remove('hidden');
+}
+
+// Sign-out that never silently discards work: try to sync first; if anything
+// is still unsynced, let the user keep it (restored on their next sign-in).
+async function confirmSignOut(){
+  let n = _pendingCount();
+  if(n > 0 && navigator.onLine !== false && _lastSyncError !== 'auth'){
+    showToast('🔄 Syncing before you sign out…');
+    try { if(_cloudLoadedThisPage) await flushPending(); else await cloudLoadAll(); } catch(e) {}
+    if(_syncInFlight) { try { await _syncInFlight; } catch(e) {} }
+    n = _pendingCount();
+  }
+  if(n === 0){
+    if(confirm('Sign out of your account?')) authLogout();
+    return;
+  }
+  const what = n + ' change' + (n === 1 ? '' : 's');
+  if(!confirm(what + " on this device haven't synced to your account yet.\n\nSign out anyway?")) return;
+  const keep = confirm('Keep the unsynced workouts on this device and sync them the next time you sign in to this account?\n\nOK = keep them (recommended)\nCancel = discard them permanently');
+  authLogout({ keepUnsynced: keep });
 }
 
 // Toast for a user-initiated save: say WHERE it is saved, then the cloud outcome.
@@ -4154,10 +4279,13 @@ function _announceSave(what, cloudPromise){
 
 async function cloudSaveSession(s, opts) {
   if(!isAuthenticated()) return null;
-  const result = await sbFetch('sessions', {
+  const useCid = !!(s && s.client_id) && _sessClientIdSupported !== false;
+  const result = await sbFetch(useCid ? 'sessions?on_conflict=user_id,client_id' : 'sessions', {
     method: 'POST',
     silent: !!(opts && opts.silent),
+    extraHeaders: useCid ? { 'Prefer': 'resolution=merge-duplicates,return=representation' } : undefined,
     body: JSON.stringify({
+      ...(useCid ? { client_id: s.client_id } : {}),
       user_id: getCurrentUserId(),
       date: s.date instanceof Date ? s.date.toISOString() : s.date,
       day: s.day,
@@ -4173,6 +4301,16 @@ async function cloudSaveSession(s, opts) {
       xp_awarded: s.xpAwarded || 0
     })
   });
+  if(useCid){
+    if(Array.isArray(result) && result[0] && result[0].id){
+      _sessClientIdSupported = true;
+    } else if(result === null && _lastSyncError === 'http' && _isClientIdSchemaError(_lastSyncErrorDetail)){
+      // Migration not applied yet: fall back to a plain insert for this page.
+      console.warn('[sync] sessions.client_id unavailable — run supabase/sessions_client_id.sql; using plain inserts');
+      _sessClientIdSupported = false;
+      return cloudSaveSession(s, opts);
+    }
+  }
   return result;
 }
 
@@ -4190,16 +4328,19 @@ async function cloudDeleteSession(s) {
     _recomputeSyncStatus();
     return null;
   }
-  const id = s.cloud_id;
-  if (!p.deletes.includes(id)) { p.deletes.push(id); _savePending(); }
-  const res = await sbFetch('sessions?id=eq.' + encodeURIComponent(id), { method: 'DELETE' });
-  if (res !== null) {
+  // The session's own row plus any duplicate rows of it seen on the last load.
+  const ids = [s.cloud_id].concat((_cloudIdsByKey[_sessionKey(s)] || []).filter(x => x !== s.cloud_id));
+  ids.forEach(id => { if (!p.deletes.includes(id)) p.deletes.push(id); });
+  _savePending();
+  let res = [];
+  for (const id of ids) {
+    const r = await sbFetch('sessions?id=eq.' + encodeURIComponent(id), { method: 'DELETE' });
+    if (r === null) { res = null; continue; }
     const i = _P().deletes.indexOf(id);
     if (i >= 0) { _P().deletes.splice(i, 1); _savePending(); }
-    _markSynced();
-  } else {
-    _scheduleRetry();
   }
+  if (res !== null) _markSynced();
+  else _scheduleRetry();
   _recomputeSyncStatus();
   return res;
 }
@@ -4316,6 +4457,22 @@ async function cloudSaveProfile(opts) {
 
 // Load everything from Supabase — sessions, weights, profile
 // This is the source of truth on login and app start
+// Fetch EVERY session row, paging past PostgREST's per-request cap. (A single
+// `order=date.asc&limit=500` used to return only the OLDEST 500 — anything newer
+// never loaded and its local copy was re-uploaded as a duplicate.) Returns null
+// if any page fails, so a partial list is never mistaken for the full history.
+async function _fetchAllSessionRows(userId){
+  const pageSize = 500, maxPages = 40;
+  const rows = [];
+  for(let page = 0; page < maxPages; page++){
+    const chunk = await sbFetch('sessions?user_id=eq.' + userId + '&order=date.asc,id.asc&limit=' + pageSize + '&offset=' + (page * pageSize));
+    if(!Array.isArray(chunk)) return null;
+    chunk.forEach(r => rows.push(r));
+    if(chunk.length < pageSize) return rows;
+  }
+  return null; // > 20,000 sessions: refuse to treat a truncated list as complete
+}
+
 async function cloudLoadAll() {
   if(!isAuthenticated()) return false;
   const userId = getCurrentUserId();
@@ -4328,7 +4485,7 @@ async function cloudLoadAll() {
   let sessRows = null, weightRows = null;
   try {
     [sessRows, weightRows] = await Promise.all([
-      sbFetch('sessions?user_id=eq.' + userId + '&order=date.asc&limit=500'),
+      _fetchAllSessionRows(userId),
       sbFetch('custom_weights?user_id=eq.' + userId)
     ]);
   } catch(e) {
@@ -4396,7 +4553,12 @@ async function cloudLoadAll() {
     let _cachedUserId = null;
     try { const _raw = localStorage.getItem(STORAGE_KEY); if(_raw) _cachedUserId = (JSON.parse(_raw) || {}).userId || null; } catch(e){}
     const _sameUser = _cachedUserId && _cachedUserId === userId;
-    const _localSnapshot = _sameUser ? completedSessions.slice() : [];
+    // A local copy that HAS a cloud_id which is no longer in the (complete,
+    // paginated) cloud list was deleted on another device — drop it instead of
+    // letting the merge re-upload it. Only sessions without a cloud_id are
+    // genuinely local-only.
+    const _cloudIds = new Set(sessRows.map(r => r.id));
+    const _localSnapshot = _sameUser ? completedSessions.filter(s => s && (!s.cloud_id || _cloudIds.has(s.cloud_id))) : [];
 
     const cloudArr = sessRows.map(r => ({
       cloud_id: r.id,
@@ -4411,7 +4573,8 @@ async function cloudLoadAll() {
       activityType: r.activity_type,
       activityEmoji: r.activity_emoji,
       intensity: r.intensity,
-      xpAwarded: r.xp_awarded
+      xpAwarded: r.xp_awarded,
+      ...(r.client_id ? { client_id: r.client_id } : {})
     })).filter(c => {
       const k = _sessionKey(c);
       if (!_pend.deletedKeys.includes(k)) return true;
@@ -4424,6 +4587,11 @@ async function cloudLoadAll() {
     const _before = _pend.deletedKeys.length;
     _pend.deletedKeys = _pend.deletedKeys.filter(k => _sessUploading.has(k));
     if (_pend.deletedKeys.length !== _before) _savePending();
+
+    // Older builds could insert the same session twice; the merge shows one, so
+    // remember every row id per key — deleting the session deletes all of them.
+    _cloudIdsByKey = {};
+    cloudArr.forEach(c => { const k = _sessionKey(c); (_cloudIdsByKey[k] = _cloudIdsByKey[k] || []).push(c.cloud_id); });
 
     const merged = _mergeSessions(_localSnapshot, cloudArr).map(s => _validateSession(s) || s);
     completedSessions.length = 0;
@@ -5305,7 +5473,10 @@ bus.on('sync:status', ({ status }) => {
   el.style.color = status === 'synced' ? 'var(--green)'
     : (status === 'offline' || status === 'error' || status === 'auth') ? 'var(--orange)' : 'var(--text2)';
   const btn = document.getElementById('syncRetryBtn');
-  if(btn) btn.style.display = (signedIn && status !== 'syncing' && status !== 'uploading' && status !== 'synced' && status !== 'auth' && (pending > 0 || status === 'error')) ? 'inline-block' : 'none';
+  if(btn){
+    btn.textContent = status === 'auth' ? 'Sign in again' : 'Retry';
+    btn.style.display = (signedIn && (status === 'auth' || (status !== 'syncing' && status !== 'uploading' && status !== 'synced' && (pending > 0 || status === 'error')))) ? 'inline-block' : 'none';
+  }
 });
 
 // Floating sync banner — only show during cold-start sync (no cached data)
@@ -24222,7 +24393,16 @@ async function authLogin(){
     localStorage.removeItem('maxgainz_pending_name');
     localStorage.removeItem('maxgainz_pending_email');
 
+    // In-place re-login (expired session) by a DIFFERENT account: scrub the
+    // previous account's local state first, exactly like a sign-out would.
+    if(currentUser && currentUser.id && currentUser.id !== data.user.id) authLogout();
+    _reauthMode = false;
+    const _rc = document.getElementById('authReauthCancel'); if(_rc) _rc.style.display = 'none';
+    _lastSyncError = null;
     saveAuthState({id: data.user.id, email: data.user.email, name: userName}, data.access_token, data.refresh_token);
+    // Unsynced work this account chose to keep at its last sign-out.
+    const _restored = _restoreStash();
+    if(_restored) showToast('↩️ Restored ' + _restored + ' unsynced change' + (_restored === 1 ? '' : 's') + ' — syncing now');
     document.getElementById('authMod').classList.remove('show');
     
     // Hide auth modal and show app without reload
@@ -24265,7 +24445,10 @@ async function authLogin(){
 }
 
 // Logout
-function authLogout(){
+function authLogout(opts){
+  // Unsynced work the user chose to keep goes to a per-account stash first.
+  if(opts && opts.keepUnsynced) _stashUnsynced();
+  _reauthMode = false;
   _dashDisabled = true; clearTimeout(_dashTimer); _dashTimer = null; // no summary push once sign-out has started
   // ── Wipe all user data from localStorage ──
   localStorage.removeItem(STORAGE_KEY);
@@ -24422,14 +24605,7 @@ function updateCloudStatus(){
     emailEl.textContent = getCurrentUserEmail();
     toggleBtn.textContent = 'Sign Out';
     toggleBtn.style.background = 'var(--red)';
-    toggleBtn.onclick = function() {
-      const _unsynced = (typeof _pendingCount === 'function') ? _pendingCount() : 0;
-      if(confirm(_unsynced > 0
-        ? 'You have ' + _unsynced + ' change' + (_unsynced === 1 ? '' : 's') + ' saved only on this device that have not synced yet.\n\nSigning out now will permanently discard ' + (_unsynced === 1 ? 'it' : 'them') + '. Sign out anyway?'
-        : 'Sign out of your account?')){
-        authLogout();
-      }
-    };
+    toggleBtn.onclick = function() { confirmSignOut(); }; // syncs first; never silently discards unsynced work
   } else {
     statusEl.textContent = '📱 Not authenticated';
     statusEl.style.color = 'var(--text2)';
@@ -25061,6 +25237,7 @@ window.addEventListener('offline', updateOnlineStatus);
         <button id="loginSubmitBtn" class="btn-p" style="width:100%;margin-bottom:12px;font-size:15px;padding:14px;" onclick="authLogin()">Sign In</button>
         <button style="width:100%;background:#1e1e2a;color:#f0f0f0;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;font-size:15px;padding:14px;font-weight:700;cursor:pointer;margin-bottom:12px;" onclick="switchAuthMode()">Need an account? Create one</button>
         <button style="width:100%;background:transparent;color:#c8ff00;border:none;font-size:13px;padding:10px;font-weight:700;cursor:pointer;" onclick="showPasswordReset()">Forgot password?</button>
+        <button id="authReauthCancel" style="display:none;width:100%;background:transparent;color:#8888aa;border:none;font-size:13px;padding:10px;font-weight:700;cursor:pointer;" onclick="cancelReauth()">Cancel — keep using the app offline</button>
       </div>
 
       <!-- RESET FORM -->
