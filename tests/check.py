@@ -919,24 +919,648 @@ def gate_logout_scrub(js):
           f'cloudSaveProfile() uploads')
     return True
 
+# ── GATE: sync honesty (save/sync status accuracy + retry) ─────────────────
+# Drives the REAL sync functions (extracted by name) inside JavaScriptCore's
+# `jsc` shell — unlike JXA it drains microtasks, so async code really runs —
+# against a stubbed sbFetch that fails on demand (failure injection). Encodes
+# audit P1 "Save and sync status can overstate success":
+#   - a failed cloud write is a visible pending operation, never "synced"
+#   - a failed/partial cloudLoadAll leaves local state untouched
+#   - pending work survives a reload, is account-scoped, and is retried
+JSC = '/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc'
+
+SYNC_FUNCS = ['_emptyPending', '_normalisePending', '_P', '_savePending', '_unsyncedSessionCount',
+              '_countPending', '_pendingCount', '_isHydrated', '_markSynced', '_lastSyncedAt',
+              '_setProfileSeen', '_profileSeenAt', '_mergeLocalProfileExtras',
+              '_syncLabel', '_recomputeSyncStatus', '_scheduleRetry', '_uploadSession', 'flushPending',
+              'cloudSaveSession', 'cloudDeleteSession', 'cloudSaveWeight', 'cloudSaveProfile',
+              'cloudLoadAll', '_mergeSessions', '_validateSession', '_sessionKey',
+              '_normalizeSessionWeights', 'lsGet', 'lsSet', 'lsGetRaw', 'lsSetRaw', 'setSyncStatus']
+
+SYNC_PRELUDE = r'''
+var console = { log(){}, warn(){}, error(){}, info(){} };
+var __ls = {};
+var localStorage = { getItem(k){ return Object.prototype.hasOwnProperty.call(__ls,k) ? __ls[k] : null; },
+  setItem(k,v){ __ls[k] = String(v); }, removeItem(k){ delete __ls[k]; } };
+var navigator = { onLine: true };
+var __st = { auth: true, uid: 'userA' };
+function isAuthenticated(){ return __st.auth; }
+function getCurrentUserId(){ return __st.auth ? __st.uid : null; }
+var __calls = [], __timers = [], __toasts = [], __statuses = [];
+function setTimeout(f, ms){ __timers.push(ms); return __timers.length; }
+function clearTimeout(){}
+function showToast(m){ __toasts.push(String(m)); }
+var __net = function(path, opts){ return []; };
+async function sbFetch(path, opts){ opts = opts || {}; __calls.push({ path: path, method: opts.method || 'GET', body: opts.body || null }); return __net(path, opts); }
+var bus = { emit(ev, d){ __statuses.push(d.status); } };
+function _isColdSyncing(){ return false; }
+var _isCloudSyncing = false;
+function saveLocalCache(){} function applyCustomWeights(){}
+var STORAGE_KEY = 'maxgainz_v1';
+var _dashWeightsOk = false;
+var completedSessions = [], customWeights = {}, customWorkouts = [], HIIT = [];
+var userProfile = { firstName: 'Local', weight: 80 };
+var userPreferences = { audioEnabled: true };
+var todayProg = 'ULF', userPath = { id: 'p1' }, pathHistory = [], bodyWeightLog = [], measurementsLog = [], dailyNotes = {}, pbLifts = [];
+localStorage.setItem('maxgainz_path', JSON.stringify(userPath));
+function last(){ return __statuses[__statuses.length - 1]; }
+function posts(re){ return __calls.filter(c => c.method === 'POST' && re.test(c.path)).length; }
+'''
+
+SYNC_SCENARIOS = {
+    'profile save failure stays pending, persisted, retried, never synced': r'''
+      localStorage.setItem(HYDRATED_KEY, 'userA');
+      __net = () => null;
+      const r = await cloudSaveProfile();
+      const stored = JSON.parse(localStorage.getItem(PENDING_KEY) || '{}');
+      return r === null && _P().profile === true && stored.profile === true && __timers.length > 0 && last() !== 'synced';
+    ''',
+    'profile save success clears pending and records last-synced': r'''
+      localStorage.setItem(HYDRATED_KEY, 'userA');
+      __net = () => [];
+      await cloudSaveProfile();
+      return _P().profile === false && !!_lastSyncedAt() && last() === 'synced';
+    ''',
+    'un-hydrated device never uploads the profile blob (may be defaults)': r'''
+      __net = () => [];
+      const r = await cloudSaveProfile();
+      return r === false && posts(/custom_weights/) === 0 && _P().profile === true && last() !== 'synced';
+    ''',
+    'weight write failure queues, later success clears': r'''
+      __net = () => null;
+      await cloudSaveWeight('Bench Press', 80);
+      const queued = _P().weights['Bench Press'] === 80 && last() !== 'synced';
+      __net = () => [];
+      await cloudSaveWeight('Bench Press', 80);
+      return queued && !('Bench Press' in _P().weights) && last() === 'synced';
+    ''',
+    'failed delete is queued and filtered out of the next cloud load': r'''
+      __net = (p, o) => (o.method === 'DELETE') ? null : (/^sessions/.test(p) ? [{ id: 'c1', date: '2026-11-01T10:00:00Z', day: 'Push' }] : []);
+      await cloudDeleteSession({ cloud_id: 'c1', date: new Date('2026-11-01T10:00:00Z'), day: 'Push' });
+      const queued = _P().deletes.indexOf('c1') >= 0;
+      const ok = await cloudLoadAll();
+      if (_syncInFlight) await _syncInFlight;
+      return queued && ok === true && !completedSessions.some(s => s.cloud_id === 'c1');
+    ''',
+    'partial load (weights fail) keeps local profile/path and is not synced': r'''
+      __net = (p) => /^sessions/.test(p) ? [] : null;
+      const ok = await cloudLoadAll();
+      return ok === false && userProfile.firstName === 'Local' && userPath && userPath.id === 'p1'
+        && localStorage.getItem('maxgainz_path') !== null && __statuses.indexOf('synced') < 0;
+    ''',
+    'total load failure keeps local state and schedules a retry': r'''
+      __net = () => null;
+      completedSessions.push({ date: new Date('2026-11-02T10:00:00Z'), day: 'Legs' });
+      const ok = await cloudLoadAll();
+      return ok === false && userProfile.firstName === 'Local' && completedSessions.length === 1
+        && __timers.length > 0 && __statuses.indexOf('synced') < 0;
+    ''',
+    'pending local profile wins over the cloud blob on a hydrated device, then uploads': r'''
+      localStorage.setItem(HYDRATED_KEY, 'userA');
+      _setProfileSeen('2026-11-20T10:00:00.000Z');              // this device last saw the current cloud blob
+      __net = () => null; await cloudSaveProfile();            // fails → pending
+      const blob = JSON.stringify({ userProfile: { firstName: 'Cloud' } });
+      __net = (p, o) => o.method === 'POST' ? [] : (/^sessions/.test(p) ? [] : [{ exercise_name: '__profile__', notes: blob, updated_at: '2026-11-20T10:00:00.000Z' }]);
+      const ok = await cloudLoadAll();
+      if (_syncInFlight) await _syncInFlight;
+      const up = __calls.filter(c => c.method === 'POST' && /custom_weights/.test(c.path)).pop();
+      return ok && userProfile.firstName === 'Local' && up && up.body.indexOf('Local') >= 0 && _P().profile === false && last() === 'synced';
+    ''',
+    'un-hydrated device takes the cloud blob over pending defaults': r'''
+      __net = () => [];
+      await cloudSaveProfile();                                 // not hydrated → pending, no upload
+      const blob = JSON.stringify({ userProfile: { firstName: 'Cloud' } });
+      __net = (p, o) => o.method === 'POST' ? [] : (/^sessions/.test(p) ? [] : [{ exercise_name: '__profile__', notes: blob }]);
+      const ok = await cloudLoadAll();
+      if (_syncInFlight) await _syncInFlight;
+      return ok && userProfile.firstName === 'Cloud' && _P().profile === false;
+    ''',
+    'newer cloud blob from another device wins, local-only entries are carried over and re-uploaded': r'''
+      localStorage.setItem(HYDRATED_KEY, 'userA');
+      _setProfileSeen('2026-11-20T10:00:00.000Z');
+      bodyWeightLog = [{ date: '2026-11-23', weight: 81 }];
+      __net = () => null; await cloudSaveProfile();             // offline edit → pending
+      const blob = JSON.stringify({ userProfile: { firstName: 'Tablet' }, bodyWeightLog: [{ date: '2026-11-22', weight: 82 }],
+        measurementsLog: [], dailyNotes: { '2026-11-22': 'tablet note' } });
+      __net = (p, o) => o.method === 'POST' ? [] : (/^sessions/.test(p) ? [] : [{ exercise_name: '__profile__', notes: blob, updated_at: '2026-11-22T09:00:00.000Z' }]);
+      const ok = await cloudLoadAll();
+      if (_syncInFlight) await _syncInFlight;
+      const up = __calls.filter(c => c.method === 'POST' && /custom_weights/.test(c.path)).pop();
+      const sent = up ? JSON.parse(JSON.parse(up.body).notes) : {};
+      const dates = (sent.bodyWeightLog || []).map(e => e.date).join(',');
+      return ok && userProfile.firstName === 'Tablet' && dailyNotes['2026-11-22'] === 'tablet note'
+        && bodyWeightLog.length === 2 && dates === '2026-11-22,2026-11-23' && _P().profile === false;
+    ''',
+    'un-hydrated device keeps entries logged before the first load': r'''
+      bodyWeightLog = [{ date: '2026-11-23', weight: 81 }];
+      __net = () => [];
+      const r = await cloudSaveProfile();                       // held: not hydrated
+      const blob = JSON.stringify({ userProfile: { firstName: 'Cloud' }, bodyWeightLog: [{ date: '2026-11-01', weight: 84 }] });
+      __net = (p, o) => o.method === 'POST' ? [] : (/^sessions/.test(p) ? [] : [{ exercise_name: '__profile__', notes: blob, updated_at: '2026-11-01T09:00:00.000Z' }]);
+      await cloudLoadAll();
+      if (_syncInFlight) await _syncInFlight;
+      return r === false && userProfile.firstName === 'Cloud' && bodyWeightLog.some(e => e.date === '2026-11-23') && bodyWeightLog.some(e => e.date === '2026-11-01');
+    ''',
+    'lost-response session insert is adopted on reload, never inserted twice': r'''
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: 'userA' }));
+      __net = () => [];
+      await cloudLoadAll();                                      // page loaded → flag true
+      const s = { date: new Date('2026-11-04T10:00:00Z'), day: 'Push' };
+      completedSessions.push(s);
+      let inserts = 0;
+      __net = (p, o) => { if (o.method === 'POST' && /^sessions/.test(p)) { inserts++; return null; } return []; }; // lands, reply lost
+      await _uploadSession(s);
+      await flushPending();                                      // must NOT blindly re-POST
+      const beforeReload = inserts;
+      __net = (p, o) => { if (o.method === 'POST' && /^sessions/.test(p)) { inserts++; return [{ id: 'dup' }]; }
+        return /^sessions/.test(p) ? [{ id: 'landed', date: '2026-11-04T10:00:00Z', day: 'Push' }] : []; };
+      await cloudLoadAll();
+      if (_syncInFlight) await _syncInFlight;
+      return beforeReload === 1 && inserts === 1 && completedSessions.length === 1 && completedSessions[0].cloud_id === 'landed';
+    ''',
+    'offline session uploads after load; synced only once confirmed': r'''
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: 'userA' }));
+      completedSessions.push({ date: new Date('2026-11-03T10:00:00Z'), day: 'Pull' });
+      __net = (p, o) => o.method === 'POST' && /^sessions/.test(p) ? [{ id: 'new1' }] : [];
+      const ok = await cloudLoadAll();
+      if (_syncInFlight) await _syncInFlight;
+      return ok && completedSessions.length === 1 && completedSessions[0].cloud_id === 'new1' && last() === 'synced';
+    ''',
+    'failed session upload stays pending with a visible count': r'''
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: 'userA' }));
+      completedSessions.push({ date: new Date('2026-11-03T10:00:00Z'), day: 'Pull' });
+      __net = (p, o) => o.method === 'POST' ? null : [];
+      await cloudLoadAll();
+      if (_syncInFlight) await _syncInFlight;
+      const label = _syncLabel(last(), _pendingCount(), null, true);
+      return !completedSessions[0].cloud_id && last() !== 'synced' && /waiting to sync/.test(label) && /Saved on this device/.test(label);
+    ''',
+    'expired token stops retries and says sign in again': r'''
+      localStorage.setItem(HYDRATED_KEY, 'userA');
+      __net = () => { _lastSyncError = 'auth'; return null; };
+      await cloudSaveProfile();
+      return __timers.length === 0 && last() === 'auth' && /Sign in again/.test(_syncLabel('auth', 1, null, true));
+    ''',
+    'pending queue is account-scoped': r'''
+      __net = () => null;
+      await cloudSaveWeight('Squat', 100);
+      const a = _pendingCount();
+      __st.uid = 'userB';
+      const b = _pendingCount();
+      __st.uid = 'userA';
+      return a === 1 && b === 0 && _pendingCount() === 1;
+    ''',
+    'setSyncStatus refuses to claim synced while work is pending': r'''
+      __net = () => null;
+      await cloudSaveWeight('Row', 60);
+      __statuses.length = 0;
+      setSyncStatus('synced');
+      return __statuses[0] !== 'synced';
+    ''',
+    'status labels name where data is saved': r'''
+      return /Saved on this device/.test(_syncLabel('local', 2, null, true))
+        && /2 waiting to sync/.test(_syncLabel('local', 2, null, true))
+        && _syncLabel('syncing', 0, null, true) === '🔄 Syncing…'
+        && /^☁️ Synced to account · \d\d:\d\d$/.test(_syncLabel('synced', 0, new Date().toISOString(), true))
+        && /not signed in/.test(_syncLabel('synced', 0, null, false));
+    ''',
+}
+
+def _sync_module_vars(js):
+    """The `var` state block of the pending-sync module (declarations only)."""
+    m = re.search(r'// ── PENDING SYNC QUEUE ──([\s\S]*?)\nfunction _emptyPending', js)
+    if not m: return None
+    return '\n'.join(l for l in m.group(1).split('\n') if l.startswith('var '))
+
+def gate_sync(js):
+    if not os.path.exists(JSC):
+        print(f'  ✗ jsc not found at {JSC} — cannot run sync failure-injection tests'); return False
+    vars_src = _sync_module_vars(js)
+    if not vars_src:
+        print('  ✗ pending-sync module (// ── PENDING SYNC QUEUE ──) not found'); return False
+    srcs = []
+    for fn in SYNC_FUNCS:
+        src = extract_async_decl(js, fn)
+        if not src:
+            print(f'  ✗ {fn}() not found — update SYNC_FUNCS'); return False
+        srcs.append(src)
+    # Static ordering: cloudLoadAll must not reset local state before its fetch,
+    # and must not hard-code a 'synced' status.
+    load = extract_async_decl(js, 'cloudLoadAll')
+    fetch_at = load.find('await Promise.all')
+    problems = []
+    for pat in ['delete userProfile[', 'userPath = null', "removeItem('maxgainz_path')"]:
+        at = load.find(pat)
+        if fetch_at < 0 or (0 <= at < fetch_at):
+            problems.append(f'cloudLoadAll resets local state ({pat}) before the network fetch')
+    if "setSyncStatus('synced')" in load:
+        problems.append("cloudLoadAll hard-codes setSyncStatus('synced') — derive it via _recomputeSyncStatus()")
+    lo = extract_async_decl(js, 'authLogout') or ''
+    for pat in ['_pending = null', 'removeItem(PENDING_KEY)', 'removeItem(LAST_SYNC_KEY)', 'removeItem(HYDRATED_KEY)']:
+        if pat not in lo: problems.append(f'authLogout() does not reset sync queue state ({pat})')
+    ra = extract_async_decl(js, 'refreshAuthToken') or ''
+    if not re.search(r"catch\s*\(\s*\w*\s*\)\s*\{[^{}]*return 'transient'", ra) or "status >= 500" not in ra:
+        problems.append("refreshAuthToken() reports a network failure as a rejected session (no 'transient') — users get told to sign in again, and signing out discards unsynced data")
+    if 'removeItem(PROFILE_SEEN_KEY)' not in lo:
+        problems.append('authLogout() does not reset sync queue state (removeItem(PROFILE_SEEN_KEY))')
+    dma = extract_async_decl(js, 'deleteManualActivity') or ''
+    if 'cloudDeleteSession' not in dma:
+        problems.append('deleteManualActivity() never deletes the cloud copy (activity resurrects on next load)')
+    for p in problems: print('  ✗ ' + p)
+    ok = not problems
+    base = SYNC_PRELUDE + '\n' + vars_src + '\n' + '\n'.join(srcs) + '\n'
+    passed = 0
+    for name, body in SYNC_SCENARIOS.items():
+        script = base + ('(async function(){ ' + body + ' })().then(r => print(r === true ? "PASS" : "FAIL " + JSON.stringify(r)), '
+                         'e => print("ERROR " + e + " " + (e && e.stack || "")));')
+        with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as t:
+            t.write(script); path = t.name
+        try:
+            out = subprocess.run([JSC, path], capture_output=True, text=True, timeout=60)
+            res = (out.stdout.strip() or out.stderr.strip()).split('\n')[-1]
+        finally:
+            os.unlink(path)
+        if res == 'PASS':
+            passed += 1
+        else:
+            ok = False; print(f'  ✗ {name}: {res[:300]}')
+    if ok:
+        print(f'  ✓ sync honesty: {passed} failure-injection scenarios + static ordering/sign-out checks')
+    return ok
+
+# ── Gate 7: safe rendering of user-controlled text ─────────────────────────
+# User-created names (custom programmes, days, exercises, HIITs) were pasted
+# raw into innerHTML and into inline onclick="fn('NAME')" strings. HTML-escaping
+# cannot make the second case safe (the browser entity-decodes the attribute
+# before running it), so handlers must pass an index or read this.dataset.
+SAFE_RENDER_HELPERS = ['esc', '_cleanText', '_cleanNumFields', '_cleanTextField', '_sanitiseExList',
+                       '_sanitiseCustomWorkouts', '_sanitiseCustomHIITs', '_safePBColor',
+                       '_sanitisePBLifts', '_isDatedLogEntry']
+SAFE_RENDER_ASSERTIONS = r"""
+var fails = [];
+function eq(label, got, want){ if(JSON.stringify(got)!==JSON.stringify(want)) fails.push(label+' — got '+JSON.stringify(got)+', want '+JSON.stringify(want)); }
+function ok(label, cond){ if(!cond) fails.push(label); }
+eq('esc escapes & < > " \'', esc('&<>"\''), '&amp;&lt;&gt;&quot;&#39;');
+eq('esc(null) is empty', esc(null), '');
+eq('esc(undefined) is empty', esc(undefined), '');
+eq('esc(0) is "0"', esc(0), '0');
+eq('esc leaves normal text alone', esc('Push A — Day 1'), 'Push A — Day 1');
+eq('_cleanText strips control chars', _cleanText('a\u0000b\u001Fc\u007Fd\n'), 'abcd');
+eq('_cleanText trims', _cleanText('  Upper  '), 'Upper');
+eq('_cleanText default cap 120', _cleanText(new Array(300).join('x')).length, 120);
+eq('_cleanText explicit cap', _cleanText('abcdef', 3), 'abc');
+eq('_cleanText null → empty', _cleanText(null), '');
+eq('_cleanText keeps unicode/punctuation', _cleanText("Max's Push — Día 1 💪"), "Max's Push — Día 1 💪");
+var CW = [
+  null, 5, 'str', [], {name:''}, {name:'   '},
+  {name:"Max's <Push>", extra:1, subcategories:[
+     {name:'Day "A"', exercises:[{name:'Bench Press', sets:'3', reps:'8–12', weight:60, bw:false},
+                                  {name:''}, null, {name:'Curl', sets:'x', weight:'20', reps:10}]},
+     {name:''}, 7]},
+  {name:'NoSubs'}
+];
+var CW_IN = JSON.stringify(CW);
+var cw = _sanitiseCustomWorkouts(CW);
+eq('sanitiser drops junk programmes', cw.length, 2);
+eq('normal programme name byte-identical', cw[0].name, "Max's <Push>");
+eq('unknown fields kept', cw[0].extra, 1);
+eq('junk subcategories dropped', cw[0].subcategories.length, 1);
+eq('subcategory name byte-identical', cw[0].subcategories[0].name, 'Day "A"');
+eq('junk exercises dropped', cw[0].subcategories[0].exercises.length, 2);
+eq('numeric string sets coerced', cw[0].subcategories[0].exercises[0].sets, 3);
+eq('reps text kept', cw[0].subcategories[0].exercises[0].reps, '8–12');
+ok('non-numeric sets removed', !('sets' in cw[0].subcategories[0].exercises[1]));
+eq('numeric string weight coerced', cw[0].subcategories[0].exercises[1].weight, 20);
+eq('numeric reps left as number', cw[0].subcategories[0].exercises[1].reps, 10);
+ok('missing subcategories → array', Array.isArray(cw[1].subcategories) && cw[1].subcategories.length === 0);
+eq('input not mutated', JSON.stringify(CW), CW_IN);
+ok('returns copies', cw[0] !== CW[6] && cw[0].subcategories[0] !== CW[6].subcategories[0]);
+eq('non-array input → []', _sanitiseCustomWorkouts({name:'x'}), []);
+var long = new Array(120).join('n') + 'n';   // exactly 120 chars survives
+eq('120-char name kept whole', _sanitiseCustomWorkouts([{name:long, subcategories:[]}])[0].name, long);
+eq('control chars stripped from names', _sanitiseCustomWorkouts([{name:'A\u0007B', subcategories:[]}])[0].name, 'AB');
+var CH = [{name:'Burn', format:'AMRAP', duration:'15', desc:'d\u0000', exercises:[{name:'Burpees', reps:'10 reps', weight:'abc'}]},
+          {name:'Blocky', blocks:[{type:'floor', exercises:[{name:'Squat', duration:40}, {}]}]}, {}, 'x'];
+var CH_IN = JSON.stringify(CH);
+var ch = _sanitiseCustomHIITs(CH);
+eq('HIIT sanitiser drops junk', ch.length, 2);
+eq('HIIT name byte-identical', ch[0].name, 'Burn');
+eq('HIIT duration coerced', ch[0].duration, 15);
+eq('HIIT desc cleaned', ch[0].desc, 'd');
+ok('HIIT bad weight removed', !('weight' in ch[0].exercises[0]));
+ok('HIIT without exercises stays without', !('exercises' in ch[1]));
+eq('HIIT block junk exercise dropped', ch[1].blocks[0].exercises.length, 1);
+eq('HIIT input not mutated', JSON.stringify(CH), CH_IN);
+eq('PB colour: css var ok', _safePBColor('var(--accent)'), 'var(--accent)');
+eq('PB colour: hex ok', _safePBColor('#ff8cdd'), '#ff8cdd');
+eq('PB colour: injection rejected', _safePBColor('red;background:url(x)'), null);
+eq('PB colour: quote rejected', _safePBColor('#fff" onmouseover="x'), null);
+var pb = _sanitisePBLifts([{label:'Bench Press', color:'x" onload="y'}, {label:''}, null, {label:'Squat', color:'var(--purple)'}]);
+eq('PB sanitiser keeps labelled tiles', pb.length, 2);
+ok('PB sanitiser drops unsafe colour', !('color' in pb[0]));
+eq('PB sanitiser keeps safe colour', pb[1].color, 'var(--purple)');
+ok('dated log entry accepted', _isDatedLogEntry({date:'2026-01-05', weight:80}));
+ok('undated log entry rejected', !_isDatedLogEntry({date:"x');alert(1);//"}) && !_isDatedLogEntry(null));
+JSON.stringify(fails);
+"""
+
+# Adversarial names: an HTML payload, both quote kinds, a backslash, a tag
+# close, and a payload that survives HTML-escaping but breaks a JS string.
+EVIL_NAMES = ['<img src=x onerror=alert(1)>', 'He said "hi"', "Max's Day", 'back\\slash',
+              'x</div><b>y', "&#39;);alert(1);//"]
+
+RENDER_HARNESS = r"""
+function mkEl(id){ return { id:id, _html:'', textContent:'', style:{}, dataset:{},
+  get innerHTML(){ return this._html; }, set innerHTML(v){ this._html = String(v); } }; }
+var _els = {};
+var document = { getElementById: function(id){ return _els[id] || (_els[id] = mkEl(id)); } };
+var EVIL = %s;
+var customWorkouts = EVIL.map(function(n, i){
+  return { name:n, subcategories: EVIL.map(function(m){ return { name:m, exercises:[{name:m, sets:3, reps:m, weight:0, bw:true}] }; }) };
+});
+var todayProg = customWorkouts[0].name, selectedDay = null;
+var ULF = {}, PPL = {};
+function isPathActive(){ return false; }
+var _clicked = [];
+function setTP(p, el){ _clicked.push(p); }
+function setDay(d){ _clicked.push(d); }
+var out = {};
+renderTodayToggle(); out.toggle = document.getElementById('todayToggleWrap').innerHTML;
+renderDayPicker(); out.dayPicker = document.getElementById('dayPicker').innerHTML;
+selectedDay = customWorkouts[0].subcategories[0].name;
+renderTodayCustom(customWorkouts[0]);
+out.custom = document.getElementById('todayHeroWrap').innerHTML + document.getElementById('todayList').innerHTML;
+// Click-time resolution: every handler must reach the exact original name.
+out.resolved = [];
+if(typeof setTPIdx === 'function'){ for(var i=0;i<3+EVIL.length;i++){ _clicked=[]; setTPIdx(i, null); out.resolved.push(_clicked[0]); } }
+out.dayResolved = [];
+if(typeof setCustomDayIdx === 'function'){ for(var j=0;j<EVIL.length;j++){ _clicked=[]; setCustomDayIdx(j); out.dayResolved.push(_clicked[0]); } }
+JSON.stringify(out);
+"""
+
+# A handler is "index-passing safe" when every argument is a number literal,
+# `this`, `this.dataset.<key>`, `null`, or a call chain on those.
+_SAFE_ARG = r'(?:-?\d+(?:\.\d+)?|this|this\.dataset\.[A-Za-z]\w*|null|event)'
+_SAFE_CALL = r'(?:event\.stopPropagation\(\);)?[A-Za-z_$][\w$]*\(\s*(?:' + _SAFE_ARG + r'(?:\s*,\s*' + _SAFE_ARG + r')*)?\s*\)'
+
+# Static lint allowlist: precomputed "\\'"-escaped values used in a handler that
+# come ONLY from constant built-in data. Key = (variable, assignment substring).
+QUOTE_ESCAPE_ALLOW = {
+    ('safeDay', "(d.day || '')"): 'LIBRARY_PROGRAMMES day names (built-in constant data)',
+    ('safeN', 't.name'):           'HIIT_TEMPLATES names (built-in constant data)',
+    ('safe', 't.name'):            'HIIT_TEMPLATES names (built-in constant data)',
+}
+
+def _html_wellformed(fragment):
+    """Every tag must be <name attr="..." ...> with double-quoted values and every
+    text run must be free of < > ". Returns the first offending token or None."""
+    for tok in re.split(r'(<[^>]*>)', fragment):
+        if not tok:
+            continue
+        if tok.startswith('<'):
+            if not re.fullmatch(r'</?[A-Za-z][\w-]*(?:\s+[A-Za-z_:][\w:.-]*(?:="[^"]*")?)*\s*/?>', tok):
+                return tok
+        elif re.search(r'[<>"]', tok):
+            return tok
+    return None
+
+def gate_safe_render(html, js):
+    ok_all = True
+    # (a) helper semantics
+    pieces, missing = [], []
+    for fn in SAFE_RENDER_HELPERS:
+        src = extract_decl(js, fn)
+        if src: pieces.append(src)
+        else: missing.append(fn)
+    if missing:
+        print(f'  ✗ could not extract helper function(s): {", ".join(missing)}')
+        ok_all = False
+    else:
+        out, _ = run_jxa('\n'.join(pieces) + '\n' + SAFE_RENDER_ASSERTIONS)
+        try:
+            fails = json.loads(out)
+        except Exception:
+            fails = ['safe-render helper runner errored: ' + out]
+        for f in fails: print('  ✗ ' + f)
+        if fails: ok_all = False
+        else: print('  ✓ esc / _cleanText / sanitisers behave (escape all 5, strip, cap, copy, names unchanged)')
+
+    # (b) adversarial render of the Today toggle, custom day chips and custom hero
+    pieces = []
+    for fn in ['renderTodayToggle', 'renderDayPicker', 'renderTodayCustom']:
+        src = extract_decl(js, fn)
+        if not src:
+            print(f'  ✗ could not extract function {fn}'); return False
+        pieces.append(src)
+    for fn in SAFE_RENDER_HELPERS + ['_todayToggleProgs', 'setTPIdx', 'setCustomDayIdx']:
+        src = extract_decl(js, fn)
+        if src: pieces.append(src)      # optional: absent on unfixed code → render still runs
+    sandbox = '\n'.join(pieces) + '\n' + (RENDER_HARNESS % json.dumps(EVIL_NAMES))
+    out, _ = run_jxa(sandbox)
+    try:
+        r = json.loads(out)
+    except Exception:
+        print('  ✗ adversarial render runner errored: ' + out[:300]); return False
+    rfails = []
+    for part in ['toggle', 'dayPicker', 'custom']:
+        frag = r[part]
+        if re.search(r'<img', frag, re.I):
+            rfails.append(f'{part}: user name rendered as a live <img> tag')
+        bad = _html_wellformed(frag)
+        if bad:
+            rfails.append(f'{part}: user text breaks out of markup/attribute near {bad[:70]!r}')
+        for attr, code in re.findall(r'\son([a-z]+)\s*=\s*"([^"]*)"', frag):
+            if not re.fullmatch(_SAFE_CALL + r'(?:;' + _SAFE_CALL + r')*;?', code.strip()):
+                rfails.append(f'{part}: on{attr}="{code[:60]}" is not index/dataset-passing')
+            decoded = code.replace('&quot;', '"').replace('&#39;', "'").replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
+            for n in EVIL_NAMES:
+                for chunk in re.findall(r'[A-Za-z]{3,}', n):
+                    if re.search(r'(?<![A-Za-z])' + chunk + r'(?![A-Za-z])', decoded) and chunk not in ('this', 'dataset', 'null'):
+                        rfails.append(f'{part}: on{attr} contains part of a user name ({chunk!r})'); break
+    if r.get('resolved') != ['ULF', 'PPL', 'HIIT'] + EVIL_NAMES:
+        rfails.append(f'toggle click does not resolve to the exact names: {r.get("resolved")!r}')
+    if r.get('dayResolved') != EVIL_NAMES:
+        rfails.append(f'day-chip click does not resolve to the exact names: {r.get("dayResolved")!r}')
+    if rfails:
+        for f in dict.fromkeys(rfails): print('  ✗ ' + f)
+        ok_all = False
+    else:
+        print(f'  ✓ {len(EVIL_NAMES)} adversarial names render inert and round-trip via index-passing handlers')
+
+    # (c) static lint: no quote-escaped user string inside an inline handler
+    lint = []
+    for line, attr, code in handler_attrs(html):
+        if "replace(/'/g" in code:
+            lint.append(f"index.html:{line} {attr} builds a JS string with .replace(/'/g …) — {code[:90]}")
+    # Handlers built as a string and passed into a row helper (onclick="${attr}")
+    # escape the handler_attrs() sweep above — catch '${x.replace(/'/g …)}' anywhere.
+    seen = {int(f.split(':')[1].split()[0]) for f in lint}
+    for m in re.finditer(r"'\$\{[^}`]*\.replace\(/'/g", html):
+        line = html.count('\n', 0, m.start()) + 1
+        if line not in seen:
+            lint.append(f"index.html:{line} interpolates a quote-escaped value into a JS string literal — {m.group(0)[:70]}")
+    for m in re.finditer(r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=([^\n;]*)\.replace\(/'/g", html):
+        var, rhs = m.group(1), m.group(2)
+        if any(var == k and sub in rhs for (k, sub) in QUOTE_ESCAPE_ALLOW):
+            continue
+        used = re.search(r'\son[a-z]+\s*=\s*"[^"]*\$\{\s*' + re.escape(var) + r'\b', html)
+        if used:
+            line = html.count('\n', 0, m.start()) + 1
+            lint.append(f'index.html:{line} `{var}` is a quote-escaped string interpolated into an inline handler')
+    if lint:
+        for f in lint: print('  ✗ ' + f)
+        print("    HTML-escaping can't protect a JS string inside on*=\"…\". Pass an index or use data-* + this.dataset.")
+        ok_all = False
+    else:
+        print('  ✓ no inline handler embeds a quote-escaped user string')
+    return ok_all
+
+def extract_const_object(js, name):
+    """Extract `const NAME={ ... };` by brace-matching."""
+    m = re.search(r'const\s+' + re.escape(name) + r'\s*=\s*\{', js)
+    if not m:
+        return None
+    i = js.index('{', m.start())
+    depth = 0
+    for j in range(i, len(js)):
+        c = js[j]
+        if c == '{': depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0:
+                return js[m.start():j+1] + ';'
+    return None
+
+MEDIA_FALLBACK_ASSERTIONS = r"""
+var fails = [];
+var names = {};
+function walk(x, inEx){ if(Array.isArray(x)){ x.forEach(function(y){ walk(y, inEx); }); return; }
+  if(x && typeof x === 'object'){ if(inEx && typeof x.name === 'string') names[x.name] = 1;
+    for(var k in x){ walk(x[k], inEx || k === 'exercises'); } } }
+for(var k in ULF) walk(ULF[k], true);
+for(var k in PPL) walk(PPL[k], true);
+walk(LIBRARY_PROGRAMMES, false); walk(WARMUP_MOVES, true); walk(COOLDOWN_STRETCHES, true);
+walk(HIIT, false); walk(HIIT_TEMPLATES, false);
+var all = Object.keys(names);
+if(all.length < 150) fails.push('programme universe too small (' + all.length + ') — extraction broke');
+var specific = 0;
+all.forEach(function(n){
+  var e = _findEXDBEntry(n);
+  if(e && Array.isArray(e.cues) && e.cues.length){ specific++; return; }
+  var g = _genericCues(n);
+  if(!Array.isArray(g) || !g.length || g.some(function(c){ return typeof c !== 'string' || !c.trim(); }))
+    fails.push('no text cues for ' + JSON.stringify(n));
+});
+function nm(n){ var e = _findEXDBEntry(n); return e ? e.name : null; }
+function bad(label, n, re){ var r = nm(n); if(r && re.test(r)) fails.push(label + ' — got ' + JSON.stringify(r)); }
+bad("'Incline Dumbbell Press' must not resolve to a curl", 'Incline Dumbbell Press', /curl/i);
+bad("'Seated Calf Stretch' must not resolve to a raise", 'Seated Calf Stretch', /raise/i);
+bad("'Single Leg Stretch' must not resolve to a press", 'Single Leg Stretch', /press/i);
+bad("'Press' must not resolve to Bench Press", 'Press', /bench/i);
+bad("'Side Plank Dips (Left)' must not resolve to tricep Dips", 'Side Plank Dips (Left)', /^dips$/i);
+if(nm('Incline Dumbbell Press') !== 'Incline Dumbbell Press') fails.push('Incline Dumbbell Press has no exact EXDB entry');
+if(nm('Dumbbell Bicep Curls') !== 'Dumbbell Bicep Curls') fails.push('Dumbbell Bicep Curls has no exact EXDB entry');
+if(!/squat/i.test(nm('Goblet Squat') || '')) fails.push('Goblet Squat lost its squat match');
+if(nm('Dumbbell Row') !== 'Dumbbell Rows') fails.push('Dumbbell Row lost its Dumbbell Rows match');
+if(nm('Dumbbell Lunges') !== 'Lunges') fails.push('Dumbbell Lunges lost its Lunges match');
+[['Pull-Up','Pull-Ups'],['Push-Up','Push-Ups'],['Squats','Squat'],['Dumbbell Flyes','Dumbbell Fly'],['Face Pull','Face Pulls'],['Dip','Dips']].forEach(function(p){
+  if(nm(p[0]) !== p[1]) fails.push('singular/plural ' + JSON.stringify(p[0]) + ' should resolve to ' + JSON.stringify(p[1]) + ', got ' + JSON.stringify(nm(p[0])));
+});
+bad("bare 'Crunch' must not borrow cable-machine cues", 'Crunch', /cable/i);
+if(!_hasExerciseGuide('Some Unmapped Move')) fails.push('_hasExerciseGuide false for a non-empty name');
+if(_hasExerciseGuide('')) fails.push('_hasExerciseGuide true for an empty name');
+JSON.stringify({fails: fails, n: all.length, specific: specific});
+"""
+
+def gate_media_fallback(js, html):
+    """Offline text fallback for exercise media + honest reminder copy:
+    (a) every programme-universe exercise yields text cues (EXDB or generic),
+    (b) fuzzy EXDB lookup never crosses movement patterns,
+    (c) every self-hosted demo <video>/<img> has an onerror fallback,
+    (d) reminder copy makes no background-push promise; dismiss-day is local."""
+    ok_all = True
+    # (a)+(b) sandboxed lookups over the real programme literals
+    pieces = []
+    missing_src = []
+    for o in ['ULF', 'PPL']:
+        src = extract_const_object(js, o)
+        if src: pieces.append(src)
+        else: missing_src.append(o)
+    for a in ['_EX_STEMS', 'LIBRARY_PROGRAMMES', 'WARMUP_MOVES', 'COOLDOWN_STRETCHES', 'HIIT', 'HIIT_TEMPLATES', 'EXDB']:
+        src = extract_const_array(js, a)
+        if src: pieces.append(src)
+        else: missing_src.append(a)
+    for fn in ['_exStem', '_findEXDBEntry', '_genericCues', '_hasExerciseGuide']:
+        src = extract_decl(js, fn)
+        if src: pieces.append(src)
+        else: missing_src.append(fn)
+    if missing_src:
+        print(f'  ✗ could not extract {missing_src}'); ok_all = False
+    else:
+        out, _ = run_jxa('\n'.join(pieces) + '\n' + MEDIA_FALLBACK_ASSERTIONS)
+        try:
+            res = json.loads(out)
+        except Exception:
+            res = None
+            print('  ✗ media-fallback runner errored: ' + out); ok_all = False
+        if res is not None and res['fails']:
+            for f in res['fails'][:20]: print('  ✗ ' + f)
+            ok_all = False
+        elif res is not None:
+            print(f"  ✓ all {res['n']} programme exercises have text cues ({res['specific']} exercise-specific, rest general); fuzzy lookup stays within movement pattern")
+    # (c) static: every self-hosted media element falls back on error
+    fb = extract_decl(js, '_exFallbackBlockHtml')
+    cd = extract_decl(js, '_renderCooldownStretch')
+    if not fb or not cd:
+        print('  ✗ could not extract _exFallbackBlockHtml / _renderCooldownStretch'); ok_all = False
+    else:
+        vids = re.findall(r'<video\b[^>]*>', fb)
+        imgs = re.findall(r'<img\b[^>]*>', fb)
+        cimgs = re.findall(r'<img\b[^>]*>', cd)
+        tags_ok = len(vids) >= 1 and len(imgs) >= 2 and len(cimgs) >= 2
+        if not tags_ok:
+            print(f'  ✗ expected media tags not found (video={len(vids)}, img={len(imgs)}, cooldown img={len(cimgs)})'); ok_all = False
+        missing = [t for t in vids + imgs + cimgs if 'onerror=' not in t]
+        for t in missing: print('  ✗ media tag without onerror: ' + t[:90])
+        if missing: ok_all = False
+        elif tags_ok:
+            print('  ✓ self-hosted demo <video>/<img> (form guide + cooldown) all have onerror fallbacks')
+    # (d) reminder copy honesty + local dismiss day
+    bad_copy = [p for p in ['background push coming later', "we'll nudge you", "we\\'ll nudge you"] if p in html]
+    if bad_copy:
+        print(f'  ✗ dishonest reminder copy still present: {bad_copy}'); ok_all = False
+    tdk = extract_decl(js, '_todayDateKey')
+    tdk_ok = bool(tdk) and 'toISOString' not in tdk and 'getFullYear' in tdk
+    if not tdk_ok:
+        print('  ✗ _todayDateKey is not a LOCAL date (missing, uses toISOString, or no getFullYear)'); ok_all = False
+    if not bad_copy and tdk_ok:
+        print('  ✓ reminder copy is honest (no background-push promise) and dismiss-day is local')
+    return ok_all
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/6] parse')
+    print('[1/9] parse')
     p = gate_parse(js)
-    print('[2/6] invariants')
+    print('[2/9] invariants')
     inv = gate_invariants(js)
-    print('[3/6] video map')
+    print('[3/9] video map')
     vm = gate_videomap(js)
-    print('[4/6] inline handler wiring')
+    print('[4/9] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/6] auth log hygiene')
+    print('[5/9] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/6] sign-out scrub')
+    print('[6/9] sign-out scrub')
     sc = gate_logout_scrub(js)
+    print('[7/9] safe rendering of user text')
+    sr = gate_safe_render(html, js)
+    print('[8/9] sync honesty')
+    sy = gate_sync(js)
+    print('[9/9] media fallback + reminder copy')
+    mf = gate_media_fallback(js, html)
     print()
-    if p and inv and vm and wi and au and sc:
+    if p and inv and vm and wi and au and sc and sr and sy and mf:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 
