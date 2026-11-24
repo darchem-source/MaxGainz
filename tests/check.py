@@ -1138,26 +1138,255 @@ def gate_sync(js):
         print(f'  ✓ sync honesty: {passed} failure-injection scenarios + static ordering/sign-out checks')
     return ok
 
+# ── Gate 7: safe rendering of user-controlled text ─────────────────────────
+# User-created names (custom programmes, days, exercises, HIITs) were pasted
+# raw into innerHTML and into inline onclick="fn('NAME')" strings. HTML-escaping
+# cannot make the second case safe (the browser entity-decodes the attribute
+# before running it), so handlers must pass an index or read this.dataset.
+SAFE_RENDER_HELPERS = ['esc', '_cleanText', '_cleanNumFields', '_cleanTextField', '_sanitiseExList',
+                       '_sanitiseCustomWorkouts', '_sanitiseCustomHIITs', '_safePBColor',
+                       '_sanitisePBLifts', '_isDatedLogEntry']
+SAFE_RENDER_ASSERTIONS = r"""
+var fails = [];
+function eq(label, got, want){ if(JSON.stringify(got)!==JSON.stringify(want)) fails.push(label+' — got '+JSON.stringify(got)+', want '+JSON.stringify(want)); }
+function ok(label, cond){ if(!cond) fails.push(label); }
+eq('esc escapes & < > " \'', esc('&<>"\''), '&amp;&lt;&gt;&quot;&#39;');
+eq('esc(null) is empty', esc(null), '');
+eq('esc(undefined) is empty', esc(undefined), '');
+eq('esc(0) is "0"', esc(0), '0');
+eq('esc leaves normal text alone', esc('Push A — Day 1'), 'Push A — Day 1');
+eq('_cleanText strips control chars', _cleanText('a\u0000b\u001Fc\u007Fd\n'), 'abcd');
+eq('_cleanText trims', _cleanText('  Upper  '), 'Upper');
+eq('_cleanText default cap 120', _cleanText(new Array(300).join('x')).length, 120);
+eq('_cleanText explicit cap', _cleanText('abcdef', 3), 'abc');
+eq('_cleanText null → empty', _cleanText(null), '');
+eq('_cleanText keeps unicode/punctuation', _cleanText("Max's Push — Día 1 💪"), "Max's Push — Día 1 💪");
+var CW = [
+  null, 5, 'str', [], {name:''}, {name:'   '},
+  {name:"Max's <Push>", extra:1, subcategories:[
+     {name:'Day "A"', exercises:[{name:'Bench Press', sets:'3', reps:'8–12', weight:60, bw:false},
+                                  {name:''}, null, {name:'Curl', sets:'x', weight:'20', reps:10}]},
+     {name:''}, 7]},
+  {name:'NoSubs'}
+];
+var CW_IN = JSON.stringify(CW);
+var cw = _sanitiseCustomWorkouts(CW);
+eq('sanitiser drops junk programmes', cw.length, 2);
+eq('normal programme name byte-identical', cw[0].name, "Max's <Push>");
+eq('unknown fields kept', cw[0].extra, 1);
+eq('junk subcategories dropped', cw[0].subcategories.length, 1);
+eq('subcategory name byte-identical', cw[0].subcategories[0].name, 'Day "A"');
+eq('junk exercises dropped', cw[0].subcategories[0].exercises.length, 2);
+eq('numeric string sets coerced', cw[0].subcategories[0].exercises[0].sets, 3);
+eq('reps text kept', cw[0].subcategories[0].exercises[0].reps, '8–12');
+ok('non-numeric sets removed', !('sets' in cw[0].subcategories[0].exercises[1]));
+eq('numeric string weight coerced', cw[0].subcategories[0].exercises[1].weight, 20);
+eq('numeric reps left as number', cw[0].subcategories[0].exercises[1].reps, 10);
+ok('missing subcategories → array', Array.isArray(cw[1].subcategories) && cw[1].subcategories.length === 0);
+eq('input not mutated', JSON.stringify(CW), CW_IN);
+ok('returns copies', cw[0] !== CW[6] && cw[0].subcategories[0] !== CW[6].subcategories[0]);
+eq('non-array input → []', _sanitiseCustomWorkouts({name:'x'}), []);
+var long = new Array(120).join('n') + 'n';   // exactly 120 chars survives
+eq('120-char name kept whole', _sanitiseCustomWorkouts([{name:long, subcategories:[]}])[0].name, long);
+eq('control chars stripped from names', _sanitiseCustomWorkouts([{name:'A\u0007B', subcategories:[]}])[0].name, 'AB');
+var CH = [{name:'Burn', format:'AMRAP', duration:'15', desc:'d\u0000', exercises:[{name:'Burpees', reps:'10 reps', weight:'abc'}]},
+          {name:'Blocky', blocks:[{type:'floor', exercises:[{name:'Squat', duration:40}, {}]}]}, {}, 'x'];
+var CH_IN = JSON.stringify(CH);
+var ch = _sanitiseCustomHIITs(CH);
+eq('HIIT sanitiser drops junk', ch.length, 2);
+eq('HIIT name byte-identical', ch[0].name, 'Burn');
+eq('HIIT duration coerced', ch[0].duration, 15);
+eq('HIIT desc cleaned', ch[0].desc, 'd');
+ok('HIIT bad weight removed', !('weight' in ch[0].exercises[0]));
+ok('HIIT without exercises stays without', !('exercises' in ch[1]));
+eq('HIIT block junk exercise dropped', ch[1].blocks[0].exercises.length, 1);
+eq('HIIT input not mutated', JSON.stringify(CH), CH_IN);
+eq('PB colour: css var ok', _safePBColor('var(--accent)'), 'var(--accent)');
+eq('PB colour: hex ok', _safePBColor('#ff8cdd'), '#ff8cdd');
+eq('PB colour: injection rejected', _safePBColor('red;background:url(x)'), null);
+eq('PB colour: quote rejected', _safePBColor('#fff" onmouseover="x'), null);
+var pb = _sanitisePBLifts([{label:'Bench Press', color:'x" onload="y'}, {label:''}, null, {label:'Squat', color:'var(--purple)'}]);
+eq('PB sanitiser keeps labelled tiles', pb.length, 2);
+ok('PB sanitiser drops unsafe colour', !('color' in pb[0]));
+eq('PB sanitiser keeps safe colour', pb[1].color, 'var(--purple)');
+ok('dated log entry accepted', _isDatedLogEntry({date:'2026-01-05', weight:80}));
+ok('undated log entry rejected', !_isDatedLogEntry({date:"x');alert(1);//"}) && !_isDatedLogEntry(null));
+JSON.stringify(fails);
+"""
+
+# Adversarial names: an HTML payload, both quote kinds, a backslash, a tag
+# close, and a payload that survives HTML-escaping but breaks a JS string.
+EVIL_NAMES = ['<img src=x onerror=alert(1)>', 'He said "hi"', "Max's Day", 'back\\slash',
+              'x</div><b>y', "&#39;);alert(1);//"]
+
+RENDER_HARNESS = r"""
+function mkEl(id){ return { id:id, _html:'', textContent:'', style:{}, dataset:{},
+  get innerHTML(){ return this._html; }, set innerHTML(v){ this._html = String(v); } }; }
+var _els = {};
+var document = { getElementById: function(id){ return _els[id] || (_els[id] = mkEl(id)); } };
+var EVIL = %s;
+var customWorkouts = EVIL.map(function(n, i){
+  return { name:n, subcategories: EVIL.map(function(m){ return { name:m, exercises:[{name:m, sets:3, reps:m, weight:0, bw:true}] }; }) };
+});
+var todayProg = customWorkouts[0].name, selectedDay = null;
+var ULF = {}, PPL = {};
+function isPathActive(){ return false; }
+var _clicked = [];
+function setTP(p, el){ _clicked.push(p); }
+function setDay(d){ _clicked.push(d); }
+var out = {};
+renderTodayToggle(); out.toggle = document.getElementById('todayToggleWrap').innerHTML;
+renderDayPicker(); out.dayPicker = document.getElementById('dayPicker').innerHTML;
+selectedDay = customWorkouts[0].subcategories[0].name;
+renderTodayCustom(customWorkouts[0]);
+out.custom = document.getElementById('todayHeroWrap').innerHTML + document.getElementById('todayList').innerHTML;
+// Click-time resolution: every handler must reach the exact original name.
+out.resolved = [];
+if(typeof setTPIdx === 'function'){ for(var i=0;i<3+EVIL.length;i++){ _clicked=[]; setTPIdx(i, null); out.resolved.push(_clicked[0]); } }
+out.dayResolved = [];
+if(typeof setCustomDayIdx === 'function'){ for(var j=0;j<EVIL.length;j++){ _clicked=[]; setCustomDayIdx(j); out.dayResolved.push(_clicked[0]); } }
+JSON.stringify(out);
+"""
+
+# A handler is "index-passing safe" when every argument is a number literal,
+# `this`, `this.dataset.<key>`, `null`, or a call chain on those.
+_SAFE_ARG = r'(?:-?\d+(?:\.\d+)?|this|this\.dataset\.[A-Za-z]\w*|null|event)'
+_SAFE_CALL = r'(?:event\.stopPropagation\(\);)?[A-Za-z_$][\w$]*\(\s*(?:' + _SAFE_ARG + r'(?:\s*,\s*' + _SAFE_ARG + r')*)?\s*\)'
+
+# Static lint allowlist: precomputed "\\'"-escaped values used in a handler that
+# come ONLY from constant built-in data. Key = (variable, assignment substring).
+QUOTE_ESCAPE_ALLOW = {
+    ('safeDay', "(d.day || '')"): 'LIBRARY_PROGRAMMES day names (built-in constant data)',
+    ('safeN', 't.name'):           'HIIT_TEMPLATES names (built-in constant data)',
+    ('safe', 't.name'):            'HIIT_TEMPLATES names (built-in constant data)',
+}
+
+def _html_wellformed(fragment):
+    """Every tag must be <name attr="..." ...> with double-quoted values and every
+    text run must be free of < > ". Returns the first offending token or None."""
+    for tok in re.split(r'(<[^>]*>)', fragment):
+        if not tok:
+            continue
+        if tok.startswith('<'):
+            if not re.fullmatch(r'</?[A-Za-z][\w-]*(?:\s+[A-Za-z_:][\w:.-]*(?:="[^"]*")?)*\s*/?>', tok):
+                return tok
+        elif re.search(r'[<>"]', tok):
+            return tok
+    return None
+
+def gate_safe_render(html, js):
+    ok_all = True
+    # (a) helper semantics
+    pieces, missing = [], []
+    for fn in SAFE_RENDER_HELPERS:
+        src = extract_decl(js, fn)
+        if src: pieces.append(src)
+        else: missing.append(fn)
+    if missing:
+        print(f'  ✗ could not extract helper function(s): {", ".join(missing)}')
+        ok_all = False
+    else:
+        out, _ = run_jxa('\n'.join(pieces) + '\n' + SAFE_RENDER_ASSERTIONS)
+        try:
+            fails = json.loads(out)
+        except Exception:
+            fails = ['safe-render helper runner errored: ' + out]
+        for f in fails: print('  ✗ ' + f)
+        if fails: ok_all = False
+        else: print('  ✓ esc / _cleanText / sanitisers behave (escape all 5, strip, cap, copy, names unchanged)')
+
+    # (b) adversarial render of the Today toggle, custom day chips and custom hero
+    pieces = []
+    for fn in ['renderTodayToggle', 'renderDayPicker', 'renderTodayCustom']:
+        src = extract_decl(js, fn)
+        if not src:
+            print(f'  ✗ could not extract function {fn}'); return False
+        pieces.append(src)
+    for fn in SAFE_RENDER_HELPERS + ['_todayToggleProgs', 'setTPIdx', 'setCustomDayIdx']:
+        src = extract_decl(js, fn)
+        if src: pieces.append(src)      # optional: absent on unfixed code → render still runs
+    sandbox = '\n'.join(pieces) + '\n' + (RENDER_HARNESS % json.dumps(EVIL_NAMES))
+    out, _ = run_jxa(sandbox)
+    try:
+        r = json.loads(out)
+    except Exception:
+        print('  ✗ adversarial render runner errored: ' + out[:300]); return False
+    rfails = []
+    for part in ['toggle', 'dayPicker', 'custom']:
+        frag = r[part]
+        if re.search(r'<img', frag, re.I):
+            rfails.append(f'{part}: user name rendered as a live <img> tag')
+        bad = _html_wellformed(frag)
+        if bad:
+            rfails.append(f'{part}: user text breaks out of markup/attribute near {bad[:70]!r}')
+        for attr, code in re.findall(r'\son([a-z]+)\s*=\s*"([^"]*)"', frag):
+            if not re.fullmatch(_SAFE_CALL + r'(?:;' + _SAFE_CALL + r')*;?', code.strip()):
+                rfails.append(f'{part}: on{attr}="{code[:60]}" is not index/dataset-passing')
+            decoded = code.replace('&quot;', '"').replace('&#39;', "'").replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
+            for n in EVIL_NAMES:
+                for chunk in re.findall(r'[A-Za-z]{3,}', n):
+                    if re.search(r'(?<![A-Za-z])' + chunk + r'(?![A-Za-z])', decoded) and chunk not in ('this', 'dataset', 'null'):
+                        rfails.append(f'{part}: on{attr} contains part of a user name ({chunk!r})'); break
+    if r.get('resolved') != ['ULF', 'PPL', 'HIIT'] + EVIL_NAMES:
+        rfails.append(f'toggle click does not resolve to the exact names: {r.get("resolved")!r}')
+    if r.get('dayResolved') != EVIL_NAMES:
+        rfails.append(f'day-chip click does not resolve to the exact names: {r.get("dayResolved")!r}')
+    if rfails:
+        for f in dict.fromkeys(rfails): print('  ✗ ' + f)
+        ok_all = False
+    else:
+        print(f'  ✓ {len(EVIL_NAMES)} adversarial names render inert and round-trip via index-passing handlers')
+
+    # (c) static lint: no quote-escaped user string inside an inline handler
+    lint = []
+    for line, attr, code in handler_attrs(html):
+        if "replace(/'/g" in code:
+            lint.append(f"index.html:{line} {attr} builds a JS string with .replace(/'/g …) — {code[:90]}")
+    # Handlers built as a string and passed into a row helper (onclick="${attr}")
+    # escape the handler_attrs() sweep above — catch '${x.replace(/'/g …)}' anywhere.
+    seen = {int(f.split(':')[1].split()[0]) for f in lint}
+    for m in re.finditer(r"'\$\{[^}`]*\.replace\(/'/g", html):
+        line = html.count('\n', 0, m.start()) + 1
+        if line not in seen:
+            lint.append(f"index.html:{line} interpolates a quote-escaped value into a JS string literal — {m.group(0)[:70]}")
+    for m in re.finditer(r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=([^\n;]*)\.replace\(/'/g", html):
+        var, rhs = m.group(1), m.group(2)
+        if any(var == k and sub in rhs for (k, sub) in QUOTE_ESCAPE_ALLOW):
+            continue
+        used = re.search(r'\son[a-z]+\s*=\s*"[^"]*\$\{\s*' + re.escape(var) + r'\b', html)
+        if used:
+            line = html.count('\n', 0, m.start()) + 1
+            lint.append(f'index.html:{line} `{var}` is a quote-escaped string interpolated into an inline handler')
+    if lint:
+        for f in lint: print('  ✗ ' + f)
+        print("    HTML-escaping can't protect a JS string inside on*=\"…\". Pass an index or use data-* + this.dataset.")
+        ok_all = False
+    else:
+        print('  ✓ no inline handler embeds a quote-escaped user string')
+    return ok_all
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/7] parse')
+    print('[1/8] parse')
     p = gate_parse(js)
-    print('[2/7] invariants')
+    print('[2/8] invariants')
     inv = gate_invariants(js)
-    print('[3/7] video map')
+    print('[3/8] video map')
     vm = gate_videomap(js)
-    print('[4/7] inline handler wiring')
+    print('[4/8] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/7] auth log hygiene')
+    print('[5/8] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/7] sign-out scrub')
+    print('[6/8] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/7] sync honesty')
+    print('[7/8] safe rendering of user text')
+    sr = gate_safe_render(html, js)
+    print('[8/8] sync honesty')
     sy = gate_sync(js)
     print()
-    if p and inv and vm and wi and au and sc and sy:
+    if p and inv and vm and wi and au and sc and sr and sy:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 
