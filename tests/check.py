@@ -1715,30 +1715,415 @@ def gate_media_fallback(js, html):
         print('  ✓ reminder copy is honest (no background-push promise) and dismiss-day is local')
     return ok_all
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gate 10 — Phase 1 session logic (per-set last time, repeat, post-set feedback)
+# Pure helpers run in JXA against fixed expectations; the real renderers run
+# against adversarial exercise names; and a whole-script lint makes sure no
+# `window.X = …` assignment clobbers a top-level function X (in a classic
+# script every top-level function IS a window property — that exact bug broke
+# the session screen during Phase 1 development: window._sessRestSecs=null
+# replaced function _sessRestSecs and the next render threw).
+# ─────────────────────────────────────────────────────────────────────────────
+PHASE1_FNS = ['_lastSetsFromLog', 'getLastSessionSets', '_fmtKg', '_setDeltaText',
+              '_nextOpenSetIdx', '_repeatSetValues', '_nextStepText']
+
+PHASE1_ASSERTIONS = r"""
+var fails = [];
+function eq(label, got, want){ if(JSON.stringify(got)!==JSON.stringify(want)) fails.push(label+' — got '+JSON.stringify(got)+', want '+JSON.stringify(want)); }
+function ok(label, cond){ if(!cond) fails.push(label); }
+
+// ── _lastSetsFromLog ──
+eq('per-set weights + reps align', _lastSetsFromLog({reps:[8,8,6], setWeights:[60,62.5,65], weight:65}),
+   [{w:60,r:8},{w:62.5,r:8},{w:65,r:6}]);
+eq('older rows without setWeights fall back to the top weight', _lastSetsFromLog({reps:[5,5], weight:100}),
+   [{w:100,r:5},{w:100,r:5}]);
+eq('a zero/missing per-set weight falls back to the top weight', _lastSetsFromLog({reps:[5,5], setWeights:[0], weight:90}),
+   [{w:90,r:5},{w:90,r:5}]);
+eq('bodyweight reports w:0', _lastSetsFromLog({reps:[12,10], setWeights:[0,0], weight:0, bw:true}),
+   [{w:0,r:12},{w:0,r:10}]);
+eq('non-numeric reps become null', _lastSetsFromLog({reps:['x',7], weight:20}), [{w:20,r:null},{w:20,r:7}]);
+eq('no reps array → []', _lastSetsFromLog({weight:20}), []);
+eq('null entry → []', _lastSetsFromLog(null), []);
+
+// ── getLastSessionSets ──
+var S = [
+  {date:new Date('2026-11-01T10:00:00Z'), setLog:{'Bench Press':{reps:[5,5],setWeights:[80,80],weight:80}}},
+  {date:'2026-11-10T10:00:00Z',          setLog:{'Bench Press':{reps:[6,5],setWeights:[82.5,82.5],weight:82.5}}},
+  {date:new Date('2026-11-20T10:00:00Z'), setLog:{'Squat':{reps:[5],weight:120}}},
+  {date:new Date('2026-11-22T10:00:00Z'), manualActivity:true, setLog:{'Bench Press':{reps:[99],weight:999}}},
+  {date:new Date('2026-11-05T10:00:00Z'), setLog:{'Barbell Curl':{reps:[10],weight:30}}}
+];
+var g = getLastSessionSets(S, ['Bench Press']);
+eq('newest matching session wins (Date and ISO dates mixed)', g && g.sets, [{w:82.5,r:6},{w:82.5,r:5}]);
+eq('manual activities are ignored', g && g.sets[0].w, 82.5);
+eq('alias names are searched', (getLastSessionSets(S, ['Barbell Curls','Barbell Curl'])||{}).sets, [{w:30,r:10}]);
+eq('no history → null', getLastSessionSets(S, ['Deadlift']), null);
+eq('bad input → null', getLastSessionSets(null, ['x']), null);
+
+// ── _setDeltaText ──
+eq('heavier, same reps → up', _setDeltaText({w:82.5,r:8},{w:80,r:8},{}), {text:'+2.5 kg vs last time', dir:'up'});
+eq('same weight, more reps → up', _setDeltaText({w:80,r:9},{w:80,r:8},{}), {text:'+1 rep vs last time', dir:'up'});
+eq('lighter, fewer reps → down', _setDeltaText({w:77.5,r:6},{w:80,r:8},{}), {text:'−2.5 kg, −2 reps vs last time', dir:'down'});
+eq('heavier but fewer reps → mixed', _setDeltaText({w:85,r:6},{w:80,r:8},{}), {text:'+5 kg, −2 reps vs last time', dir:'mixed'});
+eq('identical → matched', _setDeltaText({w:80,r:8},{w:80,r:8},{}), {text:'Matched last time (80 kg × 8)', dir:'same'});
+eq('float noise is rounded (72.5 vs 70)', _setDeltaText({w:72.5,r:8},{w:70,r:8},{}).text, '+2.5 kg vs last time');
+eq('bodyweight ignores weight', _setDeltaText({w:0,r:12},{w:0,r:10},{bw:true}), {text:'+2 reps vs last time', dir:'up'});
+eq('timed compares seconds', _setDeltaText({w:0,r:45},{w:0,r:40},{timed:true}), {text:'+5 s vs last time', dir:'up'});
+eq('no previous set → new', _setDeltaText({w:80,r:8}, null, {}).dir, 'new');
+eq('previous set without reps → new', _setDeltaText({w:80,r:8}, {w:80,r:null}, {}).dir, 'new');
+
+// ── _nextOpenSetIdx ──
+eq('first open index', _nextOpenSetIdx([0,1], 4), 2);
+eq('fills a gap first', _nextOpenSetIdx([0,2], 4), 1);
+eq('all done → -1', _nextOpenSetIdx([0,1,2], 3), -1);
+eq('nothing logged → 0', _nextOpenSetIdx(undefined, 3), 0);
+
+// ── _repeatSetValues ──
+var LAST = [{w:70,r:8},{w:72.5,r:7},{w:75,r:6}];
+eq('set 1 repeats last time\'s set 1', _repeatSetValues(0, {}, {}, LAST, 80, false), {r:8, w:70, src:'last', from:0});
+eq('set 2 repeats THIS session\'s set 1', _repeatSetValues(1, {0:6}, {0:85}, LAST, 80, false), {r:6, w:85, src:'session', from:0});
+eq('skips an unlogged set to the latest logged one', _repeatSetValues(2, {0:6}, {0:85}, LAST, 80, false), {r:6, w:85, src:'session', from:0});
+eq('missing session weight falls back to planned', _repeatSetValues(1, {0:6}, {}, null, 80, false), {r:6, w:80, src:'session', from:0});
+eq('bodyweight logs w:0', _repeatSetValues(1, {0:12}, {0:0}, null, 0, true), {r:12, w:0, src:'session', from:0});
+eq('nothing to repeat → null', _repeatSetValues(0, {}, {}, null, 80, false), null);
+eq('no matching set last time → null', _repeatSetValues(3, {}, {}, LAST, 80, false), null);
+
+// ── _nextStepText ──
+eq('next set line', _nextStepText({nextSetNo:3, totalSets:4, w:80, reps:'6–8', restSecs:90}), 'Next: set 3 of 4 · 80 kg × 6–8 after 90 s rest');
+eq('suggests a heavier weight when given', _nextStepText({nextSetNo:2, totalSets:3, w:80, reps:'6–8', suggestW:82.5}), 'Next: set 2 of 3 · 80 kg × 6–8 (or try 82.5 kg)');
+eq('bodyweight next set', _nextStepText({nextSetNo:2, totalSets:3, bw:true, reps:'10–15'}), 'Next: set 2 of 3 · 10–15 reps');
+eq('exercise done hands off', _nextStepText({nextExName:'Row'}), 'Exercise done · Next: Row');
+eq('everything done', _nextStepText({}), 'All exercises done · Finish when ready');
+
+JSON.stringify(fails);
+"""
+
+# The real renderers, fed adversarial names. Stubs only what they read.
+PHASE1_RENDER_HARNESS = r"""
+function mkEl(id){ var e = { id:id, _html:'', textContent:'', style:{}, dataset:{}, attrs:{}, title:'',
+  setAttribute:function(k,v){ this.attrs[k]=String(v); }, getAttribute:function(k){ return this.attrs[k]; },
+  get innerHTML(){ return this._html; }, set innerHTML(v){ this._html = String(v); } }; return e; }
+var _els = {};
+var document = { getElementById: function(id){ return _els[id] || (_els[id] = mkEl(id)); } };
+var EVIL = %s;
+function _exerciseLookupNames(n){ return [n]; }
+function isCoreCircuit(ex){ return false; }
+function isTimedExercise(ex){ return false; }
+var hiitState = null;
+var completedSessions = [{ date:new Date('2026-11-20T10:00:00Z'), setLog:{} }];
+var sessExs = EVIL.map(function(n){ return { name:n, sets:3, reps:n, weight:60 }; });
+EVIL.forEach(function(n){ completedSessions[0].setLog[n] = { reps:[8,8,8], setWeights:[57.5,57.5,60], weight:60 }; });
+var setsDone = {}, repsLogged = {}, setWeights = {}, curIdx = 0;
+var out = { bubbles:'', repeat:'', feedback:'' };
+for(var i=0;i<EVIL.length;i++){
+  curIdx = i; setsDone[i] = [0]; repsLogged[i] = {0:8}; setWeights[i] = {0:60};
+  renderBubbles(sessExs[i]); out.bubbles += document.getElementById('setsRow').innerHTML;
+  _updRepeatBtn(); var rb = document.getElementById('repeatSetBtn');
+  out.repeat += rb.innerHTML + '|' + rb.attrs['aria-label'] + '|';
+  window._setFb = { exIdx:i, setIdx:0, delta:{ text:EVIL[i], dir:EVIL[i] }, next:EVIL[i], handoffTo:-1, handoffHead:EVIL[i] };
+  _renderSetFeedback(); out.feedback += document.getElementById('setFeedback').innerHTML;
+  window._setFb = { exIdx:99, setIdx:0, delta:{ text:'', dir:'' }, next:'', handoffTo:i, handoffHead:EVIL[i] };
+  _renderSetFeedback(); out.feedback += document.getElementById('setFeedback').innerHTML;
+}
+out.lastLabel = (document.getElementById('setsRow').innerHTML.indexOf('last 57.5×8') !== -1);
+JSON.stringify(out);
+"""
+
+def _phase1_window_shadow(js):
+    """window.X = … where X is a top-level `function X(` declaration."""
+    top_fns = set(re.findall(r'^function\s+([A-Za-z_$][\w$]*)\s*\(', js, re.M))
+    top_fns |= set(re.findall(r'^async\s+function\s+([A-Za-z_$][\w$]*)\s*\(', js, re.M))
+    hits = []
+    for m in re.finditer(r'window\.([A-Za-z_$][\w$]*)\s*=(?!=)', js):
+        name = m.group(1)
+        if name in top_fns:
+            line = js.count('\n', 0, m.start()) + 1
+            rhs = js[m.end():m.end() + 40].strip()
+            # Deliberate re-export of the same function (window.f = f) is fine.
+            if re.match(re.escape(name) + r'\b', rhs):
+                continue
+            hits.append(f'script line {line}: window.{name} = … overwrites function {name}()')
+    return hits
+
+def gate_phase1_session(js):
+    ok_all = True
+    pieces, missing = [], []
+    for fn in PHASE1_FNS:
+        src = extract_decl(js, fn)
+        if src: pieces.append(src)
+        else: missing.append(fn)
+    if missing:
+        print(f'  ✗ could not extract function(s): {", ".join(missing)}'); return False
+    out, _ = run_jxa('\n'.join(pieces) + '\n' + PHASE1_ASSERTIONS)
+    try:
+        fails = json.loads(out)
+    except Exception:
+        fails = ['phase-1 logic runner errored: ' + out[:300]]
+    for f in fails: print('  ✗ ' + f)
+    if fails: ok_all = False
+    else: print('  ✓ last-time per set, delta text, repeat-set values and next-step copy hold (38 cases)')
+
+    # Real renderers vs adversarial names
+    rpieces = []
+    for fn in PHASE1_FNS + ['esc', 'renderBubbles', '_currLastSets', '_lastSetLabel', '_repeatCandidate',
+                            '_updRepeatBtn', '_renderSetFeedback']:
+        src = extract_decl(js, fn)
+        if not src:
+            print(f'  ✗ could not extract function {fn}'); return False
+        rpieces.append(src)
+    out, _ = run_jxa('var window = this;\n' + '\n'.join(rpieces) + '\n' + (PHASE1_RENDER_HARNESS % json.dumps(EVIL_NAMES)))
+    try:
+        r = json.loads(out)
+    except Exception:
+        print('  ✗ phase-1 render runner errored: ' + out[:300]); return False
+    rfails = []
+    for part in ['bubbles', 'repeat', 'feedback']:
+        frag = r[part].replace('|', '')
+        if re.search(r'<img', frag, re.I):
+            rfails.append(f'{part}: exercise name rendered as a live <img> tag')
+        bad = _html_wellformed(frag)
+        if bad:
+            rfails.append(f'{part}: exercise text breaks out of markup/attribute near {bad[:70]!r}')
+        for attr, code in re.findall(r'\son([a-z]+)\s*=\s*"([^"]*)"', frag):
+            if not re.fullmatch(_SAFE_CALL + r'(?:;' + _SAFE_CALL + r')*;?', code.strip()):
+                rfails.append(f'{part}: on{attr}="{code[:60]}" is not index/dataset-passing')
+    if not r.get('lastLabel'):
+        rfails.append('set bubbles do not show last time\'s per-set value ("last 57.5×8")')
+    if rfails:
+        for f in dict.fromkeys(rfails): print('  ✗ ' + f)
+        ok_all = False
+    else:
+        print(f'  ✓ set bubbles, Repeat button and set feedback render {len(EVIL_NAMES)} adversarial names inert')
+
+    hits = _phase1_window_shadow(js)
+    if hits:
+        for h in hits: print('  ✗ ' + h)
+        print('    In a classic script every top-level function is a window property — use another name for state.')
+        ok_all = False
+    else:
+        print('  ✓ no window.X assignment overwrites a top-level function')
+    return ok_all
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gate 11 — core-journey accessibility (Session + its dialogs)
+# (a) the shared dialog layer really behaves (JXA with a tiny DOM stub):
+#     role/aria-modal/labelledby on open, focus in (never into a text field),
+#     focus back to the opener on close (or the declared fallback), no focus
+#     stealing, Escape only for backdrop-dismissable overlays, Tab trapped.
+# (b) static lint of the session screen + the renderers it uses: no clickable
+#     div/span, labelled inputs, live regions wired, disclosure state exposed,
+#     reduced-motion support intact.
+# ─────────────────────────────────────────────────────────────────────────────
+DIALOG_FNS = ['_dlgFocusables', '_dlgTop', '_dlgBox', '_dlgOnOpen', '_dlgOnClose', 'closeDialog', '_dlgKeydown']
+
+DIALOG_HARNESS = r"""
+var fails = [];
+function eq(label, got, want){ if(JSON.stringify(got)!==JSON.stringify(want)) fails.push(label+' — got '+JSON.stringify(got)+', want '+JSON.stringify(want)); }
+function ok(label, cond){ if(!cond) fails.push(label); }
+var _focused = null, _byId = {}, _dlgSeqN = 0;
+function setTimeout(f){ f(); }
+function getComputedStyle(el){ return { zIndex: el._z || '200' }; }
+function N(tag, o){
+  o = o || {};
+  var n = { tagName:tag, id:o.id||'', _cls:{}, attrs:{}, dataset:o.dataset||{}, children:[], parent:null,
+    isConnected:true, offsetParent:{}, disabled:false, _z:o.z };
+  (o.cls||[]).forEach(function(c){ n._cls[c]=1; });
+  Object.keys(o.attrs||{}).forEach(function(k){ n.attrs[k]=o.attrs[k]; });
+  n.classList = { contains:function(c){ return !!n._cls[c]; }, add:function(c){ n._cls[c]=1; }, remove:function(c){ delete n._cls[c]; } };
+  n.setAttribute = function(k,v){ n.attrs[k]=String(v); if(k==='id') n.id=String(v); };
+  n.getAttribute = function(k){ return (k in n.attrs) ? n.attrs[k] : null; };
+  n.hasAttribute = function(k){ return k in n.attrs; };
+  n.focus = function(){ _focused = n; };
+  n.contains = function(x){ for(var c=x; c; c=c.parent){ if(c===n) return true; } return false; };
+  n.closest = function(sel){ var cls = sel.replace('.',''); for(var c=n; c; c=c.parent){ if(c._cls[cls]) return c; } return null; };
+  n.add = function(){ for(var i=0;i<arguments.length;i++){ arguments[i].parent=n; n.children.push(arguments[i]); } return n; };
+  function walk(f){ var acc=[]; (function rec(x){ x.children.forEach(function(c){ if(f(c)) acc.push(c); rec(c); }); })(n); return acc; }
+  function match(c, part){
+    part = part.trim();
+    if(part === ':scope > .modal') return c.parent===n && !!c._cls.modal;
+    if(part === '[id$="Title"]') return /Title$/.test(c.id);
+    if(/^h[1-3]$/.test(part)) return c.tagName.toLowerCase()===part;
+    if(part === '.modal-title') return !!c._cls['modal-title'];
+    if(part === '[data-autofocus]') return 'autofocus' in c.dataset;
+    if(part === '.sel') return !!c._cls.sel;
+    if(part === '[aria-pressed="true"]') return c.attrs['aria-pressed']==='true';
+    return false;
+  }
+  n.querySelector = function(sel){ var parts = sel.split(','); var r = walk(function(c){ return parts.some(function(p){ return match(c,p); }); }); return r[0] || null; };
+  n.querySelectorAll = function(sel){ return walk(function(c){ return /^(BUTTON|INPUT|SELECT|TEXTAREA|A)$/.test(c.tagName) || ('tabindex' in c.attrs && c.attrs.tabindex!=='-1'); }); };
+  if(n.id) _byId[n.id] = n;
+  return n;
+}
+var body = N('BODY');
+var document = {
+  body: body,
+  get activeElement(){ return _focused || body; },
+  getElementById: function(id){ return _byId[id] || null; },
+  querySelectorAll: function(sel){ var acc=[]; (function rec(x){ x.children.forEach(function(c){ if(c._cls['modal-ov'] && c._cls.open) acc.push(c); rec(c); }); })(body); return acc; }
+};
+
+// Page: an opener button, a fallback button, two overlays.
+var opener = N('BUTTON', {id:'opener'}), nextBtn = N('BUTTON', {id:'nextBtn'}), other = N('BUTTON', {id:'other'});
+var title = N('DIV', {id:'repModTitle'}), wMinus = N('BUTTON'), rep6 = N('BUTTON', {cls:['rep-btn','sel'], attrs:{'aria-pressed':'true'}}), inp = N('INPUT', {id:'repCustom'}), logB = N('BUTTON');
+var box = N('DIV', {cls:['modal']}).add(title, wMinus, rep6, inp, logB);
+var rep = N('DIV', {id:'repMod', cls:['modal-ov'], dataset:{returnFallback:'nextBtn'}, attrs:{onclick:"if(event.target===this)this.classList.remove('open')"}}).add(box);
+var fin = N('DIV', {id:'finMod', cls:['modal-ov']}).add(N('DIV', {cls:['modal']}).add(N('BUTTON')));
+var onlyInput = N('DIV', {cls:['modal']}).add(N('DIV', {id:'noteTitle'}), N('TEXTAREA'));
+var note = N('DIV', {id:'noteMod', cls:['modal-ov'], attrs:{onclick:"if(event.target===this)this.classList.remove('open')"}}).add(onlyInput);
+body.add(opener, nextBtn, other, rep, fin, note);
+
+// 1. open → semantics + focus on the selected rep (not the text field)
+opener.focus(); rep.classList.add('open'); _dlgOnOpen(rep);
+eq('dialog role on open', box.getAttribute('role'), 'dialog');
+eq('aria-modal on open', box.getAttribute('aria-modal'), 'true');
+eq('labelled by its title', box.getAttribute('aria-labelledby'), 'repModTitle');
+ok('focus moves to the selected option', _focused === rep6);
+// 2. Tab trap
+_focused = logB; var prevented = false;
+_dlgKeydown({key:'Tab', shiftKey:false, preventDefault:function(){ prevented = true; }});
+ok('Tab on the last control wraps to the first', prevented && _focused === wMinus);
+_dlgKeydown({key:'Tab', shiftKey:true, preventDefault:function(){}});
+ok('Shift+Tab on the first control wraps to the last', _focused === logB);
+// 3. Escape closes a backdrop-dismissable dialog and focus returns to the opener
+_dlgKeydown({key:'Escape', preventDefault:function(){}});
+ok('Escape closes a backdrop-dismissable overlay', !rep.classList.contains('open'));
+_dlgOnClose(rep);
+ok('focus returns to the opener on close', _focused === opener);
+// 4. opener re-rendered away → declared fallback
+opener.focus(); rep.classList.add('open'); _dlgOnOpen(rep); opener.isConnected = false;
+closeDialog('repMod'); _dlgOnClose(rep);
+ok('detached opener → focus goes to data-return-fallback', _focused === nextBtn);
+opener.isConnected = true;
+// 5. never steal focus the app moved elsewhere
+opener.focus(); rep.classList.add('open'); _dlgOnOpen(rep); other.focus();
+rep.classList.remove('open'); _dlgOnClose(rep);
+ok('does not steal focus moved outside the dialog', _focused === other);
+// 6. Escape leaves overlays without backdrop-dismiss alone
+opener.focus(); fin.classList.add('open'); _dlgOnOpen(fin);
+_dlgKeydown({key:'Escape', preventDefault:function(){}});
+ok('Escape does not dismiss a non-dismissable overlay', fin.classList.contains('open'));
+fin.classList.remove('open'); _dlgOnClose(fin);
+// 7. a dialog with only a text field does not auto-focus it (mobile keyboard)
+opener.focus(); note.classList.add('open'); _dlgOnOpen(note);
+ok('text field is not auto-focused on open', _focused === opener);
+note.classList.remove('open'); _dlgOnClose(note);
+JSON.stringify(fails);
+"""
+
+SESSION_RENDERERS = ['renderBubbles', 'renderWarmupBubbles', 'renderCoreCircuit', 'renderSessionExerciseList',
+                     'openRepInput', '_updRepeatBtn', 'renderRestLenPicker', '_renderSetFeedback']
+# Clickable non-buttons allowed on the session screen, with the reason.
+SESSION_DIV_ONCLICK_ALLOW = {
+    'miniPlateViz': 'aria-hidden duplicate of the "Plate guide" button beside it',
+}
+
+def gate_core_a11y(html, js):
+    ok_all = True
+    pieces, missing = [], []
+    for fn in DIALOG_FNS:
+        src = extract_decl(js, fn)
+        if src: pieces.append(src)
+        else: missing.append(fn)
+    if missing:
+        print(f'  ✗ could not extract dialog function(s): {", ".join(missing)}'); ok_all = False
+    else:
+        out, _ = run_jxa('\n'.join(pieces) + '\n' + DIALOG_HARNESS)
+        try:
+            fails = json.loads(out)
+        except Exception:
+            fails = ['dialog runner errored: ' + out[:300]]
+        for f in fails: print('  ✗ ' + f)
+        if fails: ok_all = False
+        else: print('  ✓ dialogs: role/aria-modal/label, focus in, Tab trap, Escape, focus return + fallback, no stealing')
+    if '_initDialogA11y' not in js or not re.search(r"_initDialogA11y\(\)|addEventListener\('DOMContentLoaded',\s*_initDialogA11y\)", js):
+        print('  ✗ _initDialogA11y is never started'); ok_all = False
+
+    lint = []
+    m1, m2 = html.find('id="s-active"'), html.find('id="s-game"')
+    sess = html[m1:m2] if m1 != -1 and m2 != -1 else ''
+    if not sess:
+        lint.append('could not find the #s-active markup')
+    for m in re.finditer(r'<(div|span)\b[^>]*\sonclick=', sess):
+        tag = sess[m.start():sess.find('>', m.start()) + 1]
+        idm = re.search(r'\sid="([^"]+)"', tag)
+        if not (idm and idm.group(1) in SESSION_DIV_ONCLICK_ALLOW):
+            lint.append(f'session markup has a clickable <{m.group(1)}> (use a <button>): {tag[:90]}')
+    for fn in SESSION_RENDERERS:
+        src = extract_decl(js, fn) or ''
+        if not src:
+            lint.append(f'could not extract session renderer {fn}'); continue
+        for m in re.finditer(r'<(div|span)\b[^>`]*\sonclick=', src):
+            lint.append(f'{fn}() renders a clickable <{m.group(1)}> (use a <button>): {src[m.start():m.start()+80]}')
+    # labelled inputs: session screen + rep dialog
+    rm1 = html.find('id="repMod"'); rm2 = html.find('<!-- FINISH MODAL -->', rm1)
+    scope = sess + (html[rm1:rm2] if rm1 != -1 and rm2 != -1 else '')
+    for m in re.finditer(r'<(input|select|textarea)\b[^>]*>', scope):
+        tag = m.group(0)
+        if re.search(r'type="hidden"', tag) or re.search(r'\saria-label(?:ledby)?="[^"]+"', tag):
+            continue
+        idm = re.search(r'\sid="([^"]+)"', tag)
+        if not idm or f'for="{idm.group(1)}"' not in scope:
+            lint.append(f'unlabelled form field: {tag[:80]}')
+    # live regions / announcements
+    if not re.search(r'id="sessLive"[^>]*aria-live="polite"', html) and not re.search(r'aria-live="polite"[^>]*id="sessLive"', html):
+        lint.append('#sessLive polite live region is missing')
+    if not re.search(r'id="setFeedback"[^>]*role="status"', html):
+        lint.append('#setFeedback is not a role=status region')
+    if re.search(r'id="restNum"[^>]*aria-live', html):
+        lint.append('#restNum is a live region — it would announce every tick')
+    for fn in ['startRest', 'showPRAlert']:
+        if '_sessAnnounce(' not in (extract_decl(js, fn) or ''):
+            lint.append(f'{fn}() does not announce via _sessAnnounce')
+    # disclosure state
+    if not re.search(r'id="sessMoreBtn"[^>]*aria-expanded="false"[^>]*aria-controls="sessMoreBody"', html):
+        lint.append('#sessMoreBtn lacks aria-expanded/aria-controls="sessMoreBody"')
+    if not re.search(r'id="sessMoreBody"[^>]*\shidden\b', html):
+        lint.append('#sessMoreBody is not hidden by default')
+    if "setAttribute('aria-expanded'" not in (extract_decl(js, '_sessMoreSet') or ''):
+        lint.append('_sessMoreSet() does not update aria-expanded')
+    # reduced motion stays honoured
+    if not re.search(r'@media\s*\(prefers-reduced-motion:\s*reduce\)', html):
+        lint.append('prefers-reduced-motion CSS block is gone')
+    if 'prefers-reduced-motion' not in (extract_decl(js, 'toggleSessMore') or ''):
+        lint.append('toggleSessMore() smooth-scrolls without checking prefers-reduced-motion')
+    if lint:
+        for f in lint: print('  ✗ ' + f)
+        ok_all = False
+    else:
+        print('  ✓ session screen: buttons not clickable divs, labelled fields, live regions, disclosure state, reduced motion')
+    return ok_all
+
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/9] parse')
+    print('[1/11] parse')
     p = gate_parse(js)
-    print('[2/9] invariants')
+    print('[2/11] invariants')
     inv = gate_invariants(js)
-    print('[3/9] video map')
+    print('[3/11] video map')
     vm = gate_videomap(js)
-    print('[4/9] inline handler wiring')
+    print('[4/11] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/9] auth log hygiene')
+    print('[5/11] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/9] sign-out scrub')
+    print('[6/11] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/9] safe rendering of user text')
+    print('[7/11] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/9] sync honesty')
+    print('[8/11] sync honesty')
     sy = gate_sync(js)
-    print('[9/9] media fallback + reminder copy')
+    print('[9/11] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
+    print('[10/11] Phase 1 session logic (last time, repeat, feedback)')
+    ps = gate_phase1_session(js)
+    print('[11/11] core-journey accessibility (session + dialogs)')
+    ca = gate_core_a11y(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 

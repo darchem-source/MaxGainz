@@ -349,6 +349,40 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
    Scoped to #s-active button. Excludes already-sized controls (.sc-btn,
    .wadj-btn, .set-bub, .modal-handle, .chip) so dense rows don't bloat. */
 #s-active button:not(.sc-btn):not(.wadj-btn):not(.set-bub):not(.chip):not(.dp-chip):not(.day-badge) { min-height:44px; }
+/* ── Phase 1: session progressive disclosure + stable bottom bar ── */
+.sr-only { position:absolute !important; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
+/* Sticky above the fixed .nav. The sticky edge is measured inside .tab-content's
+   padding-bottom (90px + safe area), so bottom:-12px - safe area puts the bar's
+   bottom 78px above the viewport edge = just above the 77.5px nav.
+   --sess-bar-bottom is overridden when the nav is hidden. */
+.sess-action-bar { position:sticky; bottom:var(--sess-bar-bottom, calc(-12px - env(safe-area-inset-bottom, 0px))); z-index:40; margin:0 16px; padding:8px 0; background:var(--bg); box-shadow:0 -10px 14px -6px var(--bg); }
+.sess-action-bar .set-feedback { margin:0 0 8px; padding:8px 12px; }
+.sess-action-bar .rest-bar-wrap { margin-bottom:8px; border:0.5px solid var(--border); }
+.sess-action-bar .act-row { margin-top:0; }
+.sess-action-bar .btn-next { min-height:56px; font-size:16px; }
+.btn-repeat { flex:1; min-width:0; background:var(--surface2); color:var(--text); border:0.5px solid var(--border); border-radius:12px; font-size:13px; font-weight:800; padding:8px; min-height:56px; cursor:pointer; line-height:1.2; font-family:inherit; }
+.btn-repeat small { display:block; font-size:11px; font-weight:600; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.btn-repeat:active { transform:scale(0.97); transition: transform 80ms var(--ease-snap); }
+.sess-more-btn { width:100%; display:flex; align-items:center; gap:8px; background:transparent; border:0.5px solid var(--border); border-radius:12px; padding:10px 14px; font-family:inherit; font-size:13px; font-weight:700; color:var(--text); cursor:pointer; margin-top:2px; text-align:left; }
+.sess-more-btn .sess-more-sub { flex:1; font-size:11px; font-weight:500; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sess-more-btn .chev { color:var(--text2); transition:transform var(--dur-fast) var(--ease-out); }
+.sess-more-btn[aria-expanded="true"] .chev { transform:rotate(180deg); }
+.sess-more-body { margin-top:12px; padding-top:12px; border-top:0.5px solid var(--border); }
+.sess-more-body[hidden] { display:none !important; }
+.more-lbl { font-size:11px; color:var(--text2); font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:6px; }
+.more-btn { background:transparent; border:0.5px solid var(--border); border-radius:10px; padding:8px 14px; font-family:inherit; font-size:12px; font-weight:700; color:var(--text2); cursor:pointer; }
+button.dp-chip { font-family:inherit; }
+button.rep-btn { font-family:inherit; color:var(--text); width:100%; }
+button.rep-btn.sel { color:#000; }
+button.set-bub { font-family:inherit; color:inherit; }
+.set-bub .lt { font-size:9px; font-weight:600; color:var(--text2); margin-top:2px; white-space:nowrap; }
+.set-bub.done .lt { color:rgba(0,0,0,0.6); }
+.set-feedback { margin:2px 0 10px; padding:10px 12px; border-radius:10px; background:var(--surface2); border:0.5px solid var(--border); font-size:12px; color:var(--text); line-height:1.4; }
+.set-feedback .fb-delta { font-weight:800; }
+.set-feedback .fb-delta.up { color:var(--green); }
+.set-feedback .fb-delta.down { color:var(--orange, #ff8c42); }
+.set-feedback .fb-next { color:var(--text2); margin-top:2px; }
+.curr-name-btn { background:none; border:none; padding:0; margin:0; font:inherit; color:inherit; letter-spacing:inherit; text-align:left; cursor:pointer; min-height:0 !important; }
 .queue-wrap { margin:12px 16px 0; }
 .q-lbl { font-size:11px; font-weight:700; color:var(--text2); text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; }
 .qi { display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:12px; margin-bottom:6px; cursor:pointer; }
@@ -384,6 +418,8 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 .alt-row:active { transform:scale(0.98); }
 
 /* Warm-up sets */
+button.warmup-bub { font-family:inherit; }
+button.sess-row { width:100%; text-align:left; font-family:inherit; color:inherit; min-height:0 !important; }
 .warmup-bub { min-width:48px; height:52px; border-radius:12px; border:1.5px dashed var(--border); display:flex; flex-direction:column; align-items:center; justify-content:center; cursor:pointer; background:transparent; padding:0 4px; }
 .warmup-bub.done { border-style:solid; background:rgba(136,136,170,0.15); border-color:var(--text2); }
 .warmup-bub .sn { font-size:9px; font-weight:700; color:var(--text2); }
@@ -529,7 +565,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
       <!-- Session header — scrolls with content (badge + wake lock visible at session start) -->
       <div class="sess-header">
         <div class="day-badge" id="sessBadge">UPPER DAY</div>
-        <div onclick="toggleWakeLock()" id="wakeLockBtn" style="font-size:11px;font-weight:700;padding:6px 12px;border-radius:20px;background:var(--surface2);border:0.5px solid var(--border);color:var(--text2);cursor:pointer;white-space:nowrap;">🔒 Auto-lock</div>
+        <button type="button" onclick="toggleWakeLock()" id="wakeLockBtn" aria-pressed="false" aria-label="Keep screen on" style="font-family:inherit;font-size:11px;font-weight:700;padding:6px 12px;border-radius:20px;background:var(--surface2);border:0.5px solid var(--border);color:var(--text2);cursor:pointer;white-space:nowrap;">🔒 Auto-lock</button>
       </div>
       <!-- HIIT pre-session action bar (shown before Start, not sticky) -->
       <div id="hiitPreBar" style="display:none;padding:10px 16px 8px;border-bottom:0.5px solid var(--border);">
@@ -580,8 +616,8 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
           <div id="supersetBadge" style="display:none;" class="superset-badge">⚡ Superset</div>
         </div>
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
-          <div class="curr-name" id="currName" style="flex:1;cursor:pointer;" onclick="openFormGuide()" title="Tap for form cues"></div>
-          <button onclick="openExerciseNote()" id="exNoteBtn" style="background:var(--surface3);border:0.5px solid var(--border);border-radius:10px;padding:8px 10px;font-size:12px;color:var(--text2);cursor:pointer;flex-shrink:0;" title="Add note">✏️</button>
+          <!-- The name renders as a <button> (form guide) inside this div; the div stays as the scroll-header sentinel. -->
+          <div class="curr-name" id="currName" style="flex:1;"></div>
         </div>
         <div class="curr-meta" id="currMeta"></div>
         <!-- Last time reference -->
@@ -592,14 +628,6 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
         <div id="supersetInfo" style="display:none;margin-bottom:10px;padding:8px;background:rgba(157,123,255,0.1);border-radius:8px;border:0.5px solid rgba(157,123,255,0.3);">
           <div style="font-size:10px;color:var(--text2);font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Superset Exercises:</div>
           <div id="supersetExList" style="display:flex;flex-direction:column;gap:4px;"></div>
-        </div>
-        <!-- Equipment toggle (shown for ambiguous exercises) -->
-        <div id="equipToggle" style="display:none;margin-bottom:10px;">
-          <div style="font-size:11px;color:var(--text2);font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Equipment</div>
-          <div style="display:flex;gap:8px;">
-            <div class="dp-chip active" id="eq-barbell" onclick="setEquip('barbell')">🏋️ Barbell</div>
-            <div class="dp-chip" id="eq-dumbbell" onclick="setEquip('dumbbell')">💪 Dumbbell</div>
-          </div>
         </div>
         <!-- Timed exercise countdown (shown for interval exercises) -->
         <div id="timedSetWrap" style="display:none;margin-bottom:12px;">
@@ -615,50 +643,78 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
         <!-- Cable power mode toggle removed -->
         <div id="wgtAdjWrap" style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
           <div class="wadj" style="margin-bottom:0;">
-            <button class="wadj-btn" id="wAdjMinus" onclick="adjW(-1)">−</button>
+            <button class="wadj-btn" id="wAdjMinus" onclick="adjW(-1)" aria-label="Decrease weight">−</button>
             <div class="wadj-val" id="currWt">80</div>
             <div class="wadj-unit" id="currWtUnit">kg</div>
-            <button class="wadj-btn" id="wAdjPlus" onclick="adjW(1)">+</button>
+            <button class="wadj-btn" id="wAdjPlus" onclick="adjW(1)" aria-label="Increase weight">+</button>
           </div>
-          <div id="miniPlateViz" onclick="openPlateCalc()" style="cursor:pointer;display:none;align-items:center;flex-shrink:0;overflow:hidden;max-width:150px;"></div>
         </div>
-        <!-- Plate calculator button -->
-        <div id="plateCalcTrigger" style="display:none;margin-bottom:6px;">
-          <button onclick="openPlateCalc()" style="background:transparent;border:0.5px solid var(--border);border-radius:8px;padding:5px 14px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;">🏋️ Plate guide</button>
-        </div>
-        <!-- Weight suggestion banner -->
+        <!-- Weight suggestion banner (first-time hint before set 1 only; mid-session feedback lives in #setFeedback) -->
         <div id="wtSuggest" class="wt-suggest" style="display:none;"></div>
-        <!-- Set controls -->
-        <div class="set-controls">
-          <button class="sc-btn" onclick="removeSett()">−</button>
-          <div class="sc-label" id="setCountLbl">4 sets planned</div>
-          <button class="sc-btn" onclick="addSett()">+</button>
-        </div>
-        <!-- Warm-up toggle (guided warm-up moved to the #warmupBanner above the card) -->
-        <div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;">
-          <button onclick="toggleWarmup()" id="warmupBtn" style="background:transparent;border:0.5px solid var(--border);border-radius:8px;padding:5px 12px;font-size:11px;font-weight:700;color:var(--text2);cursor:pointer;">+ Warm-up sets</button>
-        </div>
         <div class="sets-row" id="warmupRow" style="display:none;margin-bottom:8px;"></div>
-        <div class="sets-row" id="setsRow"></div>
-        <!-- Superset link button -->
-        <div style="margin-bottom:8px;">
-          <button id="supersetPickerBtn" onclick="openSupersetPicker()" style="background:transparent;border:0.5px solid rgba(157,123,255,0.4);border-radius:8px;padding:5px 12px;font-size:11px;font-weight:700;color:var(--purple);cursor:pointer;">⚡ Link as superset</button>
+        <div class="sets-row" id="setsRow" role="group" aria-label="Sets"></div>
+        <!-- Progressive disclosure: everything that isn't "log the next set" lives behind More. -->
+        <button type="button" id="sessMoreBtn" class="sess-more-btn" aria-expanded="false" aria-controls="sessMoreBody" onclick="toggleSessMore()"><span>More options</span><span class="sess-more-sub" id="sessMoreSub">Plates, warm-up, swap, rest</span><span class="chev" aria-hidden="true">▾</span></button>
+        <div id="sessMoreBody" class="sess-more-body" hidden>
+          <!-- Equipment toggle (shown for ambiguous exercises) -->
+          <div id="equipToggle" style="display:none;margin-bottom:12px;">
+            <div class="more-lbl" id="equipLbl">Equipment</div>
+            <div style="display:flex;gap:8px;" role="group" aria-labelledby="equipLbl">
+              <button type="button" class="dp-chip active" id="eq-barbell" onclick="setEquip('barbell')" aria-pressed="true">🏋️ Barbell</button>
+              <button type="button" class="dp-chip" id="eq-dumbbell" onclick="setEquip('dumbbell')" aria-pressed="false">💪 Dumbbell</button>
+            </div>
+          </div>
+          <!-- Plate guide (barbell only) -->
+          <div id="plateCalcTrigger" style="display:none;margin-bottom:12px;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <button type="button" onclick="openPlateCalc()" class="more-btn">🏋️ Plate guide</button>
+              <div id="miniPlateViz" onclick="openPlateCalc()" aria-hidden="true" style="cursor:pointer;display:none;align-items:center;flex-shrink:0;overflow:hidden;max-width:150px;"></div>
+            </div>
+          </div>
+          <!-- Rest between sets (session-only; not saved) -->
+          <div id="restLenRow" style="margin-bottom:12px;">
+            <div class="more-lbl" id="restLenLbl">Rest between sets</div>
+            <div id="restLenChips" style="display:flex;gap:6px;flex-wrap:wrap;" role="group" aria-labelledby="restLenLbl"></div>
+          </div>
+          <!-- Set controls -->
+          <div class="set-controls">
+            <button class="sc-btn" onclick="removeSett()" aria-label="Remove a set">−</button>
+            <div class="sc-label" id="setCountLbl">4 sets planned</div>
+            <button class="sc-btn" onclick="addSett()" aria-label="Add a set">+</button>
+          </div>
+          <!-- Warm-up toggle (guided warm-up stays in the #warmupBanner above the card) -->
+          <div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;">
+            <button onclick="toggleWarmup()" id="warmupBtn" class="more-btn">+ Warm-up sets</button>
+            <!-- Superset link button -->
+            <button id="supersetPickerBtn" onclick="openSupersetPicker()" class="more-btn" style="color:var(--purple);border-color:rgba(157,123,255,0.4);">⚡ Link as superset</button>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:8px;">
+            <button class="more-btn" onclick="openSwap(curIdx)" style="flex:1;">⇄ Swap exercise</button>
+            <button class="more-btn" onclick="openExerciseNote()" id="exNoteBtn" style="flex:1;">✏️ Note</button>
+          </div>
+          <!-- Session exercise management -->
+          <div id="sessEditRow" style="display:none;flex-direction:row;gap:8px;margin-bottom:4px;">
+            <button onclick="sessAddExercise()" class="more-btn" style="flex:1;color:var(--accent);border-color:rgba(200,255,0,0.35);">+ Add exercise</button>
+            <button onclick="sessRemoveExercise()" class="more-btn" style="flex:1;color:var(--red);border-color:rgba(255,77,106,0.35);">✕ Remove this</button>
+          </div>
         </div>
-        <!-- Session exercise management -->
-        <div id="sessEditRow" style="display:none;flex-direction:row;gap:8px;margin-bottom:8px;">
-          <button onclick="sessAddExercise()" style="flex:1;background:transparent;border:0.5px solid rgba(200,255,0,0.35);border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;color:var(--accent);cursor:pointer;">+ Add exercise</button>
-          <button onclick="sessRemoveExercise()" style="flex:1;background:transparent;border:0.5px solid rgba(255,77,106,0.35);border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;color:var(--red);cursor:pointer;">✕ Remove this</button>
-        </div>
+      </div>
+      <!-- Stable bottom bar: rest timer + the main set action stay in thumb reach. -->
+      <div class="sess-action-bar" id="sessActionBar">
+        <!-- Post-set feedback: what changed vs last time + the next step (in the bar so it's always in view). -->
+        <div id="setFeedback" class="set-feedback" role="status" aria-live="polite" aria-atomic="true" style="display:none;"></div>
         <div class="rest-bar-wrap" id="restWrap">
-          <div><div style="font-size:10px;color:var(--text2);font-weight:700;text-transform:uppercase;letter-spacing:1px;" id="restLabel">Rest</div><div class="rest-num" id="restNum">90</div></div>
+          <div><div style="font-size:10px;color:var(--text2);font-weight:700;text-transform:uppercase;letter-spacing:1px;" id="restLabel">Rest</div><div class="rest-num" id="restNum" aria-hidden="true">90</div></div>
           <div style="flex:1;"><div class="rest-track"><div class="rest-fill" id="restFill" style="width:100%;"></div></div><div style="font-size:11px;color:var(--text2);margin-top:4px;">← Swipe to skip →</div></div>
-          <button onclick="skipRest()" style="background:var(--surface3);border:none;color:var(--text2);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;">Skip</button>
+          <button onclick="skipRest()" style="background:var(--surface3);border:none;color:var(--text2);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;">Skip rest</button>
         </div>
         <div class="act-row">
-          <button class="btn-swap" onclick="openSwap(curIdx)">⇄ Swap</button>
+          <button type="button" class="btn-repeat" id="repeatSetBtn" onclick="repeatPrevSet()" style="display:none;"></button>
           <button class="btn-next" id="nextBtn" onclick="advance()">Log set ✓</button>
         </div>
       </div>
+      <!-- Screen-reader announcements for the session (rest start/end, PRs). Never the per-tick countdown. -->
+      <div id="sessLive" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
       <!-- HIIT/Tabata Timer Display -->
       <div id="hiitDisplay" style="margin:0 12px 16px;"></div>
       <!-- AMRAP / EMOM workout-level countdown banner -->
@@ -1524,29 +1580,30 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 </div>
 
 <!-- REP INPUT MODAL -->
-<div class="modal-ov" id="repMod" onclick="if(event.target===this)this.classList.remove('open')">
+<div class="modal-ov" id="repMod" data-return-fallback="nextBtn" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal">
     <div class="modal-handle"></div>
     <div style="font-size:19px;font-weight:800;margin-bottom:4px;" id="repModTitle">Log reps</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:16px;" id="repModSub">How many reps did you complete?</div>
     <!-- Per-set weight adjuster -->
     <div style="margin-bottom:14px;">
-      <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Planned weight</div>
-      <div style="display:flex;align-items:center;background:var(--surface2);border-radius:14px;padding:4px;width:fit-content;gap:0;">
-        <button class="wadj-btn" onclick="adjSetWt(-1)">−</button>
-        <div style="font-size:22px;font-weight:900;color:var(--accent);min-width:70px;text-align:center;" id="setWtVal">80</div>
+      <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;" id="setWtLbl">Planned weight</div>
+      <div style="display:flex;align-items:center;background:var(--surface2);border-radius:14px;padding:4px;width:fit-content;gap:0;" role="group" aria-labelledby="setWtLbl">
+        <button class="wadj-btn" onclick="adjSetWt(-1)" aria-label="Decrease set weight">−</button>
+        <div style="font-size:22px;font-weight:900;color:var(--accent);min-width:70px;text-align:center;" id="setWtVal" aria-live="polite">80</div>
         <div style="font-size:12px;color:var(--text2);margin-right:6px;">kg</div>
-        <button class="wadj-btn" onclick="adjSetWt(1)">+</button>
+        <button class="wadj-btn" onclick="adjSetWt(1)" aria-label="Increase set weight">+</button>
       </div>
     </div>
-    <div class="rep-input-grid" id="repGrid"></div>
+    <div class="rep-input-grid" id="repGrid" role="group" aria-label="Reps completed"></div>
     <!-- Optional RPE/effort capture (shown only when Settings → Track effort is on) -->
     <div id="repRpeRow" style="display:none;margin:4px 0 12px;">
       <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Effort (RPE) <span style="font-weight:400;text-transform:none;letter-spacing:0;opacity:0.6;">optional · 6 easy → 10 max</span></div>
       <div id="repRpeChips" style="display:flex;gap:6px;"></div>
     </div>
     <div class="rep-custom-row">
-      <input type="number" class="rep-custom-inp" id="repCustom" placeholder="Custom #" min="1" max="100" onkeydown="if(event.key==='Enter')confirmReps()">
+      <label for="repCustom" class="sr-only">Reps completed (type a number)</label>
+      <input type="number" class="rep-custom-inp" id="repCustom" placeholder="Custom #" min="1" max="100" inputmode="numeric" onkeydown="if(event.key==='Enter')confirmReps()">
       <button class="btn-p" id="repLogBtn" style="padding:12px 20px;" onclick="confirmReps()">Log ✓</button>
     </div>
   </div>
@@ -1741,15 +1798,16 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 </div>
 
 <!-- REST ALERT -->
-<div class="rest-alert" id="restAlert">
-  <div style="font-size:40px;margin-bottom:8px;">⏰</div>
-  <div style="font-size:20px;font-weight:900;color:var(--accent2);margin-bottom:4px;">Rest complete!</div>
-  <div style="font-size:14px;color:var(--text2);margin-bottom:16px;">Time for your next set</div>
-  <button onclick="dismissRestAlert()" class="btn-p" style="width:100%;">Let's go 💪</button>
+<div class="rest-alert" id="restAlert" role="alertdialog" aria-labelledby="restAlertTitle" aria-describedby="restAlertSub">
+  <div style="font-size:40px;margin-bottom:8px;" aria-hidden="true">⏰</div>
+  <div style="font-size:20px;font-weight:900;color:var(--accent2);margin-bottom:4px;" id="restAlertTitle">Rest complete!</div>
+  <div style="font-size:14px;color:var(--text2);margin-bottom:16px;" id="restAlertSub">Time for your next set</div>
+  <button onclick="dismissRestAlert()" class="btn-p" style="width:100%;" id="restAlertBtn">Let's go 💪</button>
 </div>
 
 <!-- PR ALERT -->
-<div class="pr-alert" id="prAlert" onclick="dismissPRAlert()">
+<!-- Visual toast only (tap to dismiss, auto-hides); screen readers get the PR via #sessLive. -->
+<div class="pr-alert" id="prAlert" onclick="dismissPRAlert()" aria-hidden="true">
   <div style="display:flex;align-items:center;gap:12px;text-align:left;">
     <div style="font-size:36px;line-height:1;flex-shrink:0;">🏆</div>
     <div style="flex:1;min-width:0;">
@@ -6309,7 +6367,7 @@ function startSessionULF(day){
   sessDay=day; sessExs=applyExerciseRotation(exs, day, 'ULF');
   curIdx=0;setsDone={};repsLogged={};rpeLogged={};_pendingRPE=null;totalSets=0;sessTimeSec=0;
   sessStartTime=Date.now();
-  supersets={}; warmupShown={}; warmupDone={}; equipOverride={}; setWeights={}; setTimestamps={};
+  supersets={}; warmupShown={}; warmupDone={}; equipOverride={}; setWeights={}; setTimestamps={}; window._setFb=null; window._sessRestChoice=null;
   _exerciseNotes={};
   coreCircuitExs=pickCoreCircuit();
   // Wall-clock-based session timer; startTimer auto-clears any prior 'session' timer.
@@ -6366,7 +6424,7 @@ function cancelSession(){
   sessTimeSec=0;
   sessStartTime=null;
   supersets={};
-  setTimestamps={};
+  setTimestamps={}; window._setFb=null; window._sessRestChoice=null;
   hiitState=null;
   hiitIntervalId=null;
   restSec=0;
@@ -6400,6 +6458,7 @@ async function toggleWakeLock(){
     btn.textContent='🔒 Auto-lock';
     btn.style.color='var(--text2)';
     btn.style.borderColor='var(--border)';
+    btn.setAttribute('aria-pressed','false');
   } else {
     try{
       if('wakeLock' in navigator){
@@ -6407,6 +6466,7 @@ async function toggleWakeLock(){
         btn.textContent='🔓 Screen on';
         btn.style.color='var(--accent)';
         btn.style.borderColor='var(--accent)';
+        btn.setAttribute('aria-pressed','true');
         // Re-acquire if page becomes visible again
         document.addEventListener('visibilitychange',async()=>{
           if(wakeLockSentinel!==null&&document.visibilityState==='visible'){
@@ -6421,7 +6481,7 @@ async function toggleWakeLock(){
 function releaseWakeLock(){
   if(wakeLockSentinel){try{wakeLockSentinel.release();}catch(e){}wakeLockSentinel=null;}
   const btn=document.getElementById('wakeLockBtn');
-  if(btn){btn.textContent='🔒 Auto-lock';btn.style.color='var(--text2)';}
+  if(btn){btn.textContent='🔒 Auto-lock';btn.style.color='var(--text2)';btn.setAttribute('aria-pressed','false');}
 }
 let sessProgKey = null; // programme identity of the running session ('ULF','PPL','library:<id>','custom','hiit')
 let supersets = {};
@@ -6576,7 +6636,7 @@ function startSession(day,prog){
   sessDay=day; sessExs=applyExerciseRotation(prog[day].map(e=>({...e})), day, sessProgKey);
   curIdx=0; setsDone={}; repsLogged={}; rpeLogged={}; _pendingRPE=null; totalSets=0; sessTimeSec=0;
   sessStartTime=Date.now();
-  supersets={}; warmupShown={}; warmupDone={}; equipOverride={}; setWeights={}; setTimestamps={};
+  supersets={}; warmupShown={}; warmupDone={}; equipOverride={}; setWeights={}; setTimestamps={}; window._setFb=null; window._sessRestChoice=null;
   supersetGroups=[]; supersetBuilder={exercises: [], sets: 3};
   _exerciseNotes={};
   coreCircuitExs = pickCoreCircuit();
@@ -6653,9 +6713,13 @@ function updateSessUI(){
   // animation on every set-logged / weight-adjusted updateSessUI call.
   if(_currNameEl.dataset.exName !== ex.name) {
     _currNameEl.dataset.exName = ex.name;
+    // One real button (name + ⓘ) opens the form guide — keyboard reachable.
     _currNameEl.innerHTML =
-      esc(ex.name) +
-      `<span class="exercise-info-icon" onclick="event.stopPropagation();openFormGuide()" title="Form guide">ⓘ</span>`;
+      `<button type="button" class="curr-name-btn" onclick="openFormGuide()" aria-label="${esc(ex.name)} — form guide">${esc(ex.name)}<span class="exercise-info-icon" aria-hidden="true">ⓘ</span></button>`;
+    // New exercise: collapse More and drop stale feedback from the previous one
+    // (unless that feedback is the fresh "Exercise done → Next" hand-off).
+    _sessMoreSet(false);
+    if(window._setFb && window._setFb.exIdx !== curIdx && window._setFb.handoffTo !== curIdx) window._setFb = null;
 
     // Cancel any pending pulse timeout from the previous exercise
     clearTimeout(window._pulsePendingTimer);
@@ -6792,6 +6856,8 @@ function updateSessUI(){
     const ov = equipOverride[curIdx]||'barbell';
     document.getElementById('eq-barbell').classList.toggle('active',ov==='barbell');
     document.getElementById('eq-dumbbell').classList.toggle('active',ov==='dumbbell');
+    document.getElementById('eq-barbell').setAttribute('aria-pressed', String(ov==='barbell'));
+    document.getElementById('eq-dumbbell').setAttribute('aria-pressed', String(ov==='dumbbell'));
   }
 
   // Superset badge
@@ -6819,7 +6885,7 @@ function updateSessUI(){
     if(warmupBtnWrap) warmupBtnWrap.style.display = 'flex';
   }
 
-  renderBubbles(ex); renderQueue(); updNextBtn();
+  renderBubbles(ex); renderQueue(); updNextBtn(); _renderSetFeedback(); renderRestLenPicker();
   // Core circuit override
   if (isCoreCircuit(ex)) renderCoreCircuit(ex);
   // Timed exercise override — only show after session has started
@@ -6993,6 +7059,12 @@ function updateSessUI(){
     if(cancelBtn) cancelBtn.style.display = 'block';
   }
 
+  // The bottom action bar (rest + Log/Repeat + feedback) lives outside the card
+  // now; it follows the card's visibility so auto-timer formats (Tabata, AMRAP,
+  // EMOM, Core/Timed, Garry's) keep their own full-screen displays.
+  const _actBar = document.getElementById('sessActionBar');
+  if(_actBar) _actBar.style.display = (currCard && currCard.style.display === 'none') ? 'none' : '';
+
   // Sticky exercise-name reveal: tie its visibility to currCard. When
   // currCard is hidden (every HIIT mode — Tabata/AMRAP/EMOM/Core-Timed/
   // Garry's), the IntersectionObserver sentinel (#currName) is inside that
@@ -7031,6 +7103,8 @@ function setEquip(type){
   equipOverride[curIdx]=type;
   document.getElementById('eq-barbell').classList.toggle('active',type==='barbell');
   document.getElementById('eq-dumbbell').classList.toggle('active',type==='dumbbell');
+  document.getElementById('eq-barbell').setAttribute('aria-pressed', String(type==='barbell'));
+  document.getElementById('eq-dumbbell').setAttribute('aria-pressed', String(type==='dumbbell'));
   document.getElementById('currWtUnit').textContent=type==='dumbbell'?'kg/hand':'kg';
 }
 
@@ -7075,32 +7149,11 @@ function showWeightSuggestion(ex){
     return;
   }
 
-  // ── Mid-session: performance-based feedback ──────────────────────────────
-  const swVals = Object.values(sw).filter(Boolean);
-  const repsArr = Object.values(rl);
-
-  if(swVals.length > 0 && repsArr.length > 0){
-    const avgWeight = swVals.reduce((a,b)=>a+b,0) / swVals.length;
-    const avgReps   = repsArr.reduce((a,b)=>a+b,0) / repsArr.length;
-    const hiRep = parseInt((ex.reps||'8').split('–')[1])||12;
-    const loRep = parseInt((ex.reps||'5').split('–')[0])||5;
-    let msg='', cls='hold';
-
-    if(avgReps > hiRep + 1){
-      const steps = getWeightSteps(ex, equipOverride[curIdx]);
-      const next = stepWeight(avgWeight, 1, steps);
-      if(next !== avgWeight){ msg=`💪 Crushing it! Avg ${Math.round(avgReps)} reps. Try ${next}kg for set ${doneCount+1}`; cls='up'; }
-    } else if(avgReps >= loRep && avgReps <= hiRep){
-      msg=`✅ On track at ${Math.round(avgWeight)}kg avg. Keep it up!`; cls='hold';
-    } else if(avgReps < loRep){
-      const steps = getWeightSteps(ex, equipOverride[curIdx]);
-      const next = stepWeight(avgWeight, 1, steps);
-      if(next !== avgWeight){ msg=`⬆️ Only ${Math.round(avgReps)} reps avg — try ${next}kg for more challenge`; cls='up'; }
-    }
-    if(msg){ el.style.display='block'; el.className='wt-suggest '+cls; el.textContent=msg; }
-    return;
-  }
-
+  // ── Mid-session: per-set feedback now lives in #setFeedback (markSet →
+  // _recordSetFeedback), which compares against last time and names the next
+  // step. Keep this banner to the first-time hint above so the two never
+  // duplicate or disagree. (The old avg-rep "try heavier" nudge is folded into
+  // the next-step suggestion — see _suggestNextWeight.)
 }
 
 // Canonical-name aliases. Some exercises were defined under slightly
@@ -7152,6 +7205,116 @@ function getLastSessionData(exName){
   // The matching key in this session is the one that wins
   const matched = names.find(n => s.setLog[n]);
   return {date:s.date, weight:s.setLog[matched].weight, reps:s.setLog[matched].reps||[], note:s.setLog[matched].note||null, rpe:s.setLog[matched].rpe||null};
+}
+
+// ── Phase 1: per-set "last time", repeat-set and post-set feedback ─────────
+// All pure (inputs in, values out — no globals, no DOM) so tests/check.py
+// gate 10 can run them in JXA. Read-only over history: no data-format change.
+
+// One setLog entry → [{w, r}] per logged set. setLog.reps / setWeights are
+// dense copies of index-keyed objects, so alignment with today's set index is
+// best effort. Older rows have no setWeights: fall back to the top weight.
+// Bodyweight moves report w:0. r is null when the stored value isn't a number.
+function _lastSetsFromLog(entry){
+  if(!entry || !Array.isArray(entry.reps)) return [];
+  const sw = Array.isArray(entry.setWeights) ? entry.setWeights : null;
+  const top = Number(entry.weight) || 0;
+  return entry.reps.map((r, i) => {
+    const rn = Number(r);
+    const wi = sw ? Number(sw[i]) : NaN;
+    const w = entry.bw ? 0 : (wi > 0 ? wi : top);
+    return { w: w > 0 ? w : 0, r: (Number.isFinite(rn) && rn > 0) ? rn : null };
+  });
+}
+
+// Newest session whose setLog has any of `names` (alias list, priority order)
+// → {date, sets:[{w,r}], bw}. null when there's no history.
+function getLastSessionSets(sessions, names){
+  if(!Array.isArray(sessions) || !Array.isArray(names) || !names.length) return null;
+  let best = null, bestT = -Infinity;
+  for(const s of sessions){
+    if(!s || !s.setLog || s.manualActivity) continue;
+    const key = names.find(n => s.setLog[n]);
+    if(!key) continue;
+    const t = new Date(s.date).getTime();
+    if(!(t > bestT)) continue;
+    best = { s, key }; bestT = t;
+  }
+  if(!best) return null;
+  const entry = best.s.setLog[best.key];
+  return { date: best.s.date, sets: _lastSetsFromLog(entry), bw: !!entry.bw };
+}
+
+function _fmtKg(n){ return String(Math.round(Number(n) * 100) / 100); }
+
+// What changed vs the same set last time. cur/prev = {w, r}; prev may be null.
+// opts = {bw, timed}. Returns {text, dir} with dir ∈ up|down|same|mixed|new.
+function _setDeltaText(cur, prev, opts){
+  const o = opts || {};
+  if(!cur || !(Number(cur.r) > 0)) return { text: '', dir: 'new' };
+  if(!prev || !(Number(prev.r) > 0)) return { text: 'No matching set last time to compare', dir: 'new' };
+  const unit = o.timed ? ' s' : '';
+  const dr = Number(cur.r) - Number(prev.r);
+  const useW = !o.bw && !o.timed && Number(prev.w) > 0 && Number(cur.w) > 0;
+  const dw = useW ? Math.round((Number(cur.w) - Number(prev.w)) * 100) / 100 : 0;
+  const parts = [];
+  if(dw) parts.push((dw > 0 ? '+' : '−') + _fmtKg(Math.abs(dw)) + ' kg');
+  if(dr){
+    if(o.timed) parts.push((dr > 0 ? '+' : '−') + Math.abs(dr) + unit);
+    else parts.push((dr > 0 ? '+' : '−') + Math.abs(dr) + (Math.abs(dr) === 1 ? ' rep' : ' reps'));
+  }
+  if(!parts.length){
+    const what = o.timed ? (cur.r + unit) : (useW ? _fmtKg(cur.w) + ' kg × ' + cur.r : cur.r + (cur.r === 1 ? ' rep' : ' reps'));
+    return { text: 'Matched last time (' + what + ')', dir: 'same' };
+  }
+  let dir;
+  if((dw > 0 && dr >= 0) || (dw === 0 && dr > 0)) dir = 'up';
+  else if((dw < 0 && dr <= 0) || (dw === 0 && dr < 0)) dir = 'down';
+  else dir = 'mixed';
+  return { text: parts.join(', ') + ' vs last time', dir };
+}
+
+// First set index not yet logged (0..sets-1), or -1 when all are done.
+function _nextOpenSetIdx(done, sets){
+  const d = Array.isArray(done) ? done : [];
+  for(let i = 0; i < (Number(sets) || 0); i++) if(!d.includes(i)) return i;
+  return -1;
+}
+
+// Values "Repeat previous set" would log for set `setIdx`.
+// Set > 0: the latest earlier set logged THIS session. Set 0 (or nothing
+// logged yet): the same set last time. null = nothing to repeat.
+// sessReps / sessWts are this exercise's index-keyed objects.
+function _repeatSetValues(setIdx, sessReps, sessWts, lastSets, plannedW, bw){
+  const R = sessReps || {}, W = sessWts || {};
+  for(let j = setIdx - 1; j >= 0; j--){
+    const r = Number(R[j]);
+    if(r > 0){
+      const w = Number(W[j]);
+      return { r, w: bw ? 0 : (w > 0 ? w : (Number(plannedW) || 0)), src: 'session', from: j };
+    }
+  }
+  const p = Array.isArray(lastSets) ? lastSets[setIdx] : null;
+  if(p && Number(p.r) > 0) return { r: Number(p.r), w: bw ? 0 : (Number(p.w) || 0), src: 'last', from: setIdx };
+  return null;
+}
+
+// The next-step line shown after a set. info = {nextSetNo, totalSets, w,
+// reps, restSecs, bw, timed, nextExName, suggestW}. Plain text (caller escapes).
+function _nextStepText(info){
+  const i = info || {};
+  if(i.nextSetNo){
+    let what;
+    if(i.timed) what = (i.reps || '') ;
+    else if(i.bw || !(Number(i.w) > 0)) what = (i.reps ? i.reps + ' reps' : '');
+    else what = _fmtKg(i.w) + ' kg × ' + (i.reps || '');
+    let t = 'Next: set ' + i.nextSetNo + ' of ' + i.totalSets + (what ? ' · ' + what : '');
+    if(Number(i.suggestW) > 0 && Number(i.suggestW) !== Number(i.w)) t += ' (or try ' + _fmtKg(i.suggestW) + ' kg)';
+    if(Number(i.restSecs) > 0) t += ' after ' + i.restSecs + ' s rest';
+    return t;
+  }
+  if(i.nextExName) return 'Exercise done · Next: ' + i.nextExName;
+  return 'All exercises done · Finish when ready';
 }
 
 // Epley 1RM estimate: weight × (1 + reps/30)
@@ -7616,7 +7779,7 @@ function renderLastTimeRef(ex){
   // elbow tweak", "used green band") — high real-world utility, the data was
   // already stored in setLog but never surfaced.
   const noteHtml = last.note
-    ? `<div style="margin-top:6px;font-size:12px;color:var(--text2);font-style:italic;line-height:1.4;">📝 Last note: "${String(last.note).replace(/</g,'&lt;').slice(0,140)}"</div>`
+    ? `<div style="margin-top:6px;font-size:12px;color:var(--text2);font-style:italic;line-height:1.4;">📝 Last note: "${esc(String(last.note).slice(0,140))}"</div>`
     : '';
 
   // Periodization chip (opt-in) — shows the current rolling block week + lean.
@@ -7990,7 +8153,7 @@ function renderCoreCircuit(ex){
       // actually something to show — no dead-end taps).
       const hasGuide = (typeof _hasExerciseGuide === 'function') && _hasExerciseGuide(e.name);
       const nameCell = hasGuide
-        ? `<div onclick="openCircuitGuideIdx(${i})" style="flex:1;font-size:13px;font-weight:600;cursor:pointer;">${i+1}. ${esc(e.name)} <span style="font-size:10px;color:var(--accent);opacity:0.8;">▶</span></div>`
+        ? `<button type="button" onclick="openCircuitGuideIdx(${i})" aria-label="${esc(e.name)} — demo" style="flex:1;text-align:left;background:none;border:none;padding:0;font-family:inherit;color:inherit;font-size:13px;font-weight:600;cursor:pointer;min-height:0;">${i+1}. ${esc(e.name)} <span style="font-size:10px;color:var(--accent);opacity:0.8;" aria-hidden="true">▶</span></button>`
         : `<div style="flex:1;font-size:13px;font-weight:600;">${i+1}. ${esc(e.name)}</div>`;
       return `
       <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:0.5px solid var(--border);">
@@ -8006,11 +8169,11 @@ function renderCoreCircuit(ex){
   document.getElementById('setsRow').innerHTML=Array.from({length:rounds},(_,i)=>{
     const isDone=done.includes(i),isCur=!isDone&&i===done.length;
     const log=coreRoundLogs[i];
-    return`<div class="set-bub ${isDone?'done':''} ${isCur?'cur':''}" style="min-width:60px;height:64px;" onclick="openCoreRoundLog(${i})">
+    return`<button type="button" class="set-bub ${isDone?'done':''} ${isCur?'cur':''}" style="min-width:60px;height:64px;" onclick="openCoreRoundLog(${i})" aria-label="Round ${i+1}${isDone?', done':isCur?', next':''}">
       <span class="sn">RND ${i+1}</span>
-      <span class="sr">${isDone?'✓':exs.map(e=>e.reps.split(' ')[0]).join('·')}</span>
+      <span class="sr">${isDone?'✓':esc(exs.map(e=>String(e.reps).split(' ')[0]).join('·'))}</span>
       ${isDone&&log?`<span style="font-size:9px;color:${isDone?'#000':'var(--text2)'};">logged</span>`:''}
-    </div>`;
+    </button>`;
   }).join('');
 }
 
@@ -8119,11 +8282,11 @@ function renderWarmupBubbles(ex){
   document.getElementById('warmupRow').innerHTML=pcts.map((p,i)=>{
     const wt=ex.weight?Math.round(ex.weight*(p/100)/2.5)*2.5:0;
     const isDone=done.includes(i);
-    return`<div class="warmup-bub ${isDone?'done':''}" onclick="markWarmup(${i})">
+    return`<button type="button" class="warmup-bub ${isDone?'done':''}" onclick="markWarmup(${i})" aria-label="Warm-up set ${i+1}, ${wt} kg × 5${isDone?', done':''}">
       <span class="sn">W${i+1}</span>
       <span class="sr">${wt}kg</span>
       <span class="sr">${isDone?'✓':'5r'}</span>
-    </div>`;
+    </button>`;
   }).join('');
 }
 
@@ -9395,6 +9558,302 @@ function updNextBtn(){
   }
   if(done>=ex.sets){nb.textContent='Next exercise →';nb.style.background='var(--accent2)';}
   else{nb.textContent='Log set ✓';nb.style.background='var(--accent)';}
+  _updRepeatBtn();
+}
+
+// ── Phase 1: Repeat previous set ───────────────────────────────────────────
+// The values a one-tap repeat would log right now, or null when it doesn't
+// apply (timed/core-circuit/HIIT moves, exercise complete, nothing to copy).
+function _repeatCandidate(){
+  const ex = sessExs[curIdx];
+  if(!ex || hiitState || isCoreCircuit(ex) || isTimedExercise(ex) || ex.duration) return null;
+  const i = _nextOpenSetIdx(setsDone[curIdx], ex.sets);
+  if(i < 0) return null;
+  const last = _currLastSets(ex);
+  const v = _repeatSetValues(i, repsLogged[curIdx], setWeights[curIdx], last ? last.sets : null, ex.weight, !!ex.bw);
+  return v ? Object.assign({ setIdx: i }, v) : null;
+}
+
+function _updRepeatBtn(){
+  const b = document.getElementById('repeatSetBtn');
+  const ex = sessExs[curIdx];
+  if(!b) return;
+  if(ex && isCoreCircuit(ex)){ b.style.display = 'none'; return; }
+  const v = _repeatCandidate();
+  if(!v){ b.style.display = 'none'; return; }
+  const what = (ex.bw || !(v.w > 0)) ? (v.r + ' reps') : (_fmtKg(v.w) + ' kg × ' + v.r);
+  const src = v.src === 'session' ? 'Same as set ' + (v.from + 1) : 'Same as last time';
+  b.innerHTML = `↻ Repeat<small>${esc(what)}</small>`;
+  b.setAttribute('aria-label', 'Repeat: log set ' + (v.setIdx + 1) + ' as ' + what + ' (' + src.toLowerCase() + ')');
+  b.title = src;
+  b.style.display = '';
+}
+
+function repeatPrevSet(){
+  const v = _repeatCandidate();
+  if(!v) return;
+  const ex = sessExs[curIdx], i = v.setIdx;
+  if(!repsLogged[curIdx]) repsLogged[curIdx] = {};
+  if(!setWeights[curIdx]) setWeights[curIdx] = {};
+  repsLogged[curIdx][i] = v.r;
+  setWeights[curIdx][i] = ex.bw ? 0 : (v.w || ex.weight || 0);
+  // RPE: copy the repeated in-session set's RPE (if any) — a repeat means "same as that set".
+  if(v.src === 'session'){
+    const r = (rpeLogged[curIdx] || {})[v.from];
+    if(r != null){ if(!rpeLogged[curIdx]) rpeLogged[curIdx] = {}; rpeLogged[curIdx][i] = r; }
+  }
+  _checkSetPR(curIdx, setWeights[curIdx][i]);
+  const restIsRunning = (restSec > 0) || (typeof restStartTime !== 'undefined' && restStartTime !== null);
+  if(restIsRunning) stopRest();
+  window._restStoppedManually = false;
+  markSet(i);
+}
+
+// PR check shared by the rep modal, swipe-to-log and repeat. Celebrates every
+// new in-session high (allows multiple PBs per exercise per session).
+function _checkSetPR(exIdx, sw){
+  const ex = sessExs[exIdx];
+  if(!(sw > 0) || !ex || ex.bw) return false;
+  const _prExName = ex.name;
+  // Exact-name lookup (getPBForLabel → getLiftHistoryByName), the same source
+  // the "LAST TIME" panel and PB cards use. getPB() only knows the 6 aliased
+  // compound lifts, so for any other exercise it returned null and every set
+  // falsely fired a "first time" PR even when the user had lifted heavier.
+  const _prevPB = getPBForLabel(_prExName);
+  if(!window._prShownThisSession) window._prShownThisSession = new Map();
+  const _sessionBest = window._prShownThisSession.has(_prExName) ? window._prShownThisSession.get(_prExName) : null;
+  // Threshold = highest weight already celebrated (session or all-time)
+  const _threshold = _sessionBest !== null ? _sessionBest : _prevPB;
+  if(_threshold === null ? (sw > 0) : (sw > _threshold)){
+    window._prShownThisSession.set(_prExName, sw);
+    showPRAlert(_prExName, sw, _sessionBest !== null ? _sessionBest : _prevPB);
+    return true;
+  }
+  return false;
+}
+
+// ── Phase 1: post-set feedback ─────────────────────────────────────────────
+// Folded-in version of the old mid-session "Crushing it — try Xkg" nudge:
+// when the average reps this session run 2+ above the range, suggest one step up.
+function _suggestNextWeight(ex, exIdx){
+  if(!ex || ex.bw) return 0;
+  const reps = Object.values(repsLogged[exIdx] || {}).map(Number).filter(n => n > 0);
+  const wts = Object.values(setWeights[exIdx] || {}).map(Number).filter(n => n > 0);
+  if(!reps.length || !wts.length) return 0;
+  const avgR = reps.reduce((a, b) => a + b, 0) / reps.length;
+  const avgW = wts.reduce((a, b) => a + b, 0) / wts.length;
+  const hiRep = parseInt((ex.reps || '8').split('–')[1]) || 12;
+  if(!(avgR > hiRep + 1)) return 0;
+  try { const n = stepWeight(avgW, 1, getWeightSteps(ex, equipOverride[exIdx])); return n !== avgW ? n : 0; } catch(e){ return 0; }
+}
+
+// Called from markSet for a newly logged set. Stores feedback for
+// _renderSetFeedback (updateSessUI shows it on this exercise, and the
+// "Exercise done → Next" hand-off also on the exercise that comes next).
+function _recordSetFeedback(exIdx, setIdx, restSecs){
+  const ex = sessExs[exIdx];
+  if(!ex || isCoreCircuit(ex) || ex.duration){ window._setFb = null; return; }
+  const timed = isTimedExercise(ex);
+  const cur = { w: Number((setWeights[exIdx] || {})[setIdx]) || 0, r: Number((repsLogged[exIdx] || {})[setIdx]) || 0 };
+  const last = _currLastSets(ex);
+  const delta = _setDeltaText(cur, last ? last.sets[setIdx] : null, { bw: !!ex.bw, timed });
+  const nextOpen = _nextOpenSetIdx(setsDone[exIdx], ex.sets);
+  // Supersets cycle to the next member right after each set — say so, and
+  // keep the feedback visible on that member's card.
+  const ssId = supersets[exIdx];
+  if(ssId){
+    const g = supersetGroups.find(gr => gr.id === ssId);
+    const pos = g ? g.exerciseIndices.indexOf(exIdx) : -1;
+    const nx = g && pos >= 0 ? g.exerciseIndices[(pos + 1) % g.exerciseIndices.length] : -1;
+    const roundDone = g ? g.exerciseIndices.every(k => (setsDone[k] || []).length >= g.completedRounds + 1) : false;
+    const next = roundDone ? 'Superset round done · rest, then the next round'
+      : (nx != null && nx !== exIdx && sessExs[nx] ? 'Superset · Next: ' + sessExs[nx].name : 'Superset · continue the round');
+    window._setFb = { exIdx, setIdx, delta, next, handoffTo: roundDone ? -1 : nx,
+      handoffHead: ex.name + ' · set ' + (setIdx + 1) + ' logged' + (delta.text ? ' · ' + delta.text : '') };
+    return;
+  }
+  let handoffTo = -1, nextExName = '';
+  if(nextOpen < 0){
+    handoffTo = routeIntoSuperset(findNextIncompleteEx(exIdx));
+    if(handoffTo === -1) handoffTo = routeIntoSuperset(findNextIncompleteEx(-1));
+    if(handoffTo === exIdx) handoffTo = -1;
+    if(handoffTo !== -1 && sessExs[handoffTo]) nextExName = sessExs[handoffTo].name;
+  }
+  const next = _nextStepText(nextOpen >= 0 ? {
+    nextSetNo: nextOpen + 1, totalSets: ex.sets, w: cur.w || ex.weight, reps: ex.reps,
+    restSecs: restSecs || 0, bw: !!ex.bw, timed, suggestW: _suggestNextWeight(ex, exIdx)
+  } : { nextExName });
+  window._setFb = { exIdx, setIdx, delta, next, handoffTo, handoffHead: '✓ ' + ex.name + ' complete' };
+}
+
+function _renderSetFeedback(){
+  const el = document.getElementById('setFeedback');
+  if(!el) return;
+  const fb = window._setFb;
+  if(!fb || (fb.exIdx !== curIdx && fb.handoffTo !== curIdx)){
+    el.style.display = 'none'; el.innerHTML = ''; return;
+  }
+  const onNext = fb.exIdx !== curIdx;
+  const head = onNext ? (fb.handoffHead || 'Last exercise done') : ('Set ' + (fb.setIdx + 1) + ' logged');
+  el.innerHTML = `<div class="fb-delta ${esc(onNext ? '' : fb.delta.dir)}">${esc(head)}${!onNext && fb.delta.text ? ' · ' + esc(fb.delta.text) : ''}</div>`
+    + (onNext ? '' : `<div class="fb-next">${esc(fb.next)}</div>`);
+  el.style.display = 'block';
+}
+
+// ── Phase 1: rest length (session-only "advanced timing"; never saved) ─────
+const SESS_REST_CHOICES = [60, 90, 120, 180];
+function _sessRestSecs(){
+  const v = Number(window._sessRestChoice);
+  return SESS_REST_CHOICES.includes(v) ? v : 90;
+}
+function setSessRest(secs){
+  if(!SESS_REST_CHOICES.includes(Number(secs))) return;
+  window._sessRestChoice = Number(secs);
+  renderRestLenPicker();
+}
+function renderRestLenPicker(){
+  const wrap = document.getElementById('restLenChips');
+  if(!wrap) return;
+  const row = document.getElementById('restLenRow');
+  const isHIITWorkout = HIIT.some(h => h.name === sessDay);
+  if(row) row.style.display = isHIITWorkout ? 'none' : 'block';
+  const cur = _sessRestSecs();
+  wrap.innerHTML = SESS_REST_CHOICES.map(s =>
+    `<button type="button" class="dp-chip ${s === cur ? 'active' : ''}" aria-pressed="${s === cur}" onclick="setSessRest(${s})">${s < 120 ? s + ' s' : (s / 60) + ' min'}</button>`).join('');
+}
+
+// ── Phase 1: More drawer ───────────────────────────────────────────────────
+function _sessMoreSet(open){
+  const btn = document.getElementById('sessMoreBtn'), body = document.getElementById('sessMoreBody');
+  if(!btn || !body) return;
+  // Closing while focus is inside (e.g. after Swap changed the exercise) would
+  // strand focus on a hidden control — hand it back to the toggle first.
+  if(!open && body.contains(document.activeElement)) btn.focus();
+  body.hidden = !open;
+  btn.setAttribute('aria-expanded', String(!!open));
+}
+function toggleSessMore(){
+  const body = document.getElementById('sessMoreBody');
+  if(!body) return;
+  // Disclosure pattern: focus stays on the toggle; the drawer follows it in tab order.
+  const opening = body.hidden;
+  _sessMoreSet(opening);
+  if(opening){
+    // The sticky bottom bar would cover the drawer: bring the toggle up to just
+    // under the sticky header so the drawer's controls are in view.
+    const sc = document.querySelector('.tab-content'), btn = document.getElementById('sessMoreBtn');
+    const hdr = document.getElementById('sessStickyHdr');
+    if(sc && btn){
+      // + ~36px for the scroll-revealed exercise name that hangs below the header.
+      const top = btn.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop - ((hdr && hdr.offsetHeight) || 0) - 44;
+      const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      sc.scrollTo({ top: Math.max(0, top), behavior: reduce ? 'auto' : 'smooth' });
+    }
+  }
+}
+
+// ── Phase 1: dialog accessibility for every .modal-ov overlay ──────────────
+// The app opens/closes ~40 overlays by toggling the 'open' class from many
+// places (functions, inline Cancel buttons, backdrop taps). Rather than
+// rewrite each site, one MutationObserver gives every overlay dialog
+// semantics, moves focus in on open, traps Tab, closes backdrop-dismissable
+// ones on Escape, and returns focus to whatever opened it on close.
+let _dlgSeqN = 0;
+function _dlgFocusables(root){
+  return [...root.querySelectorAll('button, [href], input:not([type="hidden"]), select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter(el => !el.disabled && el.offsetParent !== null);
+}
+function _dlgTop(){
+  const open = [...document.querySelectorAll('.modal-ov.open')];
+  if(!open.length) return null;
+  const z = el => parseInt(getComputedStyle(el).zIndex) || 0;
+  return open.sort((a, b) => (z(b) - z(a)) || ((b._dlgSeq || 0) - (a._dlgSeq || 0)))[0];
+}
+function _dlgBox(ov){ return ov.querySelector(':scope > .modal') || ov.firstElementChild || ov; }
+function _dlgOnOpen(ov){
+  if(ov._dlgOpen) return;
+  ov._dlgOpen = true; ov._dlgSeq = ++_dlgSeqN;
+  const ae = document.activeElement;
+  const fromDlg = ae && ae.closest ? ae.closest('.modal-ov') : null;
+  // Opened from inside another dialog (which may be closing): inherit its opener.
+  ov._returnTo = (fromDlg && fromDlg !== ov) ? (fromDlg._returnTo || null)
+    : ((ae && ae !== document.body && !ov.contains(ae)) ? ae : null);
+  ov._returnId = (ov._returnTo && ov._returnTo.id) || null;
+  const box = _dlgBox(ov);
+  if(!box.hasAttribute('role')) box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  if(!box.hasAttribute('aria-labelledby') && !box.hasAttribute('aria-label')){
+    const h = box.querySelector('[id$="Title"], h1, h2, h3, .modal-title');
+    if(h){ if(!h.id) h.id = (ov.id || 'dlg' + ov._dlgSeq) + '_title'; box.setAttribute('aria-labelledby', h.id); }
+  }
+  setTimeout(() => {
+    if(!ov.classList.contains('open') || ov.contains(document.activeElement)) return;
+    const list = _dlgFocusables(box);
+    const pref = box.querySelector('[data-autofocus], .sel, [aria-pressed="true"]');
+    // Don't auto-focus a text field: on phones that pops the keyboard over the sheet.
+    const tgt = (pref && pref.offsetParent !== null) ? pref : (list.find(el => !/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) || null);
+    if(tgt) tgt.focus({ preventScroll: true });
+  }, 60);
+}
+function _dlgOnClose(ov){
+  if(!ov._dlgOpen) return;
+  ov._dlgOpen = false;
+  const ae = document.activeElement;
+  const rt = ov._returnTo; ov._returnTo = null;
+  // Only restore when focus is stranded (in the closed dialog or on <body>);
+  // never steal it from wherever the app deliberately moved it.
+  if(ae && ae !== document.body && !ov.contains(ae)) return;
+  const usable = el => el && el.isConnected && el.offsetParent !== null;
+  let tgt = usable(rt) ? rt : (ov._returnId ? document.getElementById(ov._returnId) : null);
+  if(!usable(tgt) && ov.dataset.returnFallback) tgt = document.getElementById(ov.dataset.returnFallback);
+  if(usable(tgt)) tgt.focus({ preventScroll: true });
+}
+function closeDialog(id){
+  const ov = document.getElementById(id);
+  if(ov) ov.classList.remove('open');
+}
+function _dlgKeydown(e){
+  const top = _dlgTop();
+  if(!top) return;
+  if(e.key === 'Escape'){
+    // Only overlays the user can already dismiss by tapping the backdrop.
+    const oc = top.getAttribute('onclick') || '';
+    if(oc.indexOf('event.target===this') !== -1){ e.preventDefault(); top.classList.remove('open'); }
+    return;
+  }
+  if(e.key !== 'Tab') return;
+  const list = _dlgFocusables(_dlgBox(top));
+  if(!list.length){ e.preventDefault(); return; }
+  const first = list[0], last = list[list.length - 1], ae = document.activeElement;
+  if(!top.contains(ae)){ e.preventDefault(); first.focus(); }
+  else if(e.shiftKey && ae === first){ e.preventDefault(); last.focus(); }
+  else if(!e.shiftKey && ae === last){ e.preventDefault(); first.focus(); }
+}
+function _initDialogA11y(){
+  if(window._dlgInit) return;
+  window._dlgInit = true;
+  new MutationObserver(muts => {
+    for(const m of muts){
+      const t = m.target;
+      if(!t.classList || !t.classList.contains('modal-ov')) continue;
+      const was = (m.oldValue || '').split(/\s+/).includes('open');
+      const is = t.classList.contains('open');
+      if(is && !was) _dlgOnOpen(t);
+      else if(!is && was) _dlgOnClose(t);
+    }
+  }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class'], attributeOldValue: true });
+  document.addEventListener('keydown', _dlgKeydown, true);
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _initDialogA11y);
+else _initDialogA11y();
+
+// One polite announcement for screen readers (rest start/end, PRs). Clearing
+// first makes a repeated identical message re-announce.
+function _sessAnnounce(msg){
+  const el = document.getElementById('sessLive');
+  if(!el) return;
+  el.textContent = '';
+  setTimeout(() => { el.textContent = String(msg || ''); }, 30);
 }
 
 function renderBubbles(ex){
@@ -9408,14 +9867,35 @@ function renderBubbles(ex){
     return;
   }
   const done=setsDone[curIdx]||[], reps=repsLogged[curIdx]||{}, sw=setWeights[curIdx]||{};
+  // Last time's value for the same set index (read-only, best effort).
+  const last=_currLastSets(ex), timed=isTimedExercise(ex);
+  const curOpen=_nextOpenSetIdx(done, ex.sets);
   document.getElementById('setsRow').innerHTML=Array.from({length:ex.sets},(_,i)=>{
-    const isDone=done.includes(i), isCur=!isDone&&i===done.length, lr=reps[i], sw_=sw[i];
-    return`<div class="set-bub ${isDone?'done':''} ${isCur?'cur':''}" data-set-idx="${i}" onclick="openRepInput(${i})">
+    const isDone=done.includes(i), isCur=!isDone&&i===curOpen, lr=reps[i], sw_=sw[i];
+    const lt=last&&last.sets[i];
+    const ltTxt=_lastSetLabel(lt, ex.bw||timed, timed);
+    const label='Set '+(i+1)+(isDone?(', done'+(lr?', '+lr+(timed?' seconds':' reps'):'')+(sw_?' at '+sw_+' kg':'')):(isCur?', next':''))+', target '+(ex.reps||'')+(ltTxt?', last time '+ltTxt:'');
+    return`<button type="button" class="set-bub ${isDone?'done':''} ${isCur?'cur':''}" data-set-idx="${i}" onclick="openRepInput(${i})" aria-label="${esc(label)}">
       <span class="sn">SET ${i+1}</span>
-      <span class="${isDone&&lr?'rv':'sr'}">${isDone&&lr?esc(lr)+'r':isDone?'✓':esc(ex.reps)}</span>
-      ${isDone&&sw_?`<span class="set-wt-badge">${esc(sw_)}kg</span>`:''}
-    </div>`;
+      <span class="${isDone&&lr?'rv':'sr'}">${isDone&&lr?esc(lr)+(timed?'s':'r'):isDone?'✓':esc(ex.reps)}</span>
+      ${isDone&&sw_?`<span class="set-wt-badge">${esc(sw_)}kg</span>`:(ltTxt?`<span class="lt">last ${esc(ltTxt)}</span>`:'')}
+    </button>`;
   }).join('');
+}
+
+// History for the current exercise's sets, via the same alias names as the
+// LAST TIME panel. Read-only; returns null when there's no history.
+function _currLastSets(ex){
+  if(!ex || !ex.name || ex.duration) return null;
+  try { return getLastSessionSets(completedSessions, _exerciseLookupNames(ex.name)); } catch(e){ return null; }
+}
+
+// "80×8", "×8" (bodyweight) or "45s" (timed). '' when there's nothing to show.
+function _lastSetLabel(lt, noWeight, timed){
+  if(!lt || !(Number(lt.r) > 0)) return '';
+  if(timed) return lt.r + 's';
+  if(noWeight || !(Number(lt.w) > 0)) return '×' + lt.r;
+  return _fmtKg(lt.w) + '×' + lt.r;
 }
 
 // ── SWIPE-TO-LOG ──
@@ -9446,6 +9926,8 @@ function quickLogSet(setIdx){
   if(!setWeights[curIdx]) setWeights[curIdx]={};
   repsLogged[curIdx][setIdx]=defaultReps;
   setWeights[curIdx][setIdx]=sw;
+  // PR check — swipe-to-log used to skip it entirely (Phase 1 fix).
+  _checkSetPR(curIdx, sw);
   // Cancel running rest and always clear the manual-stop flag so the next set
   // gets its rest regardless of whether the user previously skipped a rest.
   const restIsRunning=(restSec>0)||(typeof restStartTime!=='undefined'&&restStartTime!==null);
@@ -9792,7 +10274,7 @@ function openRepInput(setIdx){
   } else {
     defaultReps = hi;
   }
-  document.getElementById('repGrid').innerHTML=nums.map(n=>`<div class="rep-btn ${n===defaultReps?'sel':''}" onclick="selectRep(${n},this)">${n}</div>`).join('');
+  document.getElementById('repGrid').innerHTML=nums.map(n=>`<button type="button" class="rep-btn ${n===defaultReps?'sel':''}" aria-pressed="${n===defaultReps}" aria-label="${n} reps" onclick="selectRep(${n},this)">${n}</button>`).join('');
   document.getElementById('repCustom').value=defaultReps||'';
   // Restore the pieces round-mode (openCoreRoundLog) hides/relabels — the
   // modal element is shared between the two flows.
@@ -9829,8 +10311,8 @@ function openRepInput(setIdx){
 }
 
 function selectRep(n,el){
-  document.querySelectorAll('.rep-btn').forEach(b=>b.classList.remove('sel'));
-  el.classList.add('sel');
+  document.querySelectorAll('.rep-btn').forEach(b=>{ b.classList.remove('sel'); b.setAttribute('aria-pressed','false'); });
+  el.classList.add('sel'); el.setAttribute('aria-pressed','true');
   document.getElementById('repCustom').value=n;
 }
 
@@ -9867,25 +10349,9 @@ function confirmReps(){
   if(!rpeLogged[curIdx])rpeLogged[curIdx]={};
   if(_pendingRPE!=null) rpeLogged[curIdx][pendingRepSetIdx]=_pendingRPE;
   else delete rpeLogged[curIdx][pendingRepSetIdx];
-  // PR check — celebrate every new in-session high (allows multiple PBs per exercise per session)
-  if(sw > 0 && sessExs[curIdx] && !sessExs[curIdx].bw){
-    const _prExName = sessExs[curIdx].name;
-    // Use the exact-name lookup (getPBForLabel → getLiftHistoryByName), the
-    // same source the "LAST TIME" panel and PB cards use. getPB() only knows
-    // the 6 aliased compound lifts (bench/squat/deadlift/ohp/pushpress/row),
-    // so for any other exercise it returned null and every set falsely fired
-    // a "first time" PR even when the user had lifted heavier before.
-    const _prevPB = getPBForLabel(_prExName);
-    if(!window._prShownThisSession) window._prShownThisSession = new Map();
-    const _sessionBest = window._prShownThisSession.has(_prExName) ? window._prShownThisSession.get(_prExName) : null;
-    // Threshold = highest weight already celebrated (session or all-time)
-    const _threshold = _sessionBest !== null ? _sessionBest : _prevPB;
-    if(_threshold === null ? (sw > 0) : (sw > _threshold)){
-      window._prShownThisSession.set(_prExName, sw);
-      showPRAlert(_prExName, sw, _sessionBest !== null ? _sessionBest : _prevPB);
-    }
-  }
-  document.getElementById('repMod').classList.remove('open');
+  // PR check — celebrate every new in-session high (shared with swipe-log + repeat)
+  _checkSetPR(curIdx, sw);
+  closeDialog('repMod');
   
   // Cancel rest timer if it's running — this is a programmatic cancel (not user-initiated),
   // so reset _restStoppedManually immediately after so markSet() still starts a new rest.
@@ -9912,10 +10378,17 @@ function markSet(i){
     const weight = (setWeights[curIdx] || {})[i] || ex?.weight || 0;
     bus.emit('set:logged', { exerciseIdx: curIdx, exerciseName: ex?.name, setIdx: i, weight, reps });
   }
-  renderBubbles(sessExs[curIdx]);renderQueue();updNextBtn();
   const ex=sessExs[curIdx];
   const allDone=(setsDone[curIdx]||[]).length>=ex.sets;
   const ssId=supersets[curIdx];
+  // Post-set feedback (what changed vs last time + next step). The rest it
+  // names is the rest markSet is about to start (supersets rest per round).
+  if(isNew){
+    const _isHIITw = HIIT.some(h => h.name === sessDay);
+    const _willRest = !ssId && !allDone && !window._restStoppedManually;
+    _recordSetFeedback(curIdx, i, _willRest ? (_isHIITw ? 30 : _sessRestSecs()) : 0);
+  }
+  renderBubbles(sessExs[curIdx]);renderQueue();updNextBtn();_renderSetFeedback();
   
   // ── NEW SUPERSET LOGIC ──
   if(ssId){
@@ -9988,7 +10461,7 @@ function markSet(i){
       // console.log('[SUPERSET CHECK]   → Calling startRest() for regular exercise');
       // Use shorter 30s rest for HIIT workouts, 90s for regular
       const isHIITWorkout = HIIT.some(h => h.name === sessDay);
-      startRest(isHIITWorkout ? 30 : 90);
+      startRest(isHIITWorkout ? 30 : _sessRestSecs());
     } else {
       // console.log('[SUPERSET CHECK]   → Skipping startRest() (rest was manually stopped)');
       window._restStoppedManually = false; // Reset flag for next set
@@ -10723,6 +11196,8 @@ function startRest(duration = 90, label = 'REST'){
   restInterval = null;
   // Use wall-clock timer instead of interval (survives app backgrounding)
   updateRestTimer();
+  // Screen readers: announce the start only (never the per-tick countdown).
+  _sessAnnounce('Rest ' + duration + ' seconds' + (label && label !== 'REST' ? ' — ' + label : '') + '.');
 }
 
 function updateRestTimer(){
@@ -10746,6 +11221,10 @@ function updateRestTimer(){
     _spokenCountdown.add(restSec);
     speakCountdown({3:'Three', 2:'Two', 1:'One'}[restSec]);
   }
+  if(restSec === 10 && restTotalSecs > 15 && !_spokenCountdown.has('sr10')){
+    _spokenCountdown.add('sr10');
+    _sessAnnounce('10 seconds of rest left.');
+  }
 
   if(restSec<=0){
     restStartTime=null;
@@ -10756,7 +11235,7 @@ function updateRestTimer(){
     const hdr = document.getElementById('restStripHdr');
     if(hdr) hdr.classList.remove('show');
     window._restStoppedManually = false; // Reset flag since rest completed naturally
-    showRestAlert(); // fires once, timer stops permanently
+    showRestAlert(); // (announced by focusing its role=alertdialog button) // fires once, timer stops permanently
   }else{
     // Schedule next update (update every 100ms for smooth UI)
     // Store the timeout ID so we can cancel it
@@ -10850,10 +11329,19 @@ function showRestAlert(){
   speakCountdown('Go');
   playCompletionDing();
   document.getElementById('restAlert').classList.add('show');
+  // Keyboard/screen-reader users: move focus to the dismiss button, remember where they were.
+  const _ae = document.activeElement;
+  window._restAlertReturn = (_ae && _ae !== document.body) ? _ae : null;
+  const _rb = document.getElementById('restAlertBtn');
+  if(_rb) _rb.focus({ preventScroll: true });
 }
 
 function dismissRestAlert(){
   document.getElementById('restAlert').classList.remove('show');
+  // Return focus (the opener may have been re-rendered: fall back to the main action).
+  const _rt = window._restAlertReturn; window._restAlertReturn = null;
+  const _tgt = (_rt && _rt.isConnected && _rt.offsetParent !== null) ? _rt : document.getElementById('nextBtn');
+  if(_tgt && _tgt.offsetParent !== null && (document.activeElement === document.body || document.activeElement?.id === 'restAlertBtn')) _tgt.focus({ preventScroll: true });
 
   // For supersets: advance to first exercise of the next round
   const ssId = supersets[curIdx];
@@ -10888,6 +11376,7 @@ function showPRAlert(exName, weight, prevPB){
     document.getElementById('prAlertPrev').textContent = 'First time logging this lift!';
   }
   el.classList.add('show');
+  _sessAnnounce('New personal record: ' + exName + ', ' + weight + ' kilograms. ' + document.getElementById('prAlertPrev').textContent);
   haptic([80, 60, 80, 60, 200]); // celebratory pulse
   _prAlertTimer = setTimeout(dismissPRAlert, 4000);
   bus.emit('pr:detected', { exName, weight, prevPB });
@@ -11421,8 +11910,8 @@ function renderSessionExerciseList(){
 
         // Round progress: use min sets across group (reflects the true completed rounds)
         const _ssMinDone = Math.min(...group.exerciseIndices.map(idx => (setsDone[idx]||[]).length));
-        html += `<div style="padding:8px 10px;background:${bg};border:${border};border-radius:8px;font-size:11px;cursor:pointer;" onclick="jumpToSuperset('${group.id}')">
-          <div style="color:${hColor};font-weight:700;margin-bottom:4px;">⚡ Superset${badge} ${allDone ? '<span style="float:right;color:var(--green);">✓ Done</span>' : `<span style="float:right;color:var(--text2);">Round ${_ssMinDone}/${group.sets}</span>`}</div>
+        html += `<button type="button" class="sess-row" style="padding:8px 10px;background:${bg};border:${border};border-radius:8px;font-size:11px;cursor:pointer;" onclick="jumpToSuperset(this.dataset.gid)" data-gid="${esc(group.id)}" aria-label="Superset, round ${_ssMinDone} of ${group.sets}${allDone?', done':''}${isActive?', in progress':''}">
+          <span style="display:block;color:${hColor};font-weight:700;margin-bottom:4px;">⚡ Superset${badge} ${allDone ? '<span style="float:right;color:var(--green);">✓ Done</span>' : `<span style="float:right;color:var(--text2);">Round ${_ssMinDone}/${group.sets}</span>`}</span>
           ${group.exerciseIndices.map((idx,pos) => {
             const done = (setsDone[idx]||[]).length;
             const isCur = idx === curIdx;
@@ -11438,12 +11927,12 @@ function renderSessionExerciseList(){
               : (m.reps ? (/s\s*$/i.test(String(m.reps)) ? `${esc(m.reps)}` : `${esc(m.reps)} reps`) : '');
             const plan = [wLbl, repLbl].filter(Boolean).join(' · ');
             const prog = done >= group.sets ? ' ✓' : done > 0 ? ` (${done}/${group.sets})` : '';
-            return `<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;color:${c};padding:2px 0 2px 8px;font-weight:${isCur?'700':'400'};">
+            return `<span style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;color:${c};padding:2px 0 2px 8px;font-weight:${isCur?'700':'400'};">
               <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${isCur?'▶ ':''}${pos+1}. ${esc(m.name)}${prog}</span>
               ${plan ? `<span style="font-size:10px;color:var(--text2);font-weight:600;white-space:nowrap;flex-shrink:0;">${plan}</span>` : ''}
-            </div>`;
+            </span>`;
           }).join('')}
-        </div>`;
+        </button>`;
       }
     } else {
       processedIndices.add(i);
@@ -11461,10 +11950,10 @@ function renderSessionExerciseList(){
       const setsLbl= isDone   ? `${done} sets ✓` : done > 0 ? `${done}/${total}` : `0/${total}`;
       const opacity= isDone   ? '0.45' : '1';
 
-      html += `<div style="padding:8px 10px;background:${bg};border:${border};border-radius:8px;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;opacity:${opacity};" onclick="jumpTo(${i})">
+      html += `<button type="button" class="sess-row" style="padding:8px 10px;background:${bg};border:${border};border-radius:8px;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;opacity:${opacity};" onclick="jumpTo(${i})" aria-label="${esc(ex.name)}, ${done} of ${total} sets${isDone?', done':''}${isActive?', in progress':''}"${isActive?' aria-current="step"':''}>
         <span style="color:${color};font-weight:${isActive?'700':isDone?'500':'400'};">${icon} ${esc(ex.name)}${badge}</span>
         <span style="font-size:10px;color:${isDone?'var(--green)':'var(--text2)'};">${setsLbl}</span>
-      </div>`;
+      </button>`;
     }
   });
 
@@ -12774,7 +13263,7 @@ function startHIIT(idx){
   });
   curIdx=0;setsDone={};repsLogged={};rpeLogged={};_pendingRPE=null;totalSets=0;sessTimeSec=0;
   sessStartTime=null; // Don't set until user clicks start (and post-countdown for HIIT)
-  supersets={};warmupShown={};warmupDone={};equipOverride={};setWeights={};setTimestamps={};
+  supersets={};warmupShown={};warmupDone={};equipOverride={};setWeights={};setTimestamps={}; window._setFb=null; window._sessRestChoice=null;
   coreCircuitExs=[];twoPhaseState=null;clearInterval(twoPhaseInterval);
   // Ensure no stale 'session' timer carries over from a previous session
   stopTimer('session'); clearInterval(sessInterval);
@@ -13907,6 +14396,11 @@ function sessRemoveExercise(){
   setsDone=shiftDict(setsDone);
   repsLogged=shiftDict(repsLogged);
   setWeights=shiftDict(setWeights);
+  // RPE is index-keyed too — it used to be skipped, so after a removal every
+  // later exercise's RPE was saved against the wrong exercise (Phase 1 fix).
+  rpeLogged=shiftDict(rpeLogged);
+  // Post-set feedback refers to an exercise index: drop it rather than shift.
+  window._setFb=null;
   warmupShown=shiftDict(warmupShown);
   warmupDone=shiftDict(warmupDone);
   equipOverride=shiftDict(equipOverride);
@@ -13995,7 +14489,7 @@ function startCustomSubSession(progIdx,subIdx){
   sessExs=sub.exercises.map(e=>({...e}));
   curIdx=0;setsDone={};repsLogged={};rpeLogged={};_pendingRPE=null;totalSets=0;sessTimeSec=0;
   sessStartTime=Date.now();
-  supersets={};warmupShown={};warmupDone={};equipOverride={};setWeights={};setTimestamps={};
+  supersets={};warmupShown={};warmupDone={};equipOverride={};setWeights={};setTimestamps={}; window._setFb=null; window._sessRestChoice=null;
   coreCircuitExs=pickCoreCircuit();
   // Wall-clock-based session timer; startTimer auto-clears any prior 'session' timer.
   sessInterval = startTimer('session', () => {
@@ -16159,11 +16653,11 @@ function renderExerciseNote(){
   const note = _exerciseNotes[ex.name];
   if(note){
     display.style.display = 'block';
-    display.innerHTML = `<span style="color:#ffaa00;font-weight:700;">📝 Note:</span> ${note.replace(/</g,'&lt;')}`;
-    if(btn) btn.style.background = 'rgba(255,160,0,0.2)';
+    display.innerHTML = `<span style="color:#ffaa00;font-weight:700;">📝 Note:</span> ${esc(note)}`;
+    if(btn){ btn.style.background = 'rgba(255,160,0,0.2)'; btn.textContent = '✏️ Edit note'; }
   } else {
     display.style.display = 'none';
-    if(btn) btn.style.background = 'var(--surface3)';
+    if(btn){ btn.style.background = ''; btn.textContent = '✏️ Note'; }
   }
 }
 
