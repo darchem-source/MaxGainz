@@ -3001,7 +3001,9 @@ function saveAuthState(user, token, refreshToken){
 }
 
 // Silently refresh the JWT using the stored refresh token.
-// Returns true on success, false on failure.
+// Returns true on success, false when the server REJECTED the refresh token
+// (the user really must sign in again), or 'transient' when the refresh could
+// not be completed (network error, 5xx, 429) — retrying later may succeed.
 // Uses a shared promise so concurrent callers never race (only one refresh fires).
 let _tokenRefreshPromise = null;
 async function refreshAuthToken(){
@@ -3015,6 +3017,7 @@ async function refreshAuthToken(){
         headers: { 'apikey': SB_KEY, 'Content-Type': 'application/json' },
         body: JSON.stringify({ refresh_token: authRefreshToken })
       });
+      if(res.status >= 500 || res.status === 429) return 'transient';
       if(!res.ok) return false;
       const data = await res.json();
       const newToken = data.access_token;
@@ -3025,8 +3028,8 @@ async function refreshAuthToken(){
       console.log('🔑 JWT refreshed successfully');
       return true;
     }catch(e){
-      console.warn('Token refresh failed:', e);
-      return false;
+      console.warn('Token refresh failed (network) — will retry');
+      return 'transient';
     }finally{
       _tokenRefreshPromise = null;
     }
@@ -3813,7 +3816,13 @@ async function sbFetch(path, options = {}, _isRetry = false) {
     if(res.status === 401 && !_isRetry){
       clearTimeout(timeout);
       const refreshed = await refreshAuthToken();
-      if(refreshed){
+      if(refreshed === 'transient'){
+        // Couldn't reach the auth server — NOT an expired session. Stay in the
+        // normal retry/backoff path instead of telling the user to sign in again.
+        _lastSyncError = 'network';
+        return null;
+      }
+      if(refreshed === true){
         return sbFetch(path, options, true); // retry with new token
       } else {
         // Refresh failed — token is dead. Show a non-disruptive prompt rather than
@@ -3869,6 +3878,7 @@ async function sbFetch(path, options = {}, _isRetry = false) {
 var PENDING_KEY = 'maxgainz_pending_v1';
 var LAST_SYNC_KEY = 'maxgainz_last_synced';
 var HYDRATED_KEY = 'maxgainz_hydrated_uid';
+var PROFILE_SEEN_KEY = 'maxgainz_profile_seen_at'; // updated_at of the cloud profile blob this device last applied/wrote
 var _pending = null;
 var _lastSyncError = null;      // 'auth' | 'timeout' | 'network' | 'http' | null (set by sbFetch)
 var _syncInFlight = null;       // promise of the running flushPending(), if any
@@ -3925,6 +3935,46 @@ function _pendingCount(){ return _countPending(_P(), _unsyncedSessionCount()); }
 function _isHydrated(){
   const uid = getCurrentUserId();
   return !!uid && lsGetRaw(HYDRATED_KEY) === uid;
+}
+function _setProfileSeen(at){
+  const uid = getCurrentUserId();
+  if(uid && at) lsSet(PROFILE_SEEN_KEY, { userId: uid, at: String(at) });
+}
+function _profileSeenAt(){
+  const v = lsGet(PROFILE_SEEN_KEY, null);
+  return (v && v.userId === getCurrentUserId() && v.at) ? v.at : null;
+}
+// Pure: when the cloud profile wins over unconfirmed local changes, keep the
+// local-only ENTRIES of the append-style collections (a body-weight entry or
+// note logged offline must not be erased by a newer blob from another device).
+// Cloud wins on conflicts (same date / key / name). Returns merged copies plus
+// how many local entries were carried over.
+function _mergeLocalProfileExtras(cloud, local){
+  cloud = cloud || {}; local = local || {};
+  let added = 0;
+  const byField = (c, l, keyOf) => {
+    const out = Array.isArray(c) ? c.slice() : [];
+    const seen = new Set(out.map(keyOf));
+    (Array.isArray(l) ? l : []).forEach(e => {
+      const k = keyOf(e);
+      if(k == null || k === '' || seen.has(k)) return;
+      seen.add(k); out.push(e); added++;
+    });
+    return out;
+  };
+  const date = e => (e && typeof e.date === 'string') ? e.date : null;
+  const name = e => (e && typeof e.name === 'string') ? e.name : null;
+  const out = {
+    bodyWeightLog:   byField(cloud.bodyWeightLog, local.bodyWeightLog, date).sort((a,b) => String(a.date).localeCompare(String(b.date))),
+    measurementsLog: byField(cloud.measurementsLog, local.measurementsLog, date).sort((a,b) => String(a.date).localeCompare(String(b.date))),
+    customWorkouts:  byField(cloud.customWorkouts, local.customWorkouts, name),
+    customHIITs:     byField(cloud.customHIITs, local.customHIITs, name),
+    dailyNotes: Object.assign({}, (cloud.dailyNotes && typeof cloud.dailyNotes === 'object') ? cloud.dailyNotes : {})
+  };
+  const ln = (local.dailyNotes && typeof local.dailyNotes === 'object') ? local.dailyNotes : {};
+  Object.keys(ln).forEach(k => { if(!(k in out.dailyNotes)){ out.dailyNotes[k] = ln[k]; added++; } });
+  out.added = added;
+  return out;
 }
 function _markSynced(){
   const uid = getCurrentUserId();
@@ -3993,7 +4043,14 @@ async function _uploadSession(s){
   try {
     const res = await cloudSaveSession(s, { silent: true });
     const id = Array.isArray(res) && res[0] && res[0].id;
-    if(!id) return false;
+    if(!id){
+      // Outcome unknown (the insert may have landed with the response lost).
+      // Session inserts aren't idempotent, so the next retry must go back
+      // through cloudLoadAll(): its merge adopts a row that did land (same
+      // _sessionKey) and only re-uploads sessions that are really missing.
+      _cloudLoadedThisPage = false;
+      return false;
+    }
     const p = _P();
     const di = p.deletedKeys.indexOf(k);
     if(di >= 0){
@@ -4043,6 +4100,7 @@ function flushPending(){
     if(_cloudLoadedThisPage){
       for(const s of completedSessions.filter(x => x && !x.cloud_id)){
         if(!same()) return false;
+        if(!_cloudLoadedThisPage){ ok = false; break; } // a failed insert forces a reload+merge first
         if(!(await _uploadSession(s))) ok = false;
       }
     }
@@ -4080,9 +4138,11 @@ function _announceSave(what, cloudPromise){
   if(!isAuthenticated()){ showToast('✅ ' + what + ' saved on this device'); return; }
   showToast('✅ ' + what + ' saved on this device · syncing…');
   Promise.resolve(cloudPromise).then(res => {
-    showToast(res !== null && res !== undefined
-      ? '☁️ ' + what + ' saved and synced to your account'
-      : '💾 ' + what + ' saved on this device · will sync automatically', { duration: 2600 });
+    showToast(res === false
+      ? '💾 ' + what + ' saved on this device · syncs once your account has finished loading'
+      : (res !== null && res !== undefined
+        ? '☁️ ' + what + ' saved and synced to your account'
+        : '💾 ' + what + ' saved on this device · will sync automatically'), { duration: 2600 });
   }).catch(() => {});
 }
 
@@ -4190,7 +4250,7 @@ async function cloudSaveProfile(opts) {
   // state may still be defaults and would overwrite the real cloud profile.
   const uid = getCurrentUserId();
   _profileRev++; _P().profile = true; _savePending();
-  if(!_isHydrated()){ _recomputeSyncStatus(); return null; }
+  if(!_isHydrated()){ _recomputeSyncStatus(); return false; } // false = held until this device has loaded the account
   // Serialise uploads (an older blob must never land after a newer one) and
   // coalesce bursts: callers arriving before the queued upload starts share it.
   if(_profileQueued) return _profileQueued;
@@ -4224,6 +4284,7 @@ async function cloudSaveProfile(opts) {
       demoSex:      userPreferences.demoSex === 'female' ? 'female' : 'male'
     }
   });
+  const sentAt = new Date().toISOString();
   const res = await sbFetch('custom_weights?on_conflict=user_id,exercise_name', {
     method: 'POST',
     silent: !!(opts && opts.silent),
@@ -4232,13 +4293,14 @@ async function cloudSaveProfile(opts) {
       user_id: uid,
       exercise_name: '__profile__',
       weight: 0,
-      updated_at: new Date().toISOString(),
+      updated_at: sentAt,
       notes: blob
     })
   });
   if(getCurrentUserId() === uid){
     if(res !== null){
       if(rev === _profileRev){ _P().profile = false; _savePending(); }
+      _setProfileSeen(sentAt);
       _markSynced();
     } else {
       _scheduleRetry();
@@ -4294,8 +4356,24 @@ async function cloudLoadAll() {
   // Local profile changes the cloud never confirmed win over the cloud copy —
   // but only once this device has been hydrated from the cloud for this account
   // (otherwise "local" may just be defaults), or when the cloud has no blob yet.
-  const _profileLocalWins = _pend.profile && (_isHydrated() || !_profileRow);
-  if (_pend.profile && !_profileLocalWins) { _pend.profile = false; _savePending(); }
+  // ...and only if the cloud blob hasn't changed since this device last saw it:
+  // a newer blob means another device wrote in the meantime, and blindly
+  // uploading this device's whole blob would erase that device's data.
+  const _seenAt = _profileSeenAt();
+  const _cloudNewer = !!_profileRow && (!_seenAt || !_profileRow.updated_at || new Date(_profileRow.updated_at) > new Date(_seenAt));
+  const _profileLocalWins = _pend.profile && (!_profileRow || (_isHydrated() && !_cloudNewer));
+  // Cloud wins over pending local changes: snapshot local append-style data so
+  // its local-only entries can be merged back after the blob is applied.
+  let _localExtras = null;
+  if (_pend.profile && !_profileLocalWins) {
+    try {
+      _localExtras = JSON.parse(JSON.stringify({
+        bodyWeightLog, measurementsLog, dailyNotes,
+        customWorkouts: Array.isArray(customWorkouts) ? customWorkouts : [],
+        customHIITs: JSON.parse(localStorage.getItem('maxgainz_custom_hiits') || '[]')
+      }));
+    } catch(e) { _localExtras = null; }
+  }
 
   if (!_profileLocalWins) {
     // Reset profile to defaults before applying the cloud blob — ensures a new
@@ -4472,6 +4550,34 @@ async function cloudLoadAll() {
     });
     applyCustomWeights();
     _dashWeightsOk = true; // safe to publish a dashboard summary: profile/path are hydrated
+  }
+
+  if (_profileRow && !_profileLocalWins) _setProfileSeen(_profileRow.updated_at);
+  if (_pend.profile && !_profileLocalWins) {
+    // Cloud blob applied over unconfirmed local changes — carry local-only
+    // entries over; if any were, keep the profile pending so the merged
+    // result is uploaded by flushPending() below.
+    let carried = 0;
+    if (_localExtras) {
+      const m = _mergeLocalProfileExtras({
+        bodyWeightLog, measurementsLog, dailyNotes, customWorkouts,
+        customHIITs: JSON.parse(localStorage.getItem('maxgainz_custom_hiits') || '[]')
+      }, _localExtras);
+      carried = m.added;
+      if (carried) {
+        bodyWeightLog = m.bodyWeightLog;
+        measurementsLog = m.measurementsLog;
+        dailyNotes = m.dailyNotes;
+        customWorkouts.length = 0; m.customWorkouts.forEach(w => customWorkouts.push(w));
+        localStorage.setItem('maxgainz_custom', JSON.stringify(customWorkouts));
+        localStorage.setItem('maxgainz_custom_hiits', JSON.stringify(m.customHIITs));
+        try { if (typeof customHIITs !== 'undefined') { customHIITs.length = 0; m.customHIITs.forEach(w => customHIITs.push(w)); } } catch(e) {}
+        m.customHIITs.forEach(w => { if (w && !HIIT.find(h => h.name === w.name)) HIIT.push(w); });
+      }
+    }
+    _pend.profile = carried > 0;
+    if (carried) _profileRev++;
+    _savePending();
   }
 
   // Update local cache from cloud data
@@ -6523,7 +6629,7 @@ function updateSessUI(){
       const exList = document.getElementById('supersetExList');
       exList.innerHTML = group.exerciseIndices.map((idx, pos) => {
         const isCurrentEx = idx === curIdx ? '▶ ' : '   ';
-        return `<div style="font-size:11px;color:var(--text);padding:4px 0;${idx === curIdx ? 'color:var(--accent);font-weight:700;' : ''}">${isCurrentEx}${pos + 1}. ${sessExs[idx].name}</div>`;
+        return `<div style="font-size:11px;color:var(--text);padding:4px 0;${idx === curIdx ? 'color:var(--accent);font-weight:700;' : ''}">${isCurrentEx}${pos + 1}. ${esc(sessExs[idx].name)}</div>`;
       }).join('');
     }
   } else if(supersetInfoDiv){
@@ -8320,7 +8426,7 @@ function renderAmrapCircuit(){
     return `<div style="display:flex;align-items:center;padding:12px 16px;background:var(--surface3);border-radius:10px;margin-bottom:6px;">
       <div style="flex:1;min-width:0;">
         <div style="font-size:15px;font-weight:700;color:var(--text);">${esc(curName)}</div>
-        <div style="font-size:11px;color:var(--accent2);margin-top:2px;">${ex.reps}</div>
+        <div style="font-size:11px;color:var(--accent2);margin-top:2px;">${esc(ex.reps)}</div>
       </div>
       ${swapBtn}
     </div>`;
@@ -8430,8 +8536,8 @@ function renderEmomPreview(){
     return `<div style="display:flex;align-items:center;padding:12px 16px;background:var(--surface3);border-radius:10px;margin-bottom:6px;">
       <div style="flex:1;min-width:0;">
         <div style="font-size:15px;font-weight:700;color:var(--text);">${esc(curName)}</div>
-        ${ex.emomNote ? `<div style="font-size:11px;color:var(--text2);margin-top:2px;">${ex.emomNote}</div>` : ''}
-        <div style="font-size:11px;color:var(--orange);margin-top:2px;">${ex.reps}</div>
+        ${ex.emomNote ? `<div style="font-size:11px;color:var(--text2);margin-top:2px;">${esc(ex.emomNote)}</div>` : ''}
+        <div style="font-size:11px;color:var(--orange);margin-top:2px;">${esc(ex.reps)}</div>
       </div>
       ${swapBtn}
     </div>`;
@@ -9081,8 +9187,8 @@ function renderBubbles(ex){
     const isDone=done.includes(i), isCur=!isDone&&i===done.length, lr=reps[i], sw_=sw[i];
     return`<div class="set-bub ${isDone?'done':''} ${isCur?'cur':''}" data-set-idx="${i}" onclick="openRepInput(${i})">
       <span class="sn">SET ${i+1}</span>
-      <span class="${isDone&&lr?'rv':'sr'}">${isDone&&lr?lr+'r':isDone?'✓':ex.reps}</span>
-      ${isDone&&sw_?`<span class="set-wt-badge">${sw_}kg</span>`:''}
+      <span class="${isDone&&lr?'rv':'sr'}">${isDone&&lr?esc(lr)+'r':isDone?'✓':esc(ex.reps)}</span>
+      ${isDone&&sw_?`<span class="set-wt-badge">${esc(sw_)}kg</span>`:''}
     </div>`;
   }).join('');
 }
@@ -10757,7 +10863,7 @@ function renderSupersetBuilder(){
     selectedList.innerHTML = supersetBuilder.exercises.map((idx, pos) => `
       <div style="display:flex;align-items:center;gap:8px;padding:10px;background:var(--surface);border-radius:8px;border-left:3px solid var(--accent);">
         <div style="width:26px;height:26px;border-radius:50%;background:var(--accent);color:#000;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;">${pos + 1}</div>
-        <div style="flex:1;font-weight:700;font-size:13px;">${sessExs[idx].name}</div>
+        <div style="flex:1;font-weight:700;font-size:13px;">${esc(sessExs[idx].name)}</div>
         <button onclick="removeSupersetEx(${idx})" style="background:transparent;border:none;color:var(--red);cursor:pointer;font-size:16px;padding:0;width:20px;height:20px;font-weight:700;">✕</button>
       </div>
     `).join('');
@@ -15566,15 +15672,38 @@ function _findEXDBEntry(name){
   if(!lower) return null;
   let dbEx = EXDB.find(e => e.name.toLowerCase() === lower);
   if(!dbEx){
+    // Same exercise spelled singular/plural or with different punctuation
+    // ("Pull-Up" ↔ "Pull-Ups", "Squats" ↔ "Squat", "Dumbbell Flyes" ↔ "Dumbbell Fly").
+    // Parenthesised qualifiers are ignored; an unqualified entry is preferred.
+    const norm = v => String(v || '').toLowerCase().replace(/\([^)]*\)/g, ' ').replace(/[^a-z]/g, '');
+    const nq = norm(lower);
+    const same = (a, b) => a === b || a + 's' === b || b + 's' === a || a + 'es' === b || b + 'es' === a;
+    if(nq){
+      const hits = EXDB.filter(e => same(norm(e.name), nq))
+        .sort((a, b) => (a.name.includes('(') - b.name.includes('(')) || (a.name.length - b.name.length));
+      if(hits.length) return hits[0];
+    }
+  }
+  if(!dbEx){
     const stem = _exStem(lower);
-    if(!stem) return null;
     const bare = lower.trim().split(/\s+/).length === 1;
     const firstTwo = lower.split(' ').slice(0,2).join(' ');
+    if(!stem){
+      // No recognised movement word: only accept an entry that has none either
+      // (so a pattern-less name can never borrow a different lift's cues).
+      if(bare) return null;
+      return EXDB.find(e => {
+        const en = e.name.toLowerCase();
+        return _exStem(en) === null && (en.includes(firstTwo) || lower.includes(en.split(' ').slice(0,2).join(' ')));
+      }) || null;
+    }
     const cands = EXDB.filter(e => {
       const en = e.name.toLowerCase();
       if(!(en.includes(firstTwo) || lower.includes(en.split(' ').slice(0,2).join(' ')))) return false;
       if(_exStem(en) !== stem) return false;
-      if(bare && !/^(kettlebell|dumbbell|barbell|cable|kb|db) \S+$/.test(en)) return false;
+      // A bare name ("Clean") may only gain a free-weight implement; never
+      // "cable", which changes the movement ("Crunch" ≠ "Cable Crunch").
+      if(bare && !/^(kettlebell|dumbbell|barbell|kb|db) \S+$/.test(en)) return false;
       return true;
     });
     // Prefer the most specific entry whose full name appears in the query
@@ -17254,14 +17383,14 @@ function renderWeekInsights(){
   if(prCandidates.length === 1){
     const p = prCandidates[0];
     insights.push({
-      text: `🎯 ${p.name} PR window — 3 sessions of progress (${p.from}kg → ${p.to}kg). Try a top single this week.`,
+      text: `🎯 ${esc(p.name)} PR window — 3 sessions of progress (${p.from}kg → ${p.to}kg). Try a top single this week.`,
       target: 'strength',
       liftKey: _LIFT_CHART_KEY[p.name] || null
     });
   } else if(prCandidates.length >= 2){
     // Sort by recency × gain so the most relevant lifts lead the list
     prCandidates.sort((a,b) => (b.gain - a.gain) || (b.ts - a.ts));
-    const names = prCandidates.slice(0, 4).map(p => p.name);
+    const names = prCandidates.slice(0, 4).map(p => esc(p.name)); // insight text is rendered as HTML
     const more  = prCandidates.length > 4 ? ` + ${prCandidates.length - 4} more` : '';
     insights.push({
       text: `🎯 ${prCandidates.length} lifts in PR window — ${names.join(', ')}${more}. Pick one and test a top single.`,
@@ -24186,6 +24315,7 @@ function authLogout(){
   localStorage.removeItem(PENDING_KEY);
   localStorage.removeItem(LAST_SYNC_KEY);
   localStorage.removeItem(HYDRATED_KEY);
+  localStorage.removeItem(PROFILE_SEEN_KEY);
 
   // ── Clear auth tokens ──
   saveAuthState(null, null);
@@ -24293,7 +24423,10 @@ function updateCloudStatus(){
     toggleBtn.textContent = 'Sign Out';
     toggleBtn.style.background = 'var(--red)';
     toggleBtn.onclick = function() {
-      if(confirm('Sign out of your account?')){
+      const _unsynced = (typeof _pendingCount === 'function') ? _pendingCount() : 0;
+      if(confirm(_unsynced > 0
+        ? 'You have ' + _unsynced + ' change' + (_unsynced === 1 ? '' : 's') + ' saved only on this device that have not synced yet.\n\nSigning out now will permanently discard ' + (_unsynced === 1 ? 'it' : 'them') + '. Sign out anyway?'
+        : 'Sign out of your account?')){
         authLogout();
       }
     };

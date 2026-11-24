@@ -931,6 +931,7 @@ JSC = '/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Help
 
 SYNC_FUNCS = ['_emptyPending', '_normalisePending', '_P', '_savePending', '_unsyncedSessionCount',
               '_countPending', '_pendingCount', '_isHydrated', '_markSynced', '_lastSyncedAt',
+              '_setProfileSeen', '_profileSeenAt', '_mergeLocalProfileExtras',
               '_syncLabel', '_recomputeSyncStatus', '_scheduleRetry', '_uploadSession', 'flushPending',
               'cloudSaveSession', 'cloudDeleteSession', 'cloudSaveWeight', 'cloudSaveProfile',
               'cloudLoadAll', '_mergeSessions', '_validateSession', '_sessionKey',
@@ -983,7 +984,7 @@ SYNC_SCENARIOS = {
     'un-hydrated device never uploads the profile blob (may be defaults)': r'''
       __net = () => [];
       const r = await cloudSaveProfile();
-      return r === null && posts(/custom_weights/) === 0 && _P().profile === true && last() !== 'synced';
+      return r === false && posts(/custom_weights/) === 0 && _P().profile === true && last() !== 'synced';
     ''',
     'weight write failure queues, later success clears': r'''
       __net = () => null;
@@ -1016,9 +1017,10 @@ SYNC_SCENARIOS = {
     ''',
     'pending local profile wins over the cloud blob on a hydrated device, then uploads': r'''
       localStorage.setItem(HYDRATED_KEY, 'userA');
+      _setProfileSeen('2026-11-20T10:00:00.000Z');              // this device last saw the current cloud blob
       __net = () => null; await cloudSaveProfile();            // fails → pending
       const blob = JSON.stringify({ userProfile: { firstName: 'Cloud' } });
-      __net = (p, o) => o.method === 'POST' ? [] : (/^sessions/.test(p) ? [] : [{ exercise_name: '__profile__', notes: blob }]);
+      __net = (p, o) => o.method === 'POST' ? [] : (/^sessions/.test(p) ? [] : [{ exercise_name: '__profile__', notes: blob, updated_at: '2026-11-20T10:00:00.000Z' }]);
       const ok = await cloudLoadAll();
       if (_syncInFlight) await _syncInFlight;
       const up = __calls.filter(c => c.method === 'POST' && /custom_weights/.test(c.path)).pop();
@@ -1032,6 +1034,49 @@ SYNC_SCENARIOS = {
       const ok = await cloudLoadAll();
       if (_syncInFlight) await _syncInFlight;
       return ok && userProfile.firstName === 'Cloud' && _P().profile === false;
+    ''',
+    'newer cloud blob from another device wins, local-only entries are carried over and re-uploaded': r'''
+      localStorage.setItem(HYDRATED_KEY, 'userA');
+      _setProfileSeen('2026-11-20T10:00:00.000Z');
+      bodyWeightLog = [{ date: '2026-11-23', weight: 81 }];
+      __net = () => null; await cloudSaveProfile();             // offline edit → pending
+      const blob = JSON.stringify({ userProfile: { firstName: 'Tablet' }, bodyWeightLog: [{ date: '2026-11-22', weight: 82 }],
+        measurementsLog: [], dailyNotes: { '2026-11-22': 'tablet note' } });
+      __net = (p, o) => o.method === 'POST' ? [] : (/^sessions/.test(p) ? [] : [{ exercise_name: '__profile__', notes: blob, updated_at: '2026-11-22T09:00:00.000Z' }]);
+      const ok = await cloudLoadAll();
+      if (_syncInFlight) await _syncInFlight;
+      const up = __calls.filter(c => c.method === 'POST' && /custom_weights/.test(c.path)).pop();
+      const sent = up ? JSON.parse(JSON.parse(up.body).notes) : {};
+      const dates = (sent.bodyWeightLog || []).map(e => e.date).join(',');
+      return ok && userProfile.firstName === 'Tablet' && dailyNotes['2026-11-22'] === 'tablet note'
+        && bodyWeightLog.length === 2 && dates === '2026-11-22,2026-11-23' && _P().profile === false;
+    ''',
+    'un-hydrated device keeps entries logged before the first load': r'''
+      bodyWeightLog = [{ date: '2026-11-23', weight: 81 }];
+      __net = () => [];
+      const r = await cloudSaveProfile();                       // held: not hydrated
+      const blob = JSON.stringify({ userProfile: { firstName: 'Cloud' }, bodyWeightLog: [{ date: '2026-11-01', weight: 84 }] });
+      __net = (p, o) => o.method === 'POST' ? [] : (/^sessions/.test(p) ? [] : [{ exercise_name: '__profile__', notes: blob, updated_at: '2026-11-01T09:00:00.000Z' }]);
+      await cloudLoadAll();
+      if (_syncInFlight) await _syncInFlight;
+      return r === false && userProfile.firstName === 'Cloud' && bodyWeightLog.some(e => e.date === '2026-11-23') && bodyWeightLog.some(e => e.date === '2026-11-01');
+    ''',
+    'lost-response session insert is adopted on reload, never inserted twice': r'''
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: 'userA' }));
+      __net = () => [];
+      await cloudLoadAll();                                      // page loaded → flag true
+      const s = { date: new Date('2026-11-04T10:00:00Z'), day: 'Push' };
+      completedSessions.push(s);
+      let inserts = 0;
+      __net = (p, o) => { if (o.method === 'POST' && /^sessions/.test(p)) { inserts++; return null; } return []; }; // lands, reply lost
+      await _uploadSession(s);
+      await flushPending();                                      // must NOT blindly re-POST
+      const beforeReload = inserts;
+      __net = (p, o) => { if (o.method === 'POST' && /^sessions/.test(p)) { inserts++; return [{ id: 'dup' }]; }
+        return /^sessions/.test(p) ? [{ id: 'landed', date: '2026-11-04T10:00:00Z', day: 'Push' }] : []; };
+      await cloudLoadAll();
+      if (_syncInFlight) await _syncInFlight;
+      return beforeReload === 1 && inserts === 1 && completedSessions.length === 1 && completedSessions[0].cloud_id === 'landed';
     ''',
     'offline session uploads after load; synced only once confirmed': r'''
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: 'userA' }));
@@ -1113,6 +1158,11 @@ def gate_sync(js):
     lo = extract_async_decl(js, 'authLogout') or ''
     for pat in ['_pending = null', 'removeItem(PENDING_KEY)', 'removeItem(LAST_SYNC_KEY)', 'removeItem(HYDRATED_KEY)']:
         if pat not in lo: problems.append(f'authLogout() does not reset sync queue state ({pat})')
+    ra = extract_async_decl(js, 'refreshAuthToken') or ''
+    if not re.search(r"catch\s*\(\s*\w*\s*\)\s*\{[^{}]*return 'transient'", ra) or "status >= 500" not in ra:
+        problems.append("refreshAuthToken() reports a network failure as a rejected session (no 'transient') — users get told to sign in again, and signing out discards unsynced data")
+    if 'removeItem(PROFILE_SEEN_KEY)' not in lo:
+        problems.append('authLogout() does not reset sync queue state (removeItem(PROFILE_SEEN_KEY))')
     dma = extract_async_decl(js, 'deleteManualActivity') or ''
     if 'cloudDeleteSession' not in dma:
         problems.append('deleteManualActivity() never deletes the cloud copy (activity resurrects on next load)')
@@ -1413,6 +1463,10 @@ if(nm('Dumbbell Bicep Curls') !== 'Dumbbell Bicep Curls') fails.push('Dumbbell B
 if(!/squat/i.test(nm('Goblet Squat') || '')) fails.push('Goblet Squat lost its squat match');
 if(nm('Dumbbell Row') !== 'Dumbbell Rows') fails.push('Dumbbell Row lost its Dumbbell Rows match');
 if(nm('Dumbbell Lunges') !== 'Lunges') fails.push('Dumbbell Lunges lost its Lunges match');
+[['Pull-Up','Pull-Ups'],['Push-Up','Push-Ups'],['Squats','Squat'],['Dumbbell Flyes','Dumbbell Fly'],['Face Pull','Face Pulls'],['Dip','Dips']].forEach(function(p){
+  if(nm(p[0]) !== p[1]) fails.push('singular/plural ' + JSON.stringify(p[0]) + ' should resolve to ' + JSON.stringify(p[1]) + ', got ' + JSON.stringify(nm(p[0])));
+});
+bad("bare 'Crunch' must not borrow cable-machine cues", 'Crunch', /cable/i);
 if(!_hasExerciseGuide('Some Unmapped Move')) fails.push('_hasExerciseGuide false for a non-empty name');
 if(_hasExerciseGuide('')) fails.push('_hasExerciseGuide true for an empty name');
 JSON.stringify({fails: fails, n: all.length, specific: specific});
