@@ -3102,42 +3102,252 @@ def gate_ai_foundation(html, js, core=None, adapter=None, sql=None):
     return True
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Gate 16 — Phase 2 Today coach card
+#   a) pure (JXA): the card is built FROM the real getLiftState decision — pick
+#      order, facts schema (no exercise name leaves the device), deterministic
+#      text, Why lines, pain → fixed message, safe HTML for AI text + names
+#   b) accept/apply/undo (JXA, stubbed session): pre-fills only today's, only
+#      this account's, only before sets are logged; undo restores exactly and
+#      never touches logged sets or a weight the user changed since
+#   c) lints: flag-gated, one AI path, handlers without arguments, escaped
+#      output, hooks wired, no saved-data writes, sign-out scrub
+# ─────────────────────────────────────────────────────────────────────────────
+COACH_PURE = ['esc', 'snapToSteps', 'stepWeight', 'calc1RM', 'parseRepTarget', '_leanFor', 'getLiftState',
+              '_coachPick', '_coachPrefill', '_coachChangesWeight', '_coachSlotFor', '_coachFacts', '_coachText', '_coachWhyLines', '_coachAiHtml', '_coachAcceptFor']
+COACH_CONSTS = ['COACH_PRIORITY', 'COACH_PAIN_TEXT', 'COACH_ACCEPT_KEY']
+
+COACH_PURE_ASSERTIONS = r"""
+var fails = [];
+function eq(label, got, want){ if(JSON.stringify(got) !== JSON.stringify(want)) fails.push(label + ' — got ' + JSON.stringify(got) + ', want ' + JSON.stringify(want)); }
+function ok(label, cond){ if(!cond) fails.push(label); }
+var STEPS = [60,62.5,65,67.5,70,72.5,75,77.5,80,82.5,85,87.5,90,92.5,95,97.5,100,102.5,105];
+var NOW = Date.UTC(2026,10,24,12,0,0); function days(n){ return NOW - n*864e5; }
+function cand(idx, name, planned, repRange, hist, extra, rpe){
+  var st = getLiftState({ plannedWeight:planned, repRange:repRange, bw:false, timed:false, steps:STEPS, nowMs:NOW, history:hist, thisSession:null, rpeThisSession:rpe == null ? null : rpe, blockWeek:null });
+  var last = hist[hist.length - 1];
+  return Object.assign({ idx:idx, name:name, planned:planned, prefill:last.weight, sets:3, reps:repRange, st:st, unit:'kg',
+    last:{ daysAgo:Math.round((NOW - last.date)/864e5), weight:last.weight, reps:last.reps, rpe:8 }, note:null, pain:false }, extra || {});
+}
+// engine-backed candidates
+var inc = cand(1, 'Squat', 100, '5', [{date:days(3), weight:100, reps:[5,5,5]}]);
+var del = cand(2, 'Deadlift', 100, '5', [{date:days(40), weight:100, reps:[5,5,5]}]);
+var stall = cand(0, 'Row', 80, '8', [{date:days(9), weight:80, reps:[7,7,6]}, {date:days(6), weight:80, reps:[7,7,7]}, {date:days(3), weight:80, reps:[7,6,7]}]);
+var onTrack = cand(0, 'Press', 60, '4–6', [{date:days(3), weight:60, reps:[5,5,5]}]);
+eq('engine says on track (fallthrough)', onTrack.st.rule, 'fallthrough');
+var first = { idx:0, name:'New', st:{ rule:'first', action:'hold' } };
+eq('engine says increase', [inc.st.action, inc.st.rule, inc.st.suggested], ['increase', 'A_topRange', 102.5]);
+eq('engine says deload after 40 days', del.st.action, 'deload');
+eq('pick: deload beats increase beats stall', _coachPick([stall, inc, del]).name, 'Deadlift');
+eq('pick: increase beats stall', _coachPick([stall, inc]).name, 'Squat');
+eq('pick: first-time / on-track never get a card', _coachPick([first, onTrack]), null);
+eq('pick: empty → no card', _coachPick([]), null);
+var inc2 = cand(0, 'Bench', 80, '5', [{date:days(3), weight:80, reps:[5,5,5]}]);
+eq('pick: ties go to session order', _coachPick([inc, inc2]).name, 'Bench');
+ok('Accept changes weight for an increase', _coachChangesWeight(inc) === true);
+ok('hold/plateau → Got it, not a weight change', _coachChangesWeight(stall) === false);
+ok('pain → never a weight change', _coachChangesWeight(Object.assign({}, inc, { pain:true })) === false);
+ok('suggested equals what the session pre-fills anyway → not a change', _coachChangesWeight(Object.assign({}, inc, { prefill:102.5 })) === false);
+ok('programme weight already bumped, session locks last weight → still Accept', _coachChangesWeight(Object.assign({}, inc, { planned:102.5, prefill:100 })) === true);
+eq('prefill mirrors the session: same rep target → last weight', _coachPrefill(105, {status:'normal', lastWeight:100, repAdjustedWeight:null}, STEPS), 100);
+eq('prefill: rep-adjusted → snapped', _coachPrefill(105, {status:'normal', lastWeight:100, repAdjustedWeight:93.1}, STEPS), 92.5);
+eq('prefill: deload from last weight, snapped', _coachPrefill(105, {status:'deload', lastWeight:100, deloadPct:0.15}, STEPS), 85);
+eq('prefill: first time → programme weight', _coachPrefill(105, {status:'first'}, STEPS), 105);
+var delP = Object.assign({}, del, { prefill:_coachPrefill(100, {status:'deload', lastWeight:100, deloadPct:0.15}, STEPS) });
+ok('deload the session presets anyway → Got it, not a redundant Accept', delP.prefill === del.st.suggested && _coachChangesWeight(delP) === false);
+var hot = cand(0, 'Squat', 100, '5', [{date:days(3), weight:100, reps:[5,5,5]}], null, 10);
+eq('engine downgrades an increase at RPE 10', [hot.st.rule, hot.st.action], ['A_topRange', 'hold']);
+eq('downgraded increase ranks as a hold (below a plateau)', _coachPick([hot, stall]).name, 'Row');
+ok('why for a downgraded increase follows the hold, not "next step is due"', /^The reps were there, but /.test(_coachWhyLines(hot)[2]) && !_coachWhyLines(hot).some(function(l){ return /is due/.test(l); }));
+eq('a pain note on ANY of today\'s lifts wins the card', _coachPick([inc, Object.assign({}, stall, { pain:true })]).name, 'Row');
+eq('slot: same day + position', _coachSlotFor({sessDay:'Upper', idx:1, exName:'Squat'}, 'Upper', [{name:'Squat'}, {name:'Squat'}]), 1);
+eq('slot: other workout day → none', _coachSlotFor({sessDay:'Upper', idx:0, exName:'Squat'}, 'Lower', [{name:'Squat'}]), -1);
+eq('slot: moved but unique name → found', _coachSlotFor({sessDay:'Upper', idx:0, exName:'Squat'}, 'Upper', [{name:'Bench'}, {name:'Squat'}]), 1);
+eq('slot: moved and ambiguous → none', _coachSlotFor({sessDay:'Upper', idx:0, exName:'Squat'}, 'Upper', [{name:'Bench'}, {name:'Squat'}, {name:'Squat'}]), -1);
+
+// facts: schema-valid, numbers straight from the engine, no names
+var F = _coachFacts(inc);
+eq('facts validate against the server schema', _aiValidateFacts('coach', F), '');
+eq('facts carry the engine decision', [F.decision.from, F.decision.to, F.decision.action, F.decision.rule], [inc.st.current, inc.st.suggested, 'increase', 'A_topRange']);
+eq('increase carries the RPE guard', F.guard, { rpeCeiling:9, fallbackWeight:100 });
+eq('deload has no guard', _coachFacts(del).guard, { rpeCeiling:null, fallbackWeight:null });
+ok('the exercise name never leaves the device', JSON.stringify(_coachFacts(Object.assign({}, inc, { name:'Secret Custom Lift' }))).indexOf('Secret') === -1 && F.ex === '{EX}');
+eq('pain → no facts (nothing sent)', _coachFacts(Object.assign({}, inc, { pain:true })), null);
+eq('a note with markup is dropped, facts still sent', _coachFacts(Object.assign({}, inc, { note:'<b>easy</b>' })).note, null);
+eq('a plain note is carried (consent decides later)', _coachFacts(Object.assign({}, inc, { note:'felt easy' })).note, 'felt easy');
+eq('untrackable rep scheme → no facts', _coachFacts(Object.assign({}, inc, { reps:'AMRAP' })), null);
+
+// deterministic text + why
+var T = _coachText(inc);
+ok('own text names the lift and the engine reason', T.indexOf('Squat: ') === 0 && T.indexOf(inc.st.reason) !== -1);
+ok('increase text carries the RPE guard', /stay at 100 kg/.test(T));
+eq('pain → the fixed non-diagnostic message', _coachText(Object.assign({}, inc, { pain:true })), COACH_PAIN_TEXT);
+ok('fixed message promises no programme change', /hasn't been changed/.test(COACH_PAIN_TEXT) && !/stretch|ice|rest it|physio|injur/i.test(COACH_PAIN_TEXT));
+var W = _coachWhyLines(inc);
+ok('why: last time with numbers', /100 kg × 5\/5\/5 at RPE 8/.test(W[0]) && /3 days ago/.test(W[0]));
+ok('why: names the rule outcome', W.some(function(l){ return /102\.5 kg/.test(l); }));
+ok('why: ends with the reversibility promise', /Nothing changes until you accept/.test(W[W.length - 1]));
+
+// safe HTML for model text and names
+var bad = '<img src=x onerror=alert(1)>';
+var H = _coachAiHtml('Try {EX} at 102.5 kg <script>x</script>', bad);
+ok('model text and exercise name are escaped', H.indexOf('<img') === -1 && H.indexOf('<script') === -1 && H.indexOf('&lt;img') !== -1 && H.indexOf('<strong>') !== -1);
+
+// acceptance record validity
+var R = { uid:'u1', day:'2026-11-24', sessDay:'Upper', idx:1, exName:'Squat', from:100, to:102.5 };
+ok('acceptance valid for same user + day', !!_coachAcceptFor(R, 'u1', '2026-11-24'));
+eq('another account\'s acceptance ignored', _coachAcceptFor(R, 'u2', '2026-11-24'), null);
+eq('yesterday\'s acceptance ignored', _coachAcceptFor(R, 'u1', '2026-11-25'), null);
+eq('broken weight ignored', _coachAcceptFor(Object.assign({}, R, { to:'102.5' }), 'u1', '2026-11-24'), null);
+JSON.stringify(fails);
+"""
+
+COACH_APPLY_PRELUDE = r"""
+var __ls = {}; var localStorage = { getItem:function(k){ return k in __ls ? __ls[k] : null; }, setItem:function(k, v){ __ls[k] = String(v); }, removeItem:function(k){ delete __ls[k]; } };
+var document = { getElementById:function(){ return null; }, querySelector:function(){ return null; } };
+var window = {}; var __ui = 0, __today = 0, __events = [], __metrics = [];
+function updateSessUI(){ __ui++; } function renderToday(){ __today++; } function showToast(){}
+function _aiUid(){ return 'u1'; } function _aiDayKey(){ return '2026-11-24'; }
+function _aiAuditEvent(id, e){ __events.push([id, e]); return true; } function _aiMetricBump(n){ __metrics.push(n); }
+function getEquipType(){ return 'barbell'; }
+var __flag = true, __running = true; function _aiFlagOn(){ return __flag; } function _sessionRunning(){ return __running; }
+var sessExs, setsDone, setWeights, curIdx = 0, sessDay = 'Upper';
+function reset(){ sessExs = [{name:'Bench', weight:80}, {name:'Squat', weight:100, _userApplied:false}]; setsDone = {}; setWeights = {}; window._coachApplied = null; __ls = {}; __events = []; __metrics = []; __flag = true; __running = true; sessDay = 'Upper'; }
+function accept(o){ __ls[COACH_ACCEPT_KEY] = JSON.stringify(Object.assign({ uid:'u1', day:'2026-11-24', sessDay:'Upper', idx:1, exName:'Squat', from:100, to:102.5, auditId:'a_1' }, o || {})); }
+var fails = [];
+function ok(label, cond){ if(!cond) fails.push(label); }
+"""
+COACH_APPLY_ASSERTIONS = r"""
+reset(); accept(); _coachApplyAccepted();
+ok('session start pre-fills the accepted weight as a user-applied weight', sessExs[1].weight === 102.5 && sessExs[1]._userApplied === true && __ui === 1);
+ok('acceptance is consumed once applied', !__ls[COACH_ACCEPT_KEY]);
+ok('other exercises untouched', sessExs[0].weight === 80 && !sessExs[0]._userApplied);
+coachUndo();
+ok('undo restores the planned weight and flag exactly', sessExs[1].weight === 100 && sessExs[1]._userApplied === false && window._coachApplied === null);
+ok('undo is audited', __events.some(function(e){ return e[0] === 'a_1' && e[1] === 'undone'; }) && __metrics.indexOf('coach_undone') !== -1);
+reset(); accept(); setsDone[1] = [0]; _coachApplyAccepted();
+ok('never pre-fills an exercise that already has logged sets', sessExs[1].weight === 100 && !!__ls[COACH_ACCEPT_KEY]);
+reset(); accept({ uid:'u2' }); _coachApplyAccepted();
+ok('another account\'s acceptance never applies', sessExs[1].weight === 100);
+reset(); accept({ day:'2026-11-23' }); _coachApplyAccepted();
+ok('yesterday\'s acceptance never applies', sessExs[1].weight === 100);
+reset(); accept({ exName:'Deadlift' }); _coachApplyAccepted();
+ok('acceptance for an exercise not in this session does nothing', sessExs[0].weight === 80 && sessExs[1].weight === 100);
+reset(); accept(); _coachApplyAccepted(); setsDone[1] = [0]; setWeights[1] = {0:102.5}; sessExs[1].weight = 105; coachUndo();
+ok('undo after the user changed the weight keeps the user\'s weight', sessExs[1].weight === 105);
+ok('undo never touches logged sets', JSON.stringify(setWeights) === '{"1":{"0":102.5}}' && JSON.stringify(setsDone) === '{"1":[0]}');
+reset(); __running = false; var t0 = __today; accept(); coachUndo();
+ok('undo before the session forgets the acceptance and re-renders Today', !__ls[COACH_ACCEPT_KEY] && __today === t0 + 1);
+reset(); __flag = false; accept(); _coachApplyAccepted();
+ok('rollout flag off: nothing pre-filled, stored acceptance dropped', sessExs[1].weight === 100 && !__ls[COACH_ACCEPT_KEY]);
+reset(); sessDay = 'Lower'; accept(); _coachApplyAccepted();
+ok('acceptance for another workout day never applies', sessExs[1].weight === 100);
+reset(); sessExs = [{name:'Squat', weight:60}, {name:'Squat', weight:100}]; accept(); _coachApplyAccepted();
+ok('duplicate names: the accepted slot, not the first match', sessExs[0].weight === 60 && sessExs[1].weight === 102.5);
+reset(); accept(); _coachApplyAccepted(); accept({ to:105 }); _coachApplyAccepted(); coachUndo();
+ok('a second Accept never overwrites the true original; undo restores it', sessExs[1].weight === 100);
+reset(); accept(); _coachApplyAccepted(); __running = false; accept(); var w = sessExs[1].weight; coachUndo();
+ok('stale applied state from a cancelled session: undo clears the new acceptance, not the dead session', !__ls[COACH_ACCEPT_KEY] && sessExs[1].weight === w && window._coachApplied === null);
+reset(); accept(); _coachApplyAccepted(); sessExs[1].weight = 107.5; __events = []; coachUndo();
+ok('undo that restores nothing is not recorded as undone', !__events.some(function(e){ return e[1] === 'undone'; }) && sessExs[1].weight === 107.5);
+JSON.stringify(fails);
+"""
+
+def gate_coach_card(html, js):
+    problems = []
+    pieces = []
+    for c in COACH_CONSTS + ['AI_CONSENT_VERSION']:
+        line = extract_const_line(js, c)
+        if not line: problems.append(f'const {c} not found')
+        else: pieces.append(line)
+    for fn in AI_SHARED + COACH_PURE:
+        src = extract_decl(js, fn)
+        if not src: problems.append(f'function {fn} not found')
+        else: pieces.append(src)
+    if not problems:
+        out, _ = run_jxa('\n'.join(pieces) + '\n' + COACH_PURE_ASSERTIONS)
+        try: problems += json.loads(out)
+        except Exception: problems.append('coach pure runner errored: ' + out[:300])
+        glue = '\n'.join(extract_decl(js, f) or '' for f in ['_coachAcceptFor', '_coachSlotFor', '_coachAcceptGet', '_coachApplyAccepted', 'coachUndo'])
+        out, _ = run_jxa(extract_const_line(js, 'COACH_ACCEPT_KEY') + '\n' + glue + '\n' + COACH_APPLY_PRELUDE + COACH_APPLY_ASSERTIONS)
+        try: problems += json.loads(out)
+        except Exception: problems.append('coach accept/undo runner errored: ' + out[:300])
+    lint = []
+    cur = extract_decl(js, '_coachCurrent') or ''
+    if "if(!_aiFlagOn('coach')) return null;" not in cur.split('\n')[1]: lint.append('_coachCurrent must return nothing unless the coach rollout flag is on (first line)')
+    rw = extract_async_decl(js, '_coachRequestWording') or ''
+    if "await _aiCall('coach', facts, 'coach')" not in rw or 'fetch(' in rw: lint.append('coach wording must go through _aiCall only')
+    if not re.search(r'c\.pain\s*\?\s*\{ ok:false, reason:\'pain\'', rw): lint.append('a pain note must never reach _aiCall')
+    rc = extract_decl(js, '_renderCoachCardInner') or ''
+    if "try { return _renderCoachCardInner(); } catch(e){ return ''; }" not in (extract_decl(js, '_renderCoachCard') or ''):
+        lint.append('_renderCoachCard must never throw into renderToday')
+    for h in re.findall(r'\son[a-z]+="([^"]*)"', rc):
+        if not re.fullmatch(r'coach(Accept|Adjust|Why|Undo)\(\)', h): lint.append(f'coach card handler takes data: {h}')
+    # every ${ (nested ones included) must start with esc( or a known-safe name/ternary
+    safe = ('esc(', 'body}', 'actions}', 'why}', "cache.text ? '<span", "c.pain ? '' :", "changes ? 'Accept ' + esc(")
+    for m in re.finditer(r'\$\{', rc):
+        nxt = rc[m.end():m.end() + 40].lstrip()
+        if not nxt.startswith(safe): lint.append(f'_renderCoachCard interpolates without esc(): ${{{nxt[:40]}')
+    if "cache.text ? _coachAiHtml(cache.text, c.name) : esc(_coachText(c))" not in rc: lint.append('card body must be escaped own text or _coachAiHtml')
+    for fn in ['coachAccept', 'coachAdjust', 'coachUndo', '_coachApplyAccepted']:
+        src = extract_async_decl(js, fn) or ''
+        for bad in ['completedSessions', 'customWeights', 'cloudSave', 'saveData', 'repsLogged', 'markSet(']:
+            if bad in src: lint.append(f'{fn} touches saved training data ({bad}) — Accept/Undo may only pre-fill today\'s weight')
+    adj = extract_decl(js, 'coachAdjust') or ''
+    if not re.search(r'if\(_sessionRunning\(\)\) resumeSession\(\);\s*else if\(c\.plan\.path\)', adj): lint.append('Adjust must resume a running workout, never restart it (restarting wipes logged sets)')
+    leg = extract_decl(js, 'renderTodayLegacy') or ''; pth = extract_decl(js, 'renderTodayWithPath') or ''
+    if '_renderCoachCard()' not in leg or '_renderCoachCard()' not in pth: lint.append('coach card not rendered on both Today views')
+    if '_renderCoachApplied()' not in (extract_decl(js, 'updateSessUI') or ''): lint.append('session does not show the applied coach weight / Undo')
+    if not re.search(r"bus\.on\('session:started', \(\) => \{ try \{ window\._coachApplied = null; _coachApplyAccepted\(\); \} catch\(e\)\{\} \}\);", js):
+        lint.append('acceptance is not applied on session:started')
+    if 'removeItem(COACH_ACCEPT_KEY)' not in (extract_async_decl(js, 'authLogout') or ''): lint.append('authLogout() keeps a coach acceptance for the next account')
+    if not re.search(r'<div id="coachApplied" class="coach-applied" role="status" hidden></div>', html): lint.append('#coachApplied status line missing from the session card')
+    problems += lint
+    for f in problems: print('  ✗ ' + f)
+    if problems: return False
+    print('  ✓ card built from the real engine: pick order, schema-valid name-free facts, own text + Why, pain → fixed message, escaped AI text')
+    print('  ✓ Accept pre-fills only this account\'s, today\'s, unlogged exercise; Undo restores exactly; flag-gated, one AI path, no saved-data writes')
+    return True
+
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/15] parse')
+    print('[1/16] parse')
     p = gate_parse(js)
-    print('[2/15] invariants')
+    print('[2/16] invariants')
     inv = gate_invariants(js)
-    print('[3/15] video map')
+    print('[3/16] video map')
     vm = gate_videomap(js)
-    print('[4/15] inline handler wiring')
+    print('[4/16] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/15] auth log hygiene')
+    print('[5/16] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/15] sign-out scrub')
+    print('[6/16] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/15] safe rendering of user text')
+    print('[7/16] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/15] sync honesty')
+    print('[8/16] sync honesty')
     sy = gate_sync(js)
-    print('[9/15] media fallback + reminder copy')
+    print('[9/16] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/15] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/16] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/15] core-journey accessibility (session + dialogs)')
+    print('[11/16] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/15] Start today (first-use flow) + shortened Path wizard')
+    print('[12/16] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/15] simplified navigation (flagged)')
+    print('[13/16] simplified navigation (flagged)')
     nv = gate_nav_v2(html, js)
-    print('[14/15] Progress weekly briefing')
+    print('[14/16] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/15] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/16] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
+    print('[16/16] Phase 2 Today coach card (engine-built, undoable)')
+    cc = gate_coach_card(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 

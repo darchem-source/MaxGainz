@@ -576,6 +576,18 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
   .section-label { padding: 8px 20px 4px; }
 }
 
+.coach-card{margin:12px 16px 0;background:var(--surface2);border:1px solid rgba(0,212,255,0.35);border-radius:16px;padding:14px 16px;}
+.coach-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;}
+.coach-title{font-size:11px;font-weight:800;color:var(--accent2);text-transform:uppercase;letter-spacing:1.5px;margin:0;}
+.coach-tag{font-size:10px;font-weight:700;color:var(--text2);background:var(--surface3);border-radius:6px;padding:2px 6px;white-space:nowrap;}
+.coach-text{font-size:14px;line-height:1.45;color:var(--text);margin:0 0 10px;}
+.coach-text strong{color:var(--accent2);}
+.coach-actions{display:flex;gap:8px;flex-wrap:wrap;}
+.coach-btn{min-height:44px;padding:0 14px;border-radius:10px;border:0.5px solid var(--border);background:var(--surface3);color:var(--text);font-size:13px;font-weight:700;cursor:pointer;}
+.coach-primary{background:var(--accent);color:#000;border-color:var(--accent);}
+.coach-done{font-size:13px;font-weight:700;color:var(--green);margin:0 0 8px;}
+.coach-why{margin:10px 0 0;padding-left:18px;font-size:12px;color:var(--text2);line-height:1.5;}
+.coach-applied:not([hidden]){display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 0;padding:6px 6px 6px 12px;border-radius:10px;background:rgba(200,255,0,0.08);border:0.5px solid rgba(200,255,0,0.35);font-size:12px;color:var(--text);}
 </style>
 </head>
 <body>
@@ -711,6 +723,8 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
           <div class="curr-name" id="currName" style="flex:1;"></div>
         </div>
         <div class="curr-meta" id="currMeta"></div>
+        <!-- Phase 2: coach weight accepted on Today (undoable) -->
+        <div id="coachApplied" class="coach-applied" role="status" hidden></div>
         <!-- Last time reference -->
         <div id="lastTimeRef" style="display:none;margin:8px 0 12px;padding:10px 12px;background:rgba(0,212,255,0.08);border:0.5px solid rgba(0,212,255,0.25);border-radius:10px;"></div>
         <!-- Exercise note display -->
@@ -6446,6 +6460,381 @@ function _aiHealthHtml(){
 }
 
 
+// ── Phase 2 slice 2: Today coach card ──────────────────────────────────────
+// One recommendation per session, chosen and computed by the EXISTING engine
+// (getLiftState — the same call as the in-session cue). AI only rewords it.
+// Accept pre-fills today's weight for that exercise (exactly like the
+// in-session Apply button) and is undoable; nothing saved changes until sets
+// are logged. Rollout flag: maxgainz_ai_coach (with maxgainz_ai_v1).
+const COACH_ACCEPT_KEY = 'maxgainz_coach_accept_v1';
+const COACH_PRIORITY = { G_gapDeload:0, A_topRange:1, B_avgOverTop:1, C_stalled:2, D_mixed:3, H_repShift:4, E_belowLo:5, F_alreadyBumped:6 };
+const COACH_PAIN_TEXT = 'Pain or discomfort isn\'t something this app can assess. If something hurts, stop that exercise and consider asking a qualified professional. Your programme hasn\'t been changed.';
+
+// Pure: the one candidate worth a card (null = no card). Untracked, first-time
+// and generic "on track" holds never get one; ties go to session order.
+function _coachPick(cands){
+  const key = c => {
+    const st = c.st || {};
+    if(st.action === 'deload') return 0;
+    if(st.action === 'increase') return 1;
+    // An increase the engine downgraded to a hold (high RPE, rusty, recovery week) is a hold.
+    if(st.rule === 'A_topRange' || st.rule === 'B_avgOverTop') return 5;
+    return Object.prototype.hasOwnProperty.call(COACH_PRIORITY, st.rule) ? COACH_PRIORITY[st.rule] : -1;
+  };
+  const ok = (cands || []).filter(c => c && c.st && ['first', 'untracked', 'fallthrough'].indexOf(c.st.rule) === -1 && key(c) >= 0);
+  // A note mentioning pain on ANY of today's lifts wins: fixed message, no change.
+  const pain = (cands || []).find(c => c && c.pain);
+  if(pain) return pain;
+  ok.sort((a, b) => key(a) - key(b) || a.idx - b.idx);
+  return ok[0] || null;
+}
+// Pure: the weight the session will pre-fill on its own (mirrors updateSessUI:
+// rep-adjusted, last session's, or the deload preset; programme weight first time).
+function _coachPrefill(planned, edit, steps){
+  const snap = w => (Array.isArray(steps) && steps.length) ? snapToSteps(w, steps) : w;
+  if(!edit) return planned;
+  if(edit.status === 'normal') return edit.repAdjustedWeight ? snap(edit.repAdjustedWeight) : (edit.lastWeight || planned);
+  if(edit.status === 'deload'){
+    if(edit.lastWeight > 0) return snap(edit.lastWeight * (1 - edit.deloadPct));
+    if(edit.suggestedWeight) return snap(edit.suggestedWeight);
+  }
+  return planned;
+}
+// Pure: does Accept change today's weight (vs. a "Got it" acknowledgement)?
+// Compared with what the session would pre-fill anyway, not the programme weight.
+function _coachChangesWeight(c){
+  if(!c) return false;
+  const base = typeof c.prefill === 'number' ? c.prefill : c.planned;
+  return !c.pain && (c.st.action === 'increase' || c.st.action === 'deload')
+    && typeof c.st.suggested === 'number' && c.st.suggested > 0 && c.st.suggested !== base;
+}
+// Pure: the structured facts for the AI (schema in core.mjs). null when this
+// candidate can't be described within the schema → deterministic text only.
+function _coachFacts(c){
+  if(!c || c.pain) return null;
+  const st = c.st, L = c.last || {};
+  const reps = (Array.isArray(L.reps) ? L.reps : []).map(r => parseInt(r) || 0).filter(r => r > 0).slice(0, 10);
+  const rpe = typeof L.rpe === 'number' && isFinite(L.rpe) ? Math.round(L.rpe * 2) / 2 : null;
+  const inc = st.action === 'increase';
+  const f = {
+    ex: '{EX}', unit: c.unit === 'kg/hand' ? 'kg/hand' : 'kg',
+    last: { daysAgo: Math.max(0, Math.round(Number(L.daysAgo) || 0)), weight: Number(L.weight) || 0, reps, rpe: rpe >= 1 ? rpe : null },
+    target: { sets: Number(c.sets) || 0, reps: String(c.reps || '').replace(/\s/g, '') },
+    decision: { action: st.action, rule: st.rule, from: st.current, to: st.suggested, confidence: st.confidence },
+    guard: { rpeCeiling: inc ? 9 : null, fallbackWeight: inc ? st.current : null },
+    note: typeof c.note === 'string' && c.note.trim() ? c.note.trim().slice(0, 140) : null
+  };
+  if(!_aiValidateFacts('coach', f)) return f;
+  if(f.note !== null){ f.note = null; if(!_aiValidateFacts('coach', f)) return f; }
+  return null;
+}
+// Pure: the app's own wording (shown first, and whenever AI is off/failing).
+function _coachText(c){
+  if(!c) return '';
+  if(c.pain) return COACH_PAIN_TEXT;
+  const st = c.st;
+  let t = c.name + ': ' + String(st.reason || '').trim();
+  if(st.action === 'increase') t += ' If it feels harder than RPE 9, stay at ' + st.current + ' ' + c.unit + '.';
+  return t;
+}
+// Pure: the "Why?" lines — every number from the facts, no AI involved.
+function _coachWhyLines(c){
+  if(!c) return [];
+  const st = c.st, L = c.last || {}, u = c.unit;
+  const reps = (L.reps || []).join('/');
+  const d = Number(L.daysAgo) || 0;
+  const when = d === 0 ? 'today' : d === 1 ? 'yesterday' : d + ' days ago';
+  const out = [];
+  out.push('Last time (' + when + '): ' + L.weight + ' ' + u + (reps ? ' × ' + reps : '') + (typeof L.rpe === 'number' ? ' at RPE ' + (Math.round(L.rpe * 2) / 2) : '') + '.');
+  out.push('Today\'s target: ' + c.sets + ' sets of ' + c.reps + ' reps.');
+  const R = {
+    A_topRange: 'Every set reached the top of the range, so the next weight step (' + st.suggested + ' ' + u + ') is due.',
+    B_avgOverTop: 'Your reps averaged above the range, so it\'s time for ' + st.suggested + ' ' + u + '.',
+    C_stalled: 'Same weight for ' + ((st.plateau && st.plateau.sessionsStuck) || 3) + ' sessions — the plan changes tactic before adding load.',
+    D_mixed: 'Some sets reached the top of the range and some fell short — get every set there before adding weight.',
+    E_belowLo: 'Reps were below the target range, so the weight stays at ' + st.current + ' ' + u + '.',
+    F_alreadyBumped: 'Today\'s planned weight is already above last time\'s ' + st.current + ' ' + u + '.',
+    G_gapDeload: 'It\'s been a while since you did this, so it restarts lighter (' + st.suggested + ' ' + u + ') and builds back up.',
+    H_repShift: 'Today\'s rep target differs from last time, and ' + st.suggested + ' ' + u + ' matches that effort.'
+  };
+  const downgraded = (st.rule === 'A_topRange' || st.rule === 'B_avgOverTop') && st.action !== 'increase';
+  if(downgraded) out.push('The reps were there, but ' + String(st.reason || '').replace(/^\w/, ch => ch.toLowerCase()));
+  else if(R[st.rule]) out.push(R[st.rule]);
+  if(st.rpeApplied && !downgraded) out.push('Your effort rating (RPE) from last time changed the call.');
+  if(c.pain) out.push('Your last note mentioned discomfort, so no change is suggested.');
+  out.push('The app\'s coaching rules set these numbers. Nothing changes until you accept, and you can undo it.');
+  return out;
+}
+// Pure: AI text → safe HTML (escaped; {EX} becomes the escaped exercise name).
+function _coachAiHtml(text, name){
+  return esc(String(text == null ? '' : text)).split('{EX}').join('<strong>' + esc(name) + '</strong>');
+}
+// Pure: is a stored acceptance valid for this user, today?
+function _coachAcceptFor(rec, uid, dayKey){
+  return !!rec && typeof rec === 'object' && rec.uid === uid && rec.day === dayKey && typeof rec.exName === 'string'
+    && typeof rec.sessDay === 'string' && typeof rec.idx === 'number'
+    && typeof rec.to === 'number' && isFinite(rec.to) && rec.to > 0 && typeof rec.from === 'number' ? rec : null;
+}
+// Pure: the session slot an acceptance applies to (-1 = none): same workout
+// day, same exercise at the same position (or the only one with that name).
+function _coachSlotFor(acc, day, exs){
+  if(!acc || day !== acc.sessDay || !Array.isArray(exs)) return -1;
+  if(exs[acc.idx] && exs[acc.idx].name === acc.exName) return acc.idx;
+  const hits = exs.map((e, i) => e && e.name === acc.exName ? i : -1).filter(i => i >= 0);
+  return hits.length === 1 ? hits[0] : -1;
+}
+
+// ── glue (reads app state) ──
+function _coachTodayPlan(){
+  try {
+    if(typeof isPathActive === 'function' && isPathActive()){
+      const t = getTodayPathWorkout();
+      if(!t || !t.coreWorkout || t.coreWorkout === 'HIIT') return null;
+      if(hasCorePathWorkoutBeenCompletedToday(t.coreWorkout)) return null;
+      const day = getNextPathDay(t.coreWorkout);
+      return day ? { prog:t.coreWorkout, day, exs:getExercisesForPathDay(t.coreWorkout, day), path:true } : null;
+    }
+    if(todayProg === 'HIIT' || customWorkouts.find(w => w.name === todayProg)) return null;
+    const day = selectedDay || getDayName(todayProg);
+    if(!day || day === 'Rest') return null;
+    if(completedSessions.some(s => s.date.toDateString() === new Date().toDateString() && s.day === day)) return null;
+    return { prog:todayProg, day, exs:applyExerciseRotation(todayProg === 'ULF' ? getULFDay(day) : (PPL[day] || []), day, todayProg), path:false };
+  } catch(e){ return null; }
+}
+function _coachCandidates(exs){
+  const out = [];
+  (exs || []).slice(0, 8).forEach((ex, idx) => {
+    if(!ex || ex.bw || ex.duration || isCoreCircuit(ex) || isTimedExercise(ex)) return;
+    const history = buildLiftHistory(ex.name);
+    if(!history.length) return;
+    const st = getLiftState({
+      plannedWeight: ex.weight, repRange: ex.reps, bw: false, timed: false,
+      steps: getWeightSteps(ex), nowMs: Date.now(), history, thisSession: null,
+      rpeThisSession: _preSessionRPE(ex.name), blockWeek: _currentBlockWeek()
+    });
+    const last = getLastSessionData(ex.name) || {};
+    const lm = new Date(last.date); lm.setHours(0, 0, 0, 0);
+    const tm = new Date(); tm.setHours(0, 0, 0, 0);
+    const rpeArr = Array.isArray(last.rpe) ? last.rpe.filter(x => typeof x === 'number' && x > 0) : [];
+    const note = typeof last.note === 'string' ? last.note : null;
+    const prefill = _coachPrefill(ex.weight, getWeightEditability(ex.name, parseRepTarget(ex.reps)), getWeightSteps(ex));
+    out.push({ idx, name: ex.name, planned: ex.weight, prefill, sets: ex.sets, reps: ex.reps, st,
+      unit: getEquipType(ex) === 'dumbbell' ? 'kg/hand' : 'kg',
+      last: { daysAgo: Math.round((tm - lm) / 864e5), weight: last.weight, reps: (last.reps || []).map(r => parseInt(r) || 0).filter(r => r > 0), rpe: rpeArr.length ? rpeArr.reduce((a, b) => a + b, 0) / rpeArr.length : null },
+      note, pain: !!note && _aiMentionsPain(note) });
+  });
+  return out;
+}
+function _coachCurrent(){
+  if(!_aiFlagOn('coach')) return null;
+  const plan = _coachTodayPlan();
+  if(!plan || !plan.exs || !plan.exs.length) return null;
+  const c = _coachPick(_coachCandidates(plan.exs));
+  return c ? Object.assign(c, { plan }) : null;
+}
+// Today's coach entries by recommendation key (switching days back and forth
+// never re-asks the AI; yesterday's entries are dropped).
+function _coachCacheAll(){
+  let o = null;
+  try { o = JSON.parse(localStorage.getItem(AI_CACHE_KEY) || 'null'); } catch(e){ o = null; }
+  if(!o || typeof o !== 'object') o = {};
+  const day = _aiDayKey(Date.now());
+  if(!o.coachDay || o.coachDay.day !== day || typeof o.coachDay.entries !== 'object') o.coachDay = { day, entries:{} };
+  return o;
+}
+function _coachCacheGet(key){
+  const e = _coachCacheAll().coachDay.entries[key || window._coachKeyNow];
+  return e && typeof e === 'object' ? e : null;
+}
+function _coachCachePut(entry){
+  const o = _coachCacheAll();
+  o.coachDay.entries[entry.key] = entry;
+  const keys = Object.keys(o.coachDay.entries);
+  if(keys.length > 8) delete o.coachDay.entries[keys[0]];
+  delete o.coach;
+  try { localStorage.setItem(AI_CACHE_KEY, JSON.stringify(o)); } catch(e){}
+}
+function _coachAcceptGet(){
+  let r = null;
+  try { r = JSON.parse(localStorage.getItem(COACH_ACCEPT_KEY) || 'null'); } catch(e){ r = null; }
+  return _coachAcceptFor(r, _aiUid(), _aiDayKey(Date.now()));
+}
+function _coachKey(c){ return _aiHash(JSON.stringify([c.plan && c.plan.day, c.idx, c.name, c.sets, c.reps, c.st.action, c.st.rule, c.st.current, c.st.suggested, c.pain, c.last && c.last.reps, c.note])); }
+// Is this candidate's acceptance live (stored for later, or applied in the running session)?
+function _coachAcceptedNow(c){
+  const acc = _coachAcceptGet();
+  if(acc && acc.exName === c.name && acc.sessDay === c.plan.day && acc.idx === c.idx) return acc;
+  const a = window._coachApplied;
+  if(a && _sessionRunning() && a.exName === c.name && sessDay === c.plan.day) return { to:a.to, exName:a.exName };
+  return null;
+}
+
+// Card HTML (deterministic first). Kicks off at most one AI wording request
+// per day per recommendation; the reply is shown only if it validates.
+function _renderCoachCard(){
+  try { return _renderCoachCardInner(); } catch(e){ return ''; }   // never break Today
+}
+function _renderCoachCardInner(){
+  const c = _coachCurrent();
+  if(!c) return '';
+  const key = _coachKey(c);
+  window._coachKeyNow = key;
+  let cache = _coachCacheGet(key);
+  if(!cache){
+    cache = { key, auditId:null, text:null, ack:false, why:false };
+    _coachCachePut(cache);
+    _coachRequestWording(c, key);
+  }
+  const acc = _coachAcceptedNow(c);
+  const accepted = !!acc;
+  const body = c.pain ? esc(COACH_PAIN_TEXT)
+    : (cache.text ? _coachAiHtml(cache.text, c.name) : esc(_coachText(c)));
+  const changes = _coachChangesWeight(c);
+  let actions;
+  if(accepted){
+    actions = `<p class="coach-done" role="status">✓ ${esc(acc.to)} ${esc(c.unit)} is set for ${esc(c.name)} today.</p>
+      <div class="coach-actions"><button type="button" class="coach-btn" onclick="coachUndo()">Undo</button><button type="button" class="coach-btn" aria-expanded="false" aria-controls="coachWhy" id="coachWhyBtn" onclick="coachWhy()">Why?</button></div>`;
+  } else if(cache.ack){
+    actions = `<p class="coach-done" role="status">✓ Noted.</p>
+      <div class="coach-actions"><button type="button" class="coach-btn" aria-expanded="false" aria-controls="coachWhy" id="coachWhyBtn" onclick="coachWhy()">Why?</button></div>`;
+  } else {
+    actions = `<div class="coach-actions">
+      ${c.pain ? '' : `<button type="button" class="coach-btn coach-primary" onclick="coachAccept()">${changes ? 'Accept ' + esc(c.st.suggested) + ' ' + esc(c.unit) : 'Got it'}</button>`}
+      ${c.pain ? '' : `<button type="button" class="coach-btn" onclick="coachAdjust()" aria-describedby="coachAdjustHint">Adjust</button>`}
+      <button type="button" class="coach-btn" aria-expanded="false" aria-controls="coachWhy" id="coachWhyBtn" onclick="coachWhy()">Why?</button>
+    </div>
+    ${c.pain ? '' : '<span id="coachAdjustHint" hidden>Starts today\'s workout at this exercise so you can set the weight yourself.</span>'}`;
+  }
+  const why = _coachWhyLines(c).map(l => `<li>${esc(l)}</li>`).join('');
+  return `<section class="coach-card" id="coachCard" aria-labelledby="coachTitle">
+    <div class="coach-head"><h2 class="coach-title" id="coachTitle">Coach tip</h2>${cache.text ? '<span class="coach-tag" title="Numbers from your log; wording by AI">✨ AI-worded</span>' : ''}</div>
+    <p class="coach-text" id="coachText" aria-live="polite">${body}</p>
+    ${actions}
+    <ul class="coach-why" id="coachWhy" hidden>${why}</ul>
+  </section>`;
+}
+async function _coachRequestWording(c, key){
+  const facts = _coachFacts(c);
+  // A note mentioning pain: fixed message, nothing is sent, recorded as such.
+  const r = c.pain
+    ? { ok:false, reason:'pain', auditId:_aiAuditAdd({ kind:'coach', source:'deterministic', fallback:'pain', facts:null }) }
+    : await _aiCall('coach', facts, 'coach');
+  if(c.pain) _aiMetricBump('fallback_pain');
+  const cache = _coachCacheGet(key);
+  if(!cache) return;
+  cache.auditId = r && r.auditId ? r.auditId : null;
+  if(r && r.ok && r.out && typeof r.out.text === 'string') cache.text = r.out.text;
+  _coachCachePut(cache);
+  if(cache.auditId) _aiAuditEvent(cache.auditId, 'shown');
+  _aiMetricBump('coach_shown');
+  if(cache.text && window._coachKeyNow === key){
+    const el = document.getElementById('coachText');
+    if(el){ el.innerHTML = _coachAiHtml(cache.text, c.name); const h = document.querySelector('#coachCard .coach-head'); if(h && !h.querySelector('.coach-tag')) h.insertAdjacentHTML('beforeend', '<span class="coach-tag" title="Numbers from your log; wording by AI">✨ AI-worded</span>'); }
+  }
+}
+function _coachEvent(ev, metric){
+  const cache = _coachCacheGet();
+  if(cache && cache.auditId) _aiAuditEvent(cache.auditId, ev);
+  _aiMetricBump(metric);
+}
+function coachAccept(){
+  const c = _coachCurrent();
+  if(!c || c.pain) return;
+  if(_coachChangesWeight(c)){
+    const cache = _coachCacheGet();
+    if(_coachAcceptedNow(c)) return;
+    try { localStorage.setItem(COACH_ACCEPT_KEY, JSON.stringify({ uid:_aiUid(), day:_aiDayKey(Date.now()), sessDay:c.plan.day, idx:c.idx, exName:c.name, from:c.prefill, to:c.st.suggested, auditId: cache && cache.auditId || null })); } catch(e){}
+    if(_sessionRunning()) _coachApplyAccepted();
+    showToast('✅ ' + c.st.suggested + ' ' + c.unit + ' set for ' + c.name + ' — undo any time');
+  } else {
+    const cache = _coachCacheGet();
+    if(cache){ cache.ack = true; _coachCachePut(cache); }
+  }
+  _coachEvent('accepted', 'coach_accepted');
+  renderToday();
+  const b = document.querySelector('#coachCard .coach-btn'); if(b) b.focus();
+}
+function coachAdjust(){
+  const c = _coachCurrent();
+  if(!c) return;
+  _coachEvent('adjusted', 'coach_adjusted');
+  const name = c.name;
+  // A running workout is resumed, never restarted (restarting would wipe logged sets).
+  if(_sessionRunning()) resumeSession();
+  else if(c.plan.path) startPathSession(c.plan.prog, c.plan.day); else beginSession();
+  let i = _coachSlotFor({ sessDay:c.plan.day, idx:c.idx, exName:name }, sessDay, sessExs);
+  if(i < 0) i = (sessExs || []).findIndex(e => e && e.name === name);
+  if(i >= 0 && !(setsDone[i] || []).length){
+    curIdx = i;
+    updateSessUI();
+    // Unlock the weight control at the pre-filled weight so it can be set by hand.
+    const ex = sessExs[i];
+    if(ex && !ex.bw){ const shown = parseFloat(document.getElementById('currWt').textContent); if(shown > 0) ex.weight = shown; ex._userApplied = true; updateSessUI(); }
+  }
+  setTimeout(() => { const p = document.getElementById('wAdjPlus'); if(p) p.focus(); }, 350);
+}
+function coachWhy(){
+  const w = document.getElementById('coachWhy'), b = document.getElementById('coachWhyBtn');
+  if(!w || !b) return;
+  const open = w.hidden;
+  w.hidden = !open;
+  b.setAttribute('aria-expanded', String(open));
+  const cache = _coachCacheGet();
+  if(open && cache && !cache.why){ cache.why = true; _coachCachePut(cache); _coachEvent('why', 'coach_why'); }
+}
+// On session start (and on Accept mid-session): pre-fill the accepted weight.
+function _coachApplyAccepted(){
+  if(!_aiFlagOn('coach')){ try { localStorage.removeItem(COACH_ACCEPT_KEY); } catch(e){} return; }
+  const acc = _coachAcceptGet();
+  if(!acc || !Array.isArray(sessExs)) return;
+  const i = _coachSlotFor(acc, sessDay, sessExs);
+  if(i < 0 || (setsDone[i] || []).length) return;
+  const ex = sessExs[i];
+  const prev = window._coachApplied;
+  if(prev && prev.idx === i && prev.exName === ex.name) return;   // already applied: keep the true original
+  window._coachApplied = { idx:i, exName:ex.name, prevWeight:ex.weight, prevApplied:!!ex._userApplied, to:acc.to, auditId:acc.auditId,
+    unit: getEquipType(ex) === 'dumbbell' ? 'kg/hand' : 'kg' };
+  ex.weight = acc.to;
+  ex._userApplied = true;
+  try { localStorage.removeItem(COACH_ACCEPT_KEY); } catch(e){}
+  updateSessUI();
+}
+if(typeof bus !== 'undefined') bus.on('session:started', () => { try { window._coachApplied = null; _coachApplyAccepted(); } catch(e){} });
+// Undo: before the session → forget the acceptance; during it → restore the
+// planned weight (sets already logged are never touched).
+function coachUndo(){
+  const a = _sessionRunning() ? window._coachApplied : null;
+  if(!a) window._coachApplied = null;   // left over from a cancelled/finished session
+  let auditId = null, restored = true;
+  if(a){
+    const ex = sessExs[a.idx];
+    restored = !!(ex && ex.name === a.exName && ex.weight === a.to);
+    if(restored){ ex.weight = a.prevWeight; ex._userApplied = a.prevApplied; }
+    auditId = a.auditId;
+    window._coachApplied = null;
+    updateSessUI();
+    const w = document.getElementById('wAdjPlus'); if(w) w.focus();
+  } else {
+    const acc = _coachAcceptGet();
+    auditId = acc ? acc.auditId : null;
+    try { localStorage.removeItem(COACH_ACCEPT_KEY); } catch(e){}
+    renderToday();
+    const b = document.querySelector('#coachCard .coach-btn'); if(b) b.focus();
+  }
+  if(auditId && restored) _aiAuditEvent(auditId, 'undone');
+  if(restored) _aiMetricBump('coach_undone');
+  showToast(restored ? '↩︎ Coach weight undone' : 'Weight was changed since — kept your weight');
+}
+function _renderCoachApplied(){
+  const el = document.getElementById('coachApplied');
+  if(!el) return;
+  const a = window._coachApplied;
+  const ex = a && sessExs[curIdx];
+  if(!a || curIdx !== a.idx || !ex || ex.name !== a.exName || ex.weight !== a.to){ el.hidden = true; el.innerHTML = ''; return; }
+  el.innerHTML = `<span>Coach weight: ${esc(a.to)} ${esc(a.unit || 'kg')}${(setsDone[curIdx] || []).length ? '' : ' (from Today)'}.</span> <button type="button" class="coach-btn" onclick="coachUndo()">Undo</button>`;
+  el.hidden = false;
+}
+
 // ── Phase 1: simplified navigation (Today · Plan · Progress · Profile) ─────
 // Behind a reversible, device-local flag (maxgainz_nav_v2: '1' on, anything
 // else off). The original six-item nav and every screen stay in the DOM.
@@ -6906,7 +7295,8 @@ function renderTodayLegacy(){
   // (welcome-back / daily focus) for non-path users too.
   const todayContent=document.getElementById('todayContent');
   if(todayContent){
-    const _cards = (typeof _renderWelcomeBackCard === 'function' ? _renderWelcomeBackCard() : '')
+    const _cards = (typeof _renderCoachCard === 'function' ? _renderCoachCard() : '')
+                 + (typeof _renderWelcomeBackCard === 'function' ? _renderWelcomeBackCard() : '')
                  + (typeof _renderDailyFocusCard === 'function' ? _renderDailyFocusCard() : '');
     if(_cards){ todayContent.style.display='block'; todayContent.innerHTML='<div style="margin-bottom:12px;">'+_cards+'</div>'; }
     else { todayContent.style.display='none'; todayContent.innerHTML=''; }
@@ -7635,6 +8025,7 @@ function updateSessUI(){
 
   // Show "Last time" reference if we have history for this exercise
   renderLastTimeRef(ex);
+  if(typeof _renderCoachApplied === 'function') _renderCoachApplied();
   // Show exercise note if any
   renderExerciseNote();
 
@@ -22457,6 +22848,8 @@ function renderTodayWithPath() {
   // ── WELCOME-BACK + DAILY FOCUS (retention) ──
   if(typeof _renderWelcomeBackCard === 'function') html += _renderWelcomeBackCard();
   if(typeof _renderDailyFocusCard === 'function') html += _renderDailyFocusCard();
+  // ── COACH TIP (Phase 2; flag maxgainz_ai_coach) ──
+  if(typeof _renderCoachCard === 'function') html += _renderCoachCard();
 
   // ── TODAY'S LOGGED SESSIONS ──
   // Surface EVERYTHING completed today — manual activities (runs, yoga…)
@@ -26548,6 +26941,7 @@ function authLogout(opts){
   localStorage.removeItem(AI_METRICS_KEY);
   localStorage.removeItem(AI_CACHE_KEY);
   localStorage.removeItem(AI_CONSENT_SYNC_KEY);
+  localStorage.removeItem(COACH_ACCEPT_KEY);
   // Pending-sync queue + sync markers belong to this account: drop them so the
   // next account can never upload (or be shown) the previous one's changes.
   _pending = null; clearTimeout(_syncRetryTimer); _syncRetryTimer = null; _syncBackoff = 0;
