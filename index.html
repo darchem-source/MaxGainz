@@ -19064,7 +19064,7 @@ function renderWeekInsights(){
   // Determine target: pull from path target if available, else infer from history
   let weeklyTarget = 3;
   try {
-    // (was userPath.daysPerWeek, a field that doesn't exist → always 3)
+    // (used to read a daysPerWeek field that only exists under coreSchedule → always 3)
     const _pp = _plannedPerWeek(typeof userPath !== 'undefined' ? userPath : null);
     if(_pp) weeklyTarget = _pp;
   } catch(e){}
