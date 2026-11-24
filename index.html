@@ -97,6 +97,8 @@ html.nav-v2 .plan-links { display:block; }
 .brief-action { margin-top:12px; padding:12px; border-radius:12px; background:rgba(200,255,0,0.08); border:1px solid rgba(200,255,0,0.35); font-size:14px; font-weight:700; color:var(--text); }
 .brief-note { font-size:11px; color:var(--text2); margin:10px 0 0; line-height:1.45; }
 .sess-more-btn.prog-explore-btn { margin:0 16px 12px; width:calc(100% - 32px); }
+.pb-empty-list { display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin-top:10px; }
+.pb-empty-list .dp-chip { min-height:44px; }
 .pb-empty, .prog-empty { margin:0 16px 10px; padding:14px; border-radius:14px; border:1px dashed var(--border); color:var(--text2); font-size:13px; line-height:1.5; text-align:center; }
 button.chip { font-family:inherit; }
 .nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; padding: 4px; }
@@ -14943,7 +14945,7 @@ function renderPBCards(){
   let html='';
   // Only lifts with data get a tile; the rest collapse into one prompt (Phase 1).
   const _withPB = pbLifts.map((l, j) => ({ l, j, pb:getPBForLabel(l.label) })).filter(x => x.pb !== null);
-  const _noPB = pbLifts.filter(l => getPBForLabel(l.label) === null).map(l => l.label);
+  const _noPB = pbLifts.map((l, j) => ({ l, j })).filter(x => getPBForLabel(x.l.label) === null);
   for(let i=0;i<_withPB.length;i+=2){
     html+='<div class="stat-row">';
     for(let k=i;k<=i+1;k++){
@@ -14967,7 +14969,10 @@ function renderPBCards(){
     html+='</div>';
   }
   if(_noPB.length){
-    html += `<div class="pb-empty">${_withPB.length ? 'No PB yet for' : 'Your personal bests will show here. No data yet for'} ${esc(_noPB.join(', '))} — log ${_noPB.length === 1 ? 'it' : 'them'} in a workout to set a baseline.</div>`;
+    // Each no-data lift stays a button into the change/remove picker (openChangePB),
+    // so it can still be swapped or removed — and the 8-lift cap can't lock.
+    html += `<div class="pb-empty">${_withPB.length ? 'No PB yet for these — log them in a workout to set a baseline:' : 'Your personal bests will show here once you log these lifts:'}`
+      + `<div class="pb-empty-list">${_noPB.map(x => `<button type="button" class="dp-chip" onclick="openChangePB(${x.j})" aria-label="${esc(x.l.label)} — no data yet; change or remove">${esc(x.l.label)} ⋯</button>`).join('')}</div></div>`;
   }
   if(pbLifts.length<8){
     html+=`<div style="padding:0 16px 10px;"><button onclick="addPBTile()" style="width:100%;background:var(--surface);border:0.5px dashed var(--border);border-radius:14px;padding:12px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;">+ Add lift (${pbLifts.length}/8)</button></div>`;

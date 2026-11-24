@@ -2532,6 +2532,8 @@ def gate_briefing(html, js):
     if 'userPath.daysPerWeek' in wi or '_plannedPerWeek(' not in wi: lint.append('insights weekly target still reads the missing userPath.daysPerWeek')
     pb = extract_decl(js, 'renderPBCards') or ''
     if '_withPB' not in pb or 'pb-empty' not in pb: lint.append('PB tiles with no data are still rendered as "– kg" cards')
+    if not re.search(r'_noPB\.map\([^`]*`<button type="button"[^>]*onclick="openChangePB\(\$\{x\.j\}\)"', pb):
+        lint.append('no-data PB lifts have no control to change/remove them (8-lift cap can lock)')
     if ".style.display = b!==null ? '' : 'none'" not in pb: lint.append("Today's Bench PB card still shows for someone who never benched")
     hm = extract_decl(js, 'renderMuscleHeatmap') or ''
     m = re.search(r'if\(data\.total === 0\)\{[\s\S]*?return;', hm)
