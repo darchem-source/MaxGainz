@@ -4457,7 +4457,7 @@ async function cloudLoadAll() {
           }
           // Restore Personal Best tile set
           if (Array.isArray(blob.pbLifts)) {
-            pbLifts = blob.pbLifts;
+            pbLifts = (typeof _sanitisePBLifts === 'function') ? _sanitisePBLifts(blob.pbLifts) : blob.pbLifts;
             try { localStorage.setItem('maxgainz_pbLifts', JSON.stringify(pbLifts)); } catch(e){}
           }
         } catch(e) { console.warn('Profile blob parse error:', e); }
