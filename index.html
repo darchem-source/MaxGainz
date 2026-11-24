@@ -372,7 +372,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 .sess-more-body { margin-top:12px; padding-top:12px; border-top:0.5px solid var(--border); }
 .sess-more-body[hidden] { display:none !important; }
 .more-lbl { font-size:11px; color:var(--text2); font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:6px; }
-.more-btn { background:transparent; border:0.5px solid var(--border); border-radius:10px; padding:8px 14px; font-family:inherit; font-size:12px; font-weight:700; color:var(--text2); cursor:pointer; }
+.more-btn { min-height:44px; background:transparent; border:0.5px solid var(--border); border-radius:10px; padding:8px 14px; font-family:inherit; font-size:12px; font-weight:700; color:var(--text2); cursor:pointer; }
 button.dp-chip { font-family:inherit; }
 button.rep-btn { font-family:inherit; color:var(--text); width:100%; }
 button.rep-btn.sel { color:#000; }
@@ -467,6 +467,42 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
 .sess-detail-row { display:flex; align-items:center; padding:10px 16px; border-top:0.5px solid var(--border); gap:10px; }
 
 /* Path Wizard */
+/* ── Phase 1: Start today ── */
+.st-welcome { text-align:center; }
+.st-progress { display:flex; gap:6px; margin-bottom:8px; }
+.st-progress span { flex:1; height:4px; border-radius:2px; background:var(--surface3); }
+.st-progress span.on { background:var(--accent); }
+.st-stepno { font-size:11px; color:var(--text2); font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:6px; }
+.st-h { font-size:21px; font-weight:900; margin:0 0 6px; line-height:1.2; }
+.st-h:focus { outline:none; }
+.st-h:focus-visible { outline:2px solid var(--accent); }
+.st-why { font-size:13px; color:var(--text2); line-height:1.5; margin:0 0 14px; }
+.st-why strong { color:var(--text); font-weight:700; }
+.st-opts { display:flex; flex-direction:column; gap:8px; margin-bottom:16px; }
+.st-opt { display:block; width:100%; text-align:left; padding:13px 14px; background:var(--surface2); border:1px solid var(--border); border-radius:12px; cursor:pointer; font-family:inherit; color:var(--text); min-height:56px; }
+.st-opt.sel { background:rgba(200,255,0,0.08); border-color:rgba(200,255,0,0.5); }
+.st-opt-l { display:block; font-size:15px; font-weight:700; }
+.st-opt.sel .st-opt-l { color:var(--accent); font-weight:800; }
+.st-opt-s { display:block; font-size:12px; color:var(--text2); margin-top:2px; font-weight:500; }
+.st-chips { display:flex; gap:6px; flex-wrap:wrap; }
+.st-chips .dp-chip { min-height:44px; padding:10px 14px; font-size:13px; }
+.st-nav { display:flex; gap:8px; margin-top:16px; }
+.st-back { flex:1; padding:14px; background:var(--surface2); border:0.5px solid var(--border); border-radius:12px; color:var(--text); font-family:inherit; font-size:13px; font-weight:700; cursor:pointer; min-height:48px; }
+.st-next { flex:2; }
+.st-next[disabled] { opacity:0.45; cursor:not-allowed; }
+.st-skip { display:block; width:100%; background:transparent; border:none; color:var(--text2); font-family:inherit; font-size:13px; padding:12px; cursor:pointer; text-decoration:underline; text-underline-offset:3px; min-height:44px; }
+.st-need { font-size:12px; color:var(--orange, #ff8c42); margin:-6px 0 8px; }
+.st-secondary { display:block; width:100%; margin-top:8px; padding:13px; background:var(--surface2); border:0.5px solid var(--border); border-radius:12px; color:var(--text); font-family:inherit; font-size:14px; font-weight:700; cursor:pointer; min-height:48px; }
+.st-days { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; }
+.st-day { font-size:12px; font-weight:700; padding:6px 10px; border-radius:999px; background:var(--surface2); border:0.5px solid var(--border); color:var(--text2); }
+.st-day.today { color:#000; background:var(--accent); border-color:var(--accent); }
+.st-today { background:var(--surface2); border:1px solid var(--border); border-radius:14px; padding:14px; margin-bottom:12px; }
+.st-exlist { list-style:none; margin:4px 0 0; padding:0; }
+.st-exlist li { display:flex; justify-content:space-between; gap:10px; padding:7px 0; border-bottom:0.5px solid var(--border); font-size:13px; }
+.st-exlist li:last-child { border-bottom:none; }
+.st-ex-n { font-weight:700; color:var(--text); }
+.st-ex-d { color:var(--text2); white-space:nowrap; }
+.st-note { font-size:11px; color:var(--text2); line-height:1.45; margin:10px 0 0; }
 .path-step-dot { flex:1; height:4px; border-radius:2px; background:var(--surface3); transition:background 0.3s; }
 .path-step-dot.active { background:var(--accent); }
 .path-step-dot.done { background:var(--green); }
@@ -1237,6 +1273,8 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
           </div>
           <button onclick="openDataHealth()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🩺 Data health check</button>
           <!-- Path -->
+          <button onclick="openStartTodayFromProfile()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">⚡ Recommend a plan for me</button>
+          <button onclick="openDetailedSetup()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🎚 Fine-tune starting weights</button>
           <button onclick="openPathWizard()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🎯 Change My Path</button>
           <!-- Reminders -->
           <button id="notifEnableBtn" onclick="requestNotificationPermission()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;margin-bottom:2px;">🔔 Allow reminder alerts</button>
@@ -1328,7 +1366,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
   <div class="modal" style="max-height:90vh;overflow-y:auto;padding:24px;">
     <div class="modal-handle"></div>
     <!-- Progress indicator -->
-    <div id="pathWizardProgress" style="display:flex;gap:6px;margin-bottom:24px;">
+    <div id="pathWizardProgress" role="img" aria-label="Step 1 of 3" style="display:flex;gap:6px;margin-bottom:24px;">
       <div class="path-step-dot active" id="pdot-1"></div>
       <div class="path-step-dot" id="pdot-2"></div>
       <div class="path-step-dot" id="pdot-3"></div>
@@ -5705,6 +5743,9 @@ function applyCustomWeights() {
       });
     });
   }
+  // ULF_VARIANTS (what getULFDay actually reads) is deliberately NOT mutated
+  // here: getULFDay overlays customWeights on its copies at read time, so a
+  // signed-out account's weights can never linger in the shared table.
 }
 applyCustomWeights();
 
@@ -14857,7 +14898,10 @@ function getULFDay(dayName){
   const variants=ULF_VARIANTS[dayName];
   if(!variants) return (ULF[dayName]||[]).map(e=>({...e}));
   const count=completedSessions.filter(s=>!s.manualActivity&&s.day===dayName).length;
-  return variants[count%variants.length].map(e=>({...e}));
+  // Saved starting weights apply to the variants at READ time (Phase 1): they
+  // never reached ULF sessions before, and mutating the shared table would
+  // leak one account's weights into the next account on the same device.
+  return variants[count%variants.length].map(e=>(customWeights[e.name]!==undefined ? {...e, weight:customWeights[e.name]} : {...e}));
 }
 
 let _currentLiftColor = '#c8ff00';
@@ -15567,6 +15611,7 @@ function _obComplete(skipSetup) {
   if(!skipSetup) {
     // Persist collected profile data
     userProfile.onboarding = {
+      ...(userProfile.onboarding || {}),   // keep Start-today answers (goal, days, session length…)
       experienceLevel:    _ob.experienceLevel,
       bodyWeight:         _ob.bodyWeight,
       bodyWeightUnit:     _ob.bodyWeightUnit,
@@ -15616,10 +15661,409 @@ function _obComplete(skipSetup) {
 
 function checkOnboarding() {
   if(!localStorage.getItem('maxgainz_onboarded') && isAuthenticated()) {
-    renderOnboardStep(0);
-    document.getElementById('onboardMod').classList.add('open');
+    // Phase 1: the short "Start today" flow replaces the 8-step setup on first
+    // run (that one stays reachable from Profile → Fine-tune starting weights).
+    openStartToday(false);
   }
 }
+
+// ── Phase 1: "Start today" — first useful workout in a few taps ────────────
+// goal → equipment → days (+ optional session length) → experience → preview
+// today's session → start. Every question says how it changes the plan; the
+// non-essential ones can be skipped. It builds an ordinary userPath (same
+// shape confirmStartPath always wrote) and stores the answers as OPTIONAL
+// extra fields on the existing userProfile.onboarding object (version:2), so
+// no saved-data format changes. The detailed 8-step setup stays available
+// from Profile → "Fine-tune starting weights".
+
+const ST_GOALS = [
+  { v:'strength', icon:'🏋️', label:'Get stronger',  sub:'Heavier weights, fewer reps',     effect:'We pick strength programmes built around the big lifts, in lower rep ranges.' },
+  { v:'muscle',   icon:'💪', label:'Build muscle',  sub:'Moderate weights, more sets',     effect:'We pick higher-volume programmes, mostly 8–12 reps a set.' },
+  { v:'fitness',  icon:'⚡', label:'Get fitter',    sub:'Strength you can recover from',   effect:'We favour full-body sessions so every workout trains everything.' },
+  { v:'health',   icon:'🌿', label:'Stay healthy',  sub:'Simple and sustainable',          effect:'We favour short, simple full-body plans that are easy to keep up.' }
+];
+const ST_EQUIP = [
+  { v:'gym',        icon:'🏢', label:'A gym',            sub:'Barbells, racks, machines',  effect:'Opens up every programme, including barbell strength plans.' },
+  { v:'home',       icon:'🏠', label:'Dumbbells at home', sub:'Dumbbells and a bench or mat', effect:'Limits us to dumbbell and bodyweight programmes.' },
+  { v:'bodyweight', icon:'🤸', label:'No equipment',      sub:'Bodyweight (a band helps)', effect:'We use a bodyweight programme — no kit needed.' }
+];
+const ST_DAYS = [2, 3, 4, 5, 6];
+const ST_MINUTES = [30, 45, 60, 75];
+const ST_EXP = [
+  { v:'beginner',     icon:'🌱', label:'New to lifting',  sub:'Under 6 months',        effect:'Lighter starting weights and beginner-friendly programmes.' },
+  { v:'intermediate', icon:'📈', label:'Some experience', sub:'6 months – 2 years',    effect:'Moderate starting weights; intermediate programmes become options.' },
+  { v:'advanced',     icon:'🔥', label:'Experienced',     sub:'2+ years of training',  effect:'Heavier starting weights; advanced splits become options.' }
+];
+const ST_WEEKDAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+let _st = { step:0, goal:null, equipment:null, days:3, minutes:null, experience:null, fromProfile:false };
+
+// Pure: which equipment a programme needs → 'gym' | 'home' | 'bodyweight'.
+function _stProgEquip(p){
+  if(!p) return 'gym';
+  if(p.id === 'home-gainz') return 'bodyweight';
+  if(p.id === 'db-home-fb') return 'home';
+  const e = String(p.equipment || '').toLowerCase();
+  if(/^bodyweight/.test(e)) return 'bodyweight';
+  if(/^dumbbell/.test(e)) return 'home';
+  return 'gym';
+}
+
+// Pure: recommend one programme from a catalogue of
+// {id, key, name, level, goal, daysOptions:[..], equip} for answers
+// {goal, equipment, days, minutes, experience}. Returns
+// {key, id, name, daysPerWeek, variant, reason} or null when nothing fits.
+function recommendProgramme(ans, catalogue){
+  const a = ans || {};
+  const userEquip = a.equipment || 'gym';
+  const userDays = Math.max(1, Math.min(7, Number(a.days) || 3));
+  const LV = { 'beginner':0, 'beginner-intermediate':0.5, 'intermediate':1, 'advanced':2 };
+  const EX = { beginner:0, intermediate:1, advanced:2 };
+  const userLv = EX[a.experience] != null ? EX[a.experience] : 0;
+  const fits = e => userEquip === 'gym' ? true : userEquip === 'home' ? (e === 'home' || e === 'bodyweight') : e === 'bodyweight';
+  const FULL_BODY = { 'ULF':1, 'library:db-home-fb':1, 'library:home-gainz':1, 'library:machine-foundations':1, 'library:sl5x5':1, 'library:starting-strength':1, 'library:greyskull':1 };
+  let best = null;
+  (catalogue || []).forEach((p, order) => {
+    if(!p || !fits(p.equip)) return;
+    // PPL's 3-day minimum is structural (push, pull, legs) — never offer it on fewer days.
+    if(p.key === 'PPL' && userDays < Math.min.apply(null, p.daysOptions || [3])) return;
+    const g = String(p.goal || '').toLowerCase();
+    const lv = LV[String(p.level || '').toLowerCase()];
+    let s = -2 * Math.abs((lv == null ? 1 : lv) - userLv);
+    if(a.goal === 'strength' && g.indexOf('strength') !== -1) s += 3;
+    if(a.goal === 'muscle'){ if(g.indexOf('hypertrophy') !== -1) s += 3; else if(g.indexOf('size') !== -1) s += 2; }
+    if(a.goal === 'fitness' || a.goal === 'health' || !a.goal){ if(FULL_BODY[p.key]) s += 2; }
+    // Days: a programme built for more days than you have is rotated through on
+    // your days (small penalty); one built for fewer leaves days unused.
+    let bestD = null, bestDs = -Infinity;
+    (p.daysOptions || [3]).forEach(d => {
+      const use = Math.min(d, userDays);
+      const ds = userDays >= d ? -0.5 * (userDays - d) : -1 * (d - userDays);
+      if(ds > bestDs){ bestDs = ds; bestD = { design:d, use }; }
+    });
+    s += bestDs;
+    if(a.minutes && a.minutes <= 45 && (bestD.design >= 5 || (lv || 0) >= 2)) s -= 2;
+    if(!best || s > best.s + 1e-9) best = { s, p, d:bestD, order };
+  });
+  if(!best) return null;
+  const p = best.p, d = best.d;
+  const variant = p.key === 'PPL' ? (d.design >= 6 ? '6day' : '3day') : 'standard';
+  const daysPerWeek = p.key === 'PPL' ? d.design : d.use;
+  const eqTxt = { gym:'a gym', home:'dumbbells at home', bodyweight:'no equipment' }[userEquip];
+  const goalTxt = { strength:'getting stronger', muscle:'building muscle', fitness:'getting fitter', health:'staying healthy' }[a.goal] || 'general training';
+  const lvTxt = { 0:'newer lifters', 1:'lifters with some experience', 2:'experienced lifters' }[userLv];
+  let reason = `Built for ${goalTxt} with ${eqTxt}, and it suits ${lvTxt}.`;
+  if(daysPerWeek < d.design) reason += ` It's designed for ${d.design} days, so we'll rotate through it on your ${daysPerWeek}.`;
+  else if(daysPerWeek < userDays) reason += ` It uses ${daysPerWeek} of your ${userDays} days, leaving room to recover.`;
+  return { key:p.key, id:p.id, name:p.name, daysPerWeek, variant, reason };
+}
+
+// Pure: n training days spread across the week, always including today
+// (todayIdx = Date#getDay, 0=Sunday). Returned Monday-first, like the wizard.
+function _spreadDays(todayIdx, n){
+  const count = Math.max(1, Math.min(7, Number(n) || 3));
+  const picks = new Set();
+  for(let k = 0; k < count; k++) picks.add((todayIdx + Math.round(k * 7 / count)) % 7);
+  for(let k = 1; picks.size < count && k < 7; k++) picks.add((todayIdx + k) % 7);
+  const monFirst = [1,2,3,4,5,6,0];
+  return monFirst.filter(i => picks.has(i)).map(i => ST_WEEKDAYS[i]);
+}
+
+// Pure: answers to pre-fill from a saved userProfile.onboarding. Older blobs
+// (no version:2 fields) still yield valid defaults — that's the migration.
+function _stAnswersFrom(onb){
+  const o = onb || {};
+  const goalFromOld = { strength:'strength', muscle:'muscle', endurance:'fitness', fat_loss:'fitness', general:'health' };
+  const goal = ['strength','muscle','fitness','health'].includes(o.goal) ? o.goal : (goalFromOld[o.trainingGoal] || null);
+  let equipment = ['gym','home','bodyweight'].includes(o.equipment) ? o.equipment : null;
+  if(!equipment && Array.isArray(o.equipmentAccess) && o.equipmentAccess.length){
+    const ea = o.equipmentAccess;
+    equipment = (ea.includes('barbells') || ea.includes('machines')) ? 'gym' : ea.includes('dumbbells') ? 'home' : 'bodyweight';
+  }
+  const fq = { '2-3':3, '4-5':4, '6+':6 };
+  const days = ST_DAYS.includes(Number(o.daysPerWeek)) ? Number(o.daysPerWeek) : (fq[o.trainingFrequency] || 3);
+  const minutes = ST_MINUTES.includes(Number(o.sessionMinutes)) ? Number(o.sessionMinutes) : null;
+  const experience = ['beginner','intermediate','advanced'].includes(o.experienceLevel) ? o.experienceLevel : null;
+  return { goal, equipment, days, minutes, experience };
+}
+
+// The catalogue recommendProgramme ranks: built-ins first, then the library.
+function _stCatalogue(){
+  const out = _BUILTIN_STRENGTH.map(b => ({ id:b.id, key:b.id, name:b.name === 'ULF' ? 'Upper · Lower · Full Body (ULF)' : 'Push · Pull · Legs (PPL)',
+    level:b.level, goal:b.goal, daysOptions: b.id === 'PPL' ? [3,6] : [b.daysPerWeek], equip:'gym' }));
+  LIBRARY_PROGRAMMES.forEach(p => out.push({ id:p.id, key:'library:' + p.id, name:p.name, level:p.level, goal:p.goal,
+    daysOptions:[p.daysPerWeek], equip:_stProgEquip(p) }));
+  return out;
+}
+
+function _stRecommendation(){
+  return recommendProgramme({ goal:_st.goal, equipment:_st.equipment, days:_st.days, minutes:_st.minutes, experience:_st.experience }, _stCatalogue());
+}
+
+// The path object confirmStartPath would build — used to preview a plan
+// before it's saved (getNextPathDay & co. read the global userPath).
+function _stDraftPath(rec){
+  const coreDays = _spreadDays(new Date().getDay(), rec.daysPerWeek);
+  return { programme:rec.key, duration:8, status:'active', coreSchedule:{ daysPerWeek:rec.daysPerWeek, preferredDays:coreDays, variant:rec.variant }, addOns:[] };
+}
+
+// Starting weights for the answers (no body weight / injuries asked → the
+// calculator's neutral defaults; Fine-tune in Profile refines them).
+function _stWeights(){
+  const prev = { experienceLevel:_ob.experienceLevel, hadPriorTraining:_ob.hadPriorTraining, trainingGoal:_ob.trainingGoal,
+    bodyWeight:_ob.bodyWeight, bodyWeightUnit:_ob.bodyWeightUnit, injuryHistory:_ob.injuryHistory, previousLifts:_ob.previousLifts };
+  _ob.experienceLevel = _st.experience || 'beginner';
+  _ob.hadPriorTraining = !!_st.experience && _st.experience !== 'beginner';
+  _ob.trainingGoal = { strength:'strength', muscle:'muscle', fitness:'endurance', health:'general' }[_st.goal] || 'general';
+  _ob.bodyWeight = null; _ob.bodyWeightUnit = 'kg'; _ob.injuryHistory = []; _ob.previousLifts = {};
+  let res;
+  try { res = _obCalcWeights(); } finally { Object.assign(_ob, prev); }
+  // Never below the empty bar (20 kg) on a barbell lift — the calculator's
+  // beginner multiplier can land at 17.5 kg for Bench Press.
+  Object.keys(res).forEach(n => {
+    try { if(res[n] < 20 && _isPlateLoaded({ name:n, sets:3, reps:'5' })) res[n] = 20; } catch(e){}
+  });
+  return res;
+}
+
+function _stPreview(){
+  const rec = _stRecommendation();
+  if(!rec) return null;
+  const draft = _stDraftPath(rec);
+  const saved = userPath;
+  let day = null, exs = [];
+  try {
+    userPath = draft;
+    day = getNextPathDay(rec.key);
+    exs = getExercisesForPathDay(rec.key, day) || [];
+  } catch(e){ exs = []; } finally { userPath = saved; }
+  const w = _stWeights();
+  exs = exs.map(e => Object.assign({}, e, (!e.bw && w[e.name] != null) ? { weight:w[e.name] } : {}));
+  return { rec, draft, day, exs, weights:w };
+}
+
+function openStartToday(fromProfile){
+  const a = _stAnswersFrom(userProfile && userProfile.onboarding);
+  _st = Object.assign({ step:0, fromProfile:!!fromProfile }, a);
+  renderStartTodayStep(0);
+  document.getElementById('onboardMod').classList.add('open');
+}
+
+function _stOpt(field, o, selected){
+  return `<button type="button" class="st-opt${selected ? ' sel' : ''}" data-f="${field}" data-v="${esc(o.v)}" aria-pressed="${selected}" onclick="stPick(this.dataset.f,this.dataset.v)">`
+    + `<span class="st-opt-l">${o.icon ? '<span aria-hidden="true">' + o.icon + '</span> ' : ''}${esc(o.label)}</span>`
+    + (o.sub ? `<span class="st-opt-s">${esc(o.sub)}</span>` : '') + `</button>`;
+}
+function _stChip(field, v, label, selected){
+  return `<button type="button" class="dp-chip st-chip${selected ? ' active' : ''}" data-f="${field}" data-v="${v}" aria-pressed="${selected}" onclick="stPick(this.dataset.f,this.dataset.v)">${esc(label)}</button>`;
+}
+function _stHead(n, title, why){
+  return `<div class="st-progress" aria-hidden="true">${[1,2,3,4].map(i => `<span class="${i <= n ? 'on' : ''}"></span>`).join('')}</div>`
+    + `<div class="st-stepno">Step ${n} of 4</div>`
+    + `<h2 id="stTitle" class="st-h" tabindex="-1">${esc(title)}</h2>`
+    + `<p class="st-why"><strong>How this changes your plan:</strong> ${esc(why)}</p>`;
+}
+function _stNav(canNext, skipLabel, describedBy){
+  return `<div class="st-nav">`
+    + `<button type="button" class="st-back" onclick="stBack()">← Back</button>`
+    + `<button type="button" class="btn-p st-next" onclick="stNext()"${canNext ? '' : ' disabled aria-disabled="true"'}${describedBy ? ' aria-describedby="' + esc(describedBy) + '"' : ''}>Continue →</button>`
+    + `</div>`
+    + (skipLabel ? `<button type="button" class="st-skip" onclick="stSkip()">${esc(skipLabel)}</button>` : '');
+}
+
+function renderStartTodayStep(step, focusField, focusVal){
+  const el = document.getElementById('onboardContent');
+  if(!el) return;
+  const stepChanged = _st.step !== step;
+  _st.step = step;
+  let html = '';
+  if(step === 0){
+    html = `<div class="st-welcome">
+      <div style="font-size:52px;margin-bottom:10px;" aria-hidden="true">💪</div>
+      <h2 id="stTitle" class="st-h" tabindex="-1" style="text-align:center;">${_st.fromProfile ? 'Get a plan recommendation' : 'Start your first workout today'}</h2>
+      <p class="st-why" style="text-align:center;">Four quick questions, then we'll show today's session. Anything that isn't essential can be skipped, and you can change the plan any time later.</p>
+      <button type="button" class="btn-p" style="width:100%;font-size:15px;padding:14px;margin:6px 0 10px;" onclick="stNext()">Let's go →</button>
+      <button type="button" class="st-skip" onclick="stSkipAll()">${_st.fromProfile ? 'Cancel' : 'Skip — I\'ll look around first'}</button>
+    </div>`;
+  } else if(step === 1){
+    const sel = ST_GOALS.find(o => o.v === _st.goal);
+    html = _stHead(1, "What's your main goal?", sel ? sel.effect : 'It decides the kind of programme we suggest and its rep ranges.')
+      + `<div class="st-opts" role="group" aria-labelledby="stTitle">${ST_GOALS.map(o => _stOpt('goal', o, _st.goal === o.v)).join('')}</div>`
+      + _stNav(true, _st.goal ? '' : 'Not sure — skip (we\'ll keep it general)');
+  } else if(step === 2){
+    const sel = ST_EQUIP.find(o => o.v === _st.equipment);
+    html = _stHead(2, 'Where will you train?', sel ? sel.effect : 'We only suggest programmes you can actually do with your kit.')
+      + `<div class="st-opts" role="group" aria-labelledby="stTitle">${ST_EQUIP.map(o => _stOpt('equipment', o, _st.equipment === o.v)).join('')}</div>`
+      + (!_st.equipment ? `<p class="st-need" id="stNeed" role="status">Pick one to continue — this one matters for what we can suggest.</p>` : '')
+      + _stNav(!!_st.equipment, '', _st.equipment ? '' : 'stNeed');
+  } else if(step === 3){
+    html = _stHead(3, 'How often can you train?', `We'll schedule ${_st.days} day${_st.days === 1 ? '' : 's'} a week, always including today so you can start now. Session length steers us away from long splits if you're short on time.`)
+      + `<div class="more-lbl" id="stDaysLbl">Days per week</div>`
+      + `<div class="st-chips" role="group" aria-labelledby="stDaysLbl">${ST_DAYS.map(d => _stChip('days', d, d + ' days', _st.days === d)).join('')}</div>`
+      + `<div class="more-lbl" id="stMinLbl" style="margin-top:16px;">Session length <span class="st-opt-s" style="display:inline;">(optional)</span></div>`
+      + `<div class="st-chips" role="group" aria-labelledby="stMinLbl">${ST_MINUTES.map(m => _stChip('minutes', m, m === 75 ? '75+ min' : m + ' min', _st.minutes === m)).join('')}</div>`
+      + _stNav(true, '');
+  } else if(step === 4){
+    const sel = ST_EXP.find(o => o.v === _st.experience);
+    html = _stHead(4, 'How much lifting have you done?', sel ? sel.effect : 'It sets your starting weights and which programmes fit you.')
+      + `<div class="st-opts" role="group" aria-labelledby="stTitle">${ST_EXP.map(o => _stOpt('experience', o, _st.experience === o.v)).join('')}</div>`
+      + _stNav(true, _st.experience ? '' : 'Skip — assume I\'m new');
+  } else if(step === 5){
+    const pv = _stPreview();
+    if(!pv){
+      html = `<h2 id="stTitle" class="st-h" tabindex="-1">No programme fits those answers</h2><p class="st-why">Try a different equipment option.</p>` + _stNav(false, '');
+    } else {
+      const todayName = ST_WEEKDAYS[new Date().getDay()];
+      const days = pv.draft.coreSchedule.preferredDays.map(d => `<span class="st-day${d === todayName ? ' today' : ''}">${esc(d.slice(0,3))}${d === todayName ? ' · today' : ''}</span>`).join('');
+      const rows = pv.exs.map(e => {
+        const w = e.bw ? 'Bodyweight' : (Number(e.weight) > 0 ? _fmtKg(e.weight) + ' kg' : '');
+        return `<li><span class="st-ex-n">${esc(e.name)}</span><span class="st-ex-d">${esc(e.sets)} × ${esc(e.reps)}${w ? ' · ' + esc(w) : ''}</span></li>`;
+      }).join('');
+      const replacing = (typeof isPathActive === 'function' && isPathActive());
+      html = `<div class="st-stepno">Your plan</div>
+        <h2 id="stTitle" class="st-h" tabindex="-1">${esc(pv.rec.name)}</h2>
+        <p class="st-why">${esc(pv.rec.reason)}</p>
+        <div class="st-days" aria-label="Training days">${days}</div>
+        <div class="st-today">
+          <div class="more-lbl">Today · ${esc(pv.day || '')}</div>
+          <ul class="st-exlist">${rows || '<li><span class="st-ex-n">Your first session</span></li>'}</ul>
+          <p class="st-note">Starting weights are deliberately conservative — adjust them on the first set. Add your body weight and best lifts later (Profile → Fine-tune starting weights) for sharper numbers.</p>
+        </div>
+        ${replacing ? '<p class="st-need">This replaces your current plan.</p>' : ''}
+        <button type="button" class="btn-p" style="width:100%;font-size:16px;padding:16px;min-height:56px;margin-top:6px;" onclick="stStart(1)" data-autofocus>▶ Start today's workout</button>
+        <button type="button" class="st-secondary" onclick="stStart(0)">Save plan — start later</button>
+        <div class="st-nav" style="margin-top:4px;">
+          <button type="button" class="st-back" onclick="stBack()">← Back</button>
+          <button type="button" class="st-back" onclick="stChooseOther()">Choose a different programme</button>
+        </div>`;
+    }
+  }
+  el.innerHTML = html;
+  // Focus: a new step → its heading (announces the question); an option tap →
+  // the same option again (innerHTML re-render would otherwise drop focus).
+  let tgt = null;
+  if(focusField){
+    tgt = [...el.querySelectorAll('[data-f]')].find(b => b.dataset.f === focusField && b.dataset.v === String(focusVal)) || null;
+  }
+  if(!tgt && (stepChanged || step === 0)) tgt = document.getElementById('stTitle');
+  if(tgt) setTimeout(() => tgt.focus({ preventScroll: !stepChanged }), 30);
+}
+
+function stPick(field, val){
+  if(field === 'days' || field === 'minutes'){
+    const n = Number(val);
+    if(field === 'days' && ST_DAYS.includes(n)) _st.days = n;
+    if(field === 'minutes' && ST_MINUTES.includes(n)) _st.minutes = (_st.minutes === n ? null : n);
+  } else if(field === 'goal' && ST_GOALS.some(o => o.v === val)) _st.goal = val;
+  else if(field === 'equipment' && ST_EQUIP.some(o => o.v === val)) _st.equipment = val;
+  else if(field === 'experience' && ST_EXP.some(o => o.v === val)) _st.experience = val;
+  else return;
+  renderStartTodayStep(_st.step, field, val);
+}
+function stNext(){
+  if(_st.step === 2 && !_st.equipment){ const n = document.getElementById('stNeed'); if(n) n.focus && n.focus(); return; }
+  if(_st.step < 5) renderStartTodayStep(_st.step + 1);
+}
+function stBack(){ if(_st.step > 0) renderStartTodayStep(_st.step - 1); }
+function stSkip(){ renderStartTodayStep(Math.min(5, _st.step + 1)); }
+
+function _stClose(){ document.getElementById('onboardMod').classList.remove('open'); }
+
+// Leave without a plan. First run: don't nag with the Path wizard either —
+// the Path tab's "Start a Path" and Profile both lead back here.
+function stSkipAll(){
+  if(!_st.fromProfile){
+    localStorage.setItem('maxgainz_onboarded', '1');
+    localStorage.setItem('maxgainz_path_skipped', '1');
+    // Sync the flags (cloudSaveProfile sends onboarded/pathSkipped) so the
+    // flow doesn't come back after sign-out or on another device.
+    saveLocalCache();
+    cloudSaveProfile();
+  }
+  _stClose();
+}
+
+// Persist the answers (optional fields on the existing onboarding object) and
+// starting weights for exercises the user hasn't already got a weight for.
+function _stSaveProfile(rec){
+  const w = _stWeights();
+  userProfile.onboarding = Object.assign({}, userProfile.onboarding || {}, {
+    version: 2, startedVia: 'start-today',
+    goal: _st.goal, equipment: _st.equipment, daysPerWeek: _st.days, sessionMinutes: _st.minutes || null,
+    experienceLevel: _st.experience || (userProfile.onboarding && userProfile.onboarding.experienceLevel) || 'beginner',
+    trainingGoal: { strength:'strength', muscle:'muscle', fitness:'endurance', health:'general' }[_st.goal] || 'general',
+    trainingFrequency: _st.days <= 3 ? '2-3' : _st.days <= 5 ? '4-5' : '6+',
+    recommendedProgramme: rec ? rec.key : null,
+    calculatedStartingWeights: w
+  });
+  Object.entries(w).forEach(([ex, wt]) => { if(customWeights[ex] === undefined) customWeights[ex] = wt; });
+  applyCustomWeights();
+  localStorage.setItem('maxgainz_onboarded', '1');
+  saveLocalCache();
+  cloudSaveProfile();   // persists answers + onboarded even if no plan is confirmed afterwards
+}
+
+function stStart(now){
+  const pv = _stPreview();
+  if(!pv) return;
+  _stSaveProfile(pv.rec);
+  _pathWizard = { step:5, programme:pv.rec.key, duration:8, variant:pv.rec.variant, daysPerWeek:pv.rec.daysPerWeek,
+    coreDays:[...pv.draft.coreSchedule.preferredDays], addOns:[], hiitSeries:null, equipmentDefault:'home' };
+  _stClose();
+  confirmStartPath();   // saves locally + cloud, renders Today
+  if(now){
+    const day = getNextPathDay(userPath.programme);
+    startPathSession(userPath.programme, day);
+  }
+}
+
+// Keep the answers, then let the user pick in the (shortened) Path wizard,
+// pre-filled with the recommendation and a schedule that includes today.
+function stChooseOther(){
+  const pv = _stPreview();
+  _stSaveProfile(pv ? pv.rec : null);
+  _pathWizardAutoOpened = false;
+  // Open the wizard BEFORE closing this sheet so focus moves dialog → dialog.
+  openPathWizard();
+  if(pv){
+    _pathWizard.programme = pv.rec.key; _pathWizard.variant = pv.rec.variant;
+    _pathWizard.daysPerWeek = pv.rec.daysPerWeek; _pathWizard.coreDays = [...pv.draft.coreSchedule.preferredDays];
+    // A previous plan's HIIT series / add-ons must not ride along onto a new programme.
+    _pathWizard.addOns = [];
+    if(pv.rec.key !== 'HIIT') _pathWizard.hiitSeries = null;
+    renderPathStep1();
+  }
+  _stClose();
+  setTimeout(() => {
+    // The pre-selected card; ULF/PPL/library picks live inside the Strength tile.
+    const sel = document.querySelector('#pathStep1 [aria-pressed="true"]') || document.querySelector('#pathStep1 [aria-haspopup="dialog"]');
+    if(sel) sel.focus({ preventScroll: true });
+  }, 80);
+}
+
+// Enter/Space on a role="button" card (block content can't live in a <button>).
+function _cardKey(e, el){
+  if(e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar'){
+    e.preventDefault();
+    const sig = el.getAttribute('onclick'), scope = el.closest('.modal') || document;
+    el.click();
+    // The click handler re-renders the step via innerHTML, detaching `el`;
+    // re-focus its replacement (same handler) so keyboard users keep their place.
+    if(!el.isConnected && sig){
+      const again = [...scope.querySelectorAll('[onclick]')].find(n => n.getAttribute('onclick') === sig);
+      if(again) again.focus({ preventScroll: true });
+    }
+  }
+}
+
+// Profile → the original detailed setup (body weight, injuries, best lifts).
+function openDetailedSetup(){
+  renderOnboardStep(1);
+  document.getElementById('onboardMod').classList.add('open');
+}
+
+// Profile → "Recommend a plan for me" (pre-filled with saved answers).
+function openStartTodayFromProfile(){ openStartToday(true); }
 
 // ── SHARE WORKOUT CARD ──
 let _lastShareBlob = null;
@@ -23189,15 +23633,19 @@ function openPathWizard() {
   document.getElementById('pathWizardMod').classList.add('open');
 }
 
+// Phase 1: the essential path is 1 (programme) → 3 (schedule) → 5 (review).
+// Duration (2) and add-ons (4) are optional "Customise" detours from review
+// that return to it. Pure so the gate can pin the routing.
+const PATH_WIZARD_NEXT = { 1:3, 2:5, 3:5, 4:5 };
+const PATH_WIZARD_BACK = { 2:5, 3:1, 4:5, 5:3 };
+function _pathWizardRoute(step, dir){
+  const m = dir < 0 ? PATH_WIZARD_BACK : PATH_WIZARD_NEXT;
+  return m[step] || step;
+}
 function pathWizardNext() {
   const step = _pathWizard.step;
   if(step >= 5) return;
-  document.getElementById('pathStep' + step).style.display = 'none';
-  _pathWizard.step++;
-  document.getElementById('pathStep' + _pathWizard.step).style.display = 'block';
-  updatePathWizardDots(_pathWizard.step);
-  const renderFns = { 1:renderPathStep1, 2:renderPathStep2, 3:renderPathStep3, 4:renderPathStep4, 5:renderPathStep5 };
-  if(renderFns[_pathWizard.step]) renderFns[_pathWizard.step]();
+  pathWizardGoTo(_pathWizardRoute(step, 1));
 }
 
 // Jump directly to a wizard step (used by quick-start presets to land on review).
@@ -23217,7 +23665,7 @@ function quickStartPath(preset){
     _pathWizard.variant = 'standard';
     _pathWizard.duration = 8;
     _pathWizard.daysPerWeek = 3;
-    _pathWizard.coreDays = ['Monday','Wednesday','Friday'];
+    _pathWizard.coreDays = _spreadDays(new Date().getDay(), 3); // includes today → no rest-day first visit
     _pathWizard.addOns = [];
     _pathWizard.hiitSeries = null;
   } else if(preset === 'summer'){
@@ -23225,7 +23673,7 @@ function quickStartPath(preset){
     _pathWizard.variant = 'standard';
     _pathWizard.duration = 8;
     _pathWizard.daysPerWeek = 3;
-    _pathWizard.coreDays = ['Monday','Wednesday','Friday'];
+    _pathWizard.coreDays = _spreadDays(new Date().getDay(), 3);
     _pathWizard.addOns = [];
     _pathWizard.hiitSeries = 'summer-series';
     _pathWizard.equipmentDefault = 'home';
@@ -23235,21 +23683,21 @@ function quickStartPath(preset){
 
 function pathWizardBack() {
   if(_pathWizard.step <= 1) return;
-  document.getElementById('pathStep' + _pathWizard.step).style.display = 'none';
-  _pathWizard.step--;
-  document.getElementById('pathStep' + _pathWizard.step).style.display = 'block';
-  updatePathWizardDots(_pathWizard.step);
-  // Re-render previous step so state is always fresh
-  const renderFns = { 1:renderPathStep1, 2:renderPathStep2, 3:renderPathStep3, 4:renderPathStep4, 5:renderPathStep5 };
-  if(renderFns[_pathWizard.step]) renderFns[_pathWizard.step]();
+  pathWizardGoTo(_pathWizardRoute(_pathWizard.step, -1));
 }
 
 function updatePathWizardDots(activeStep) {
+  // Three visible dots (1, 3, 5); the optional detours (2, 4) light the review dot.
+  const shown = (activeStep === 2 || activeStep === 4) ? 5 : activeStep;
+  const pos = { 1:1, 3:2, 5:3 };
   for(let i = 1; i <= 5; i++){
     const dot = document.getElementById('pdot-' + i);
     if(!dot) continue;
-    dot.className = 'path-step-dot' + (i < activeStep ? ' done' : i === activeStep ? ' active' : '');
+    if(i === 2 || i === 4){ dot.style.display = 'none'; continue; }
+    dot.className = 'path-step-dot' + (i < shown ? ' done' : i === shown ? ' active' : '');
   }
+  const prog = document.getElementById('pathWizardProgress');
+  if(prog) prog.setAttribute('aria-label', 'Step ' + (pos[shown] || 1) + ' of 3');
 }
 
 function confirmStartPath() {
@@ -23584,7 +24032,7 @@ function renderPathStep1() {
     hiitSubChoiceHtml = `
       <div style="margin:6px 0 14px;padding:14px;background:var(--surface2);border:1px solid rgba(255,140,66,0.25);border-radius:14px;">
         <div style="font-size:11px;font-weight:800;color:var(--orange);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;">⚡ HIIT Variant</div>
-        <div class="path-prog-card ${isSeries ? 'selected' : ''}"
+        <div class="path-prog-card ${isSeries ? 'selected' : ''}" role="button" tabindex="0" onkeydown="_cardKey(event,this)" aria-pressed="${isSeries}"
              onclick="selectHIITSeries('summer-series')"
              style="margin-bottom:8px;">
           <div style="display:flex;align-items:center;gap:12px;">
@@ -23598,7 +24046,7 @@ function renderPathStep1() {
             <div style="font-size:18px;color:var(--accent);flex-shrink:0;">${isSeries ? '✓' : ''}</div>
           </div>
         </div>
-        <div class="path-prog-card ${!isSeries ? 'selected' : ''}"
+        <div class="path-prog-card ${!isSeries ? 'selected' : ''}" role="button" tabindex="0" onkeydown="_cardKey(event,this)" aria-pressed="${!isSeries}"
              onclick="selectHIITSeries(null)">
           <div style="display:flex;align-items:center;gap:12px;">
             <div style="font-size:28px;">🎯</div>
@@ -23624,19 +24072,19 @@ function renderPathStep1() {
       <div style="display:flex;flex-direction:column;gap:8px;">
         <button onclick="quickStartPath('ulf')" style="display:flex;align-items:center;gap:10px;width:100%;background:var(--surface);border:0.5px solid var(--border);border-radius:10px;padding:11px 12px;cursor:pointer;text-align:left;">
           <span style="font-size:22px;">🏋️</span>
-          <span style="flex:1;"><span style="font-size:13px;font-weight:800;color:var(--text);">Beginner Strength</span><br><span style="font-size:11px;color:var(--text2);">ULF · 3×/week (Mon·Wed·Fri) · 8 weeks</span></span>
+          <span style="flex:1;"><span style="font-size:13px;font-weight:800;color:var(--text);">Beginner Strength</span><br><span style="font-size:11px;color:var(--text2);">ULF · 3×/week, starting today · 8 weeks</span></span>
           <span style="color:var(--accent);font-weight:800;">→</span>
         </button>
         <button onclick="quickStartPath('summer')" style="display:flex;align-items:center;gap:10px;width:100%;background:var(--surface);border:0.5px solid var(--border);border-radius:10px;padding:11px 12px;cursor:pointer;text-align:left;">
           <span style="font-size:22px;">🌴</span>
-          <span style="flex:1;"><span style="font-size:13px;font-weight:800;color:var(--text);">Hot Girl Summer</span><br><span style="font-size:11px;color:var(--text2);">Summer Series HIIT · 3×/week · 8 weeks · home kit</span></span>
+          <span style="flex:1;"><span style="font-size:13px;font-weight:800;color:var(--text);">Hot Girl Summer</span><br><span style="font-size:11px;color:var(--text2);">Summer Series HIIT · 3×/week, starting today · 8 weeks · home kit</span></span>
           <span style="color:var(--accent);font-weight:800;">→</span>
         </button>
       </div>
     </div>
     <div style="font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;">Or choose your own</div>
     ${programmes.map(p => `
-      <div class="path-prog-card ${_pathWizard.programme === p.id ? 'selected' : ''}"
+      <div class="path-prog-card ${_pathWizard.programme === p.id ? 'selected' : ''}" role="button" tabindex="0" onkeydown="_cardKey(event,this)" aria-pressed="${_pathWizard.programme === p.id}"
            onclick="selectPathProgramme('${p.id}')">
         <div style="display:flex;align-items:center;gap:12px;">
           <div style="font-size:32px;">${p.icon}</div>
@@ -23652,7 +24100,7 @@ function renderPathStep1() {
       ${p.id === 'HIIT' ? hiitSubChoiceHtml : ''}
     `).join('')}
     <!-- Strength meta-tile — opens the Strength picker (ULF + PPL + library) -->
-    <div class="path-prog-card ${_strengthSelected ? 'selected' : ''}" onclick="openLibraryBrowse()"
+    <div class="path-prog-card ${_strengthSelected ? 'selected' : ''}" role="button" tabindex="0" onkeydown="_cardKey(event,this)" aria-haspopup="dialog" onclick="openLibraryBrowse()"
       style="background:linear-gradient(135deg,rgba(200,255,0,0.06),rgba(123,77,255,0.06));border-color:${_strengthSelected?'var(--accent)':'rgba(200,255,0,0.3)'};">
       <div style="display:flex;align-items:center;gap:12px;">
         <div style="font-size:32px;">🏋️</div>
@@ -23766,11 +24214,11 @@ function renderPathStep3() {
       <div style="margin-bottom:16px;">
         <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">PPL Variant</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-          <div class="path-duration-btn ${_pathWizard.variant === '3day' ? 'selected' : ''}" onclick="selectPathVariant('3day')">
+          <div class="path-duration-btn ${_pathWizard.variant === '3day' ? 'selected' : ''}" role="button" tabindex="0" onkeydown="_cardKey(event,this)" aria-pressed="${_pathWizard.variant === '3day'}" onclick="selectPathVariant('3day')">
             <div style="font-size:15px;font-weight:800;">3 Day</div>
             <div style="font-size:11px;color:var(--text2);">Mon · Wed · Fri</div>
           </div>
-          <div class="path-duration-btn ${_pathWizard.variant === '6day' ? 'selected' : ''}" onclick="selectPathVariant('6day')">
+          <div class="path-duration-btn ${_pathWizard.variant === '6day' ? 'selected' : ''}" role="button" tabindex="0" onkeydown="_cardKey(event,this)" aria-pressed="${_pathWizard.variant === '6day'}" onclick="selectPathVariant('6day')">
             <div style="font-size:15px;font-weight:800;">6 Day</div>
             <div style="font-size:11px;color:var(--text2);">Mon – Sat</div>
           </div>
@@ -24012,6 +24460,13 @@ function renderPathStep5() {
           <span style="color:var(--text2);font-size:13px;">Ends</span>
           <span style="font-weight:800;color:var(--accent);">${endFormatted}</span>
         </div>
+      </div>
+    </div>
+    <div style="margin:-8px 0 18px;">
+      <div class="more-lbl">Customise (optional)</div>
+      <div style="display:flex;gap:8px;">
+        <button type="button" class="more-btn" style="flex:1;" onclick="pathWizardGoTo(2)">📅 Length: ${_pathWizard.duration} weeks</button>
+        ${isLibraryProgramme(_pathWizard.programme) ? '' : `<button type="button" class="more-btn" style="flex:1;" onclick="pathWizardGoTo(4)">➕ Add-ons${_pathWizard.addOns.length ? ' (' + _pathWizard.addOns.length + ')' : ''}</button>`}
       </div>
     </div>
     <button class="btn-p" style="width:100%;font-size:16px;padding:16px;margin-bottom:10px;"
