@@ -6918,16 +6918,16 @@ function _nlReadNumbers(rest){
   r = r.replace(/\s(reps?|and|then|for the|sets? done)(?=\s)/g, ' ').replace(/\s+/g, ' ').replace(/(\s,)+\s*$/, ' ').replace(/^\s*,/, ' ').trim();
   const num = '(\\+?\\d+(?:\\.\\d+)?)', list = '(\\d+(?:\\s?,?\\s?\\d+)*)';
   const L = s => s.split(/[\s,]+/).filter(Boolean).map(Number);
-  let m, w = null, reps = null, sets = null, wGiven = false;
+  let m, w = null, reps = null, sets = null, wGiven = false, shapeAB = null;
   if((m = r.match(new RegExp('^' + num + ' for ' + list + '$')))){ w = m[1]; reps = L(m[2]); }
   else if((m = r.match(/^(\d+) sets? of (\d+)(?: @ (\+?\d+(?:\.\d+)?))?$/))){ sets = +m[1]; reps = [+m[2]]; w = m[3] || null; }
   else if((m = r.match(/^(\d+) x (\d+) @ (\+?\d+(?:\.\d+)?)$/))){ sets = +m[1]; reps = [+m[2]]; w = m[3]; }
-  else if((m = r.match(new RegExp('^' + num + ' x (\\d+)(?: x (\\d+))?$')))){ w = m[1]; reps = [+m[2]]; sets = m[3] ? +m[3] : null; }
+  else if((m = r.match(new RegExp('^' + num + ' x (\\d+)(?: x (\\d+))?$')))){ w = m[1]; reps = [+m[2]]; sets = m[3] ? +m[3] : null; if(!m[3] && !/^\+/.test(m[1])) shapeAB = [parseFloat(m[1]), +m[2]]; }
   else if((m = r.match(new RegExp('^' + list + ' @ ' + num + '$')))){ reps = L(m[1]); w = m[2]; }
   else if((m = r.match(new RegExp('^' + list + '$')))){
     reps = L(m[1]);
     // "80 8" is ambiguous (weight + reps? two sets?) — only commas or small numbers count as a rep list.
-    if(reps.length > 1 && !/,/.test(m[1]) && reps.some(x => x > 30)) return null;
+    if(reps.some(x => x > 30)) return null;   // "bench 100", "62,5", "80, 8": not reps — let AI/a question handle it
   }
   else if(bw && (m = r.match(new RegExp('^' + num + ' ' + list + '$'))) && /^\+/.test(m[1])){ w = m[1]; reps = L(m[2]); }
   else return null;
@@ -6935,7 +6935,7 @@ function _nlReadNumbers(rest){
   const bwPlus = w !== null && /^\+/.test(String(w));
   w = w === null ? null : parseFloat(w);
   if(sets !== null){ if(sets < 1 || sets > 10) return { bad:'sets' }; reps = Array(sets).fill(reps[0]); }
-  return { w, wGiven, bwPlus, bw: bw || bwPlus, reps, rpe, unit };
+  return { w, wGiven, bwPlus, bw: bw || bwPlus, reps, rpe, unit, shapeAB };
 }
 // Pure: the whole parse. ctx = {exercises:[{idx,name,aliases,bw,sets,done,weight,steps}], curIdx, lastRepeat:{w,r}|null}
 // opts = {forceIdx, forceUnit:'kg'|'lb', countMode:'trim'|'add'}.
@@ -6969,7 +6969,11 @@ function _nlParse(text, ctx, opts){
   const n = _nlReadNumbers(rest);
   if(!n) return { status:'unparsed' };
   if(n.bad) return { status:'clarify', kind:'range', question:'Up to 10 sets at a time, please.' };
-  if(n.unit === 'both') return { status:'clarify', kind:'unit', question:'Was that kg or lb?' };
+  if(n.unit === 'both' && !o.forceUnit) return { status:'clarify', kind:'unit', question:'Was that kg or lb?' };
+  // "3x8" / "5x5": sets × reps, or weight × reps? Ask unless the numbers make it obvious.
+  if(n.shapeAB && !o.shape && n.shapeAB[0] >= 1 && n.shapeAB[0] <= 10 && n.shapeAB[1] <= 30 && (ex.bw || !(Number(ex.weight) > 0) || n.shapeAB[0] < Number(ex.weight) * 0.4))
+    return { status:'clarify', kind:'shape', question:'Did you mean ' + n.shapeAB[0] + ' sets of ' + n.shapeAB[1] + ', or ' + n.shapeAB[0] + ' kg × ' + n.shapeAB[1] + '?', a:n.shapeAB[0], b:n.shapeAB[1] };
+  if(n.shapeAB && o.shape === 'sets'){ n.reps = Array(Math.min(10, n.shapeAB[0])).fill(n.shapeAB[1]); n.w = null; n.wGiven = false; }
   if(!n.reps || !n.reps.length || n.reps.some(r => !(Number.isInteger(r) && r >= 1 && r <= 100))) return { status:'clarify', kind:'range', question:'Reps should be whole numbers from 1 to 100.' };
   if(n.reps.length > 10) return { status:'clarify', kind:'range', question:'Up to 10 sets at a time, please.' };
   if(n.rpe !== null && !(n.rpe >= 1 && n.rpe <= 10 && Math.round(n.rpe * 2) === n.rpe * 2)) return { status:'clarify', kind:'range', question:'RPE goes from 1 to 10 in half steps.' };
@@ -6978,10 +6982,14 @@ function _nlParse(text, ctx, opts){
   let w;
   if(ex.bw){
     w = n.wGiven ? n.w : (Number(ex.weight) || 0);
+    if(!n.wGiven && w > 0) notes.push('Using today\'s BW +' + w + ' kg.');
     if(n.wGiven && !n.bwPlus && !n.bw && n.w > 0) return { status:'clarify', kind:'bw', question:ex.name + ' is bodyweight — type “+' + n.w + ' for …” for added weight.' };
   } else if(n.wGiven){
     w = n.w;
     if(n.bwPlus) return { status:'unparsed' };
+    if(!(w > 0)) return { status:'clarify', kind:'range', question:'0 kg? Type the weight you lifted.' };
+    if(!n.unit && !o.forceUnit && !o.shape && Number(ex.weight) > 0 && w < Number(ex.weight) * 0.4)
+      return { status:'clarify', kind:'low', question:'Is ' + w + ' kg right? Today\'s weight is ' + ex.weight + ' kg.' };
   } else {
     w = Number(ex.weight) || 0;
     unit = 'kg';
@@ -7009,6 +7017,7 @@ function _nlBuild(ex, sets, extra, opts){
   const open = [];
   for(let i = 0; i < (Number(ex.sets) || 0); i++) if(done.indexOf(i) === -1) open.push(i);
   let addSets = 0, list = sets.slice();
+  if(ex.superset && list.length > 1) return { status:'clarify', kind:'superset', question: ex.name + ' is in a superset — log one set at a time so each round moves on correctly.' };
   if(list.length > open.length){
     const room = Math.max(0, 10 - (Number(ex.sets) || 0));
     if(o.countMode === 'trim') list = list.slice(0, open.length);
@@ -7020,8 +7029,17 @@ function _nlBuild(ex, sets, extra, opts){
   for(let k = 0; k < addSets; k++) slots.push((Number(ex.sets) || 0) + k);
   return { status:'ok', exIdx: ex.idx, exName: ex.name, addSets, sets: list.map((x, i) => ({ setIdx: slots[i], w:x.w, r:x.r, rpe:x.rpe })), notes: (extra && extra.notes) || [] };
 }
+// Pure: replace every user-made exercise name (case-insensitive) with its
+// "Exercise N" placeholder before text goes to the AI. pairs = [{ph, real}].
+function _nlMaskNames(text, pairs){
+  let s = String(text == null ? '' : text);
+  (pairs || []).filter(x => x && /^Exercise \d+$/.test(x.ph) && x.real).sort((a, b) => b.real.length - a.real.length).forEach(x => {
+    s = s.replace(new RegExp(x.real.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), x.ph);
+  });
+  return s;
+}
 // Pure: an AI answer (validated by _aiCheckOutput) → the same preview shape.
-function _nlFromAi(out, ctx, idMap){
+function _nlFromAi(out, ctx, idMap, opts){
   if(!out || !Array.isArray(out.sets)) return { status:'unparsed' };
   if(!out.sets.length) return { status:'clarify', kind:'ai', question: String(out.clarify || 'Could you rephrase that?') };
   const ids = out.sets.map(s => s.ex).filter((v, i, a) => a.indexOf(v) === i);
@@ -7037,7 +7055,7 @@ function _nlFromAi(out, ctx, idMap){
   });
   if(out.sets.some(s => s.weight === null)) notes.push('Weight not given — using today\'s ' + (Number(ex.weight) || 0) + ' kg.');
   if(out.sets.some(s => s.unit === 'lb')) notes.push('Converted from lb.');
-  const b = _nlBuild(ex, sets, { notes }, {});
+  const b = _nlBuild(ex, sets, { notes }, opts || {});
   return b.status === 'ok' ? Object.assign(b, { source:'ai' }) : b;
 }
 
@@ -7064,7 +7082,7 @@ function _nlCtx(){
   const exercises = [];
   (sessExs || []).forEach((e, i) => {
     if(!_nlLoggable(e)) return;
-    exercises.push({ idx:i, name:e.name, aliases:_exerciseLookupNames(e.name).slice(1), bw:!!e.bw, sets:e.sets,
+    exercises.push({ idx:i, name:e.name, aliases:_exerciseLookupNames(e.name).slice(1), bw:!!e.bw, sets:e.sets, superset:!!supersets[i],
       done:(setsDone[i] || []).slice(), weight:e.weight, steps:getWeightSteps(e, equipOverride[i]) });
   });
   const rc = _repeatCandidate();
@@ -7088,8 +7106,9 @@ async function nlRead(){
   if(!_nlState) return;
   const inp = document.getElementById('nlInput');
   const text = inp ? String(inp.value || '').slice(0, 140) : '';
+  if(_nlState.parse && _nlState.parse.status === 'reading' && text === _nlState.text) return;   // already asking
   if(_nlState.parse && _nlState.text && text !== _nlState.text){ _aiMetricBump('nl_edited'); if(_nlState.auditId) _aiAuditEvent(_nlState.auditId, 'edited'); }
-  _nlState.text = text; _nlState.opts = {}; _nlState.auditId = null; _nlState.idMap = null;
+  _nlState.text = text; _nlState.opts = {}; _nlState.auditId = null; _nlState.idMap = null; _nlState.aiOut = null;
   const ctx = _nlCtx();
   let p = _nlParse(text, ctx, {});
   if(p.status === 'unparsed'){
@@ -7098,10 +7117,13 @@ async function nlRead(){
       const id = 'E' + (k + 1); idMap[id] = e.idx;
       return { id, name: _nlIsCatalogueName(e.name) && /^[A-Za-z0-9 ()'&+.,\/–-]{1,60}$/.test(e.name) ? e.name : 'Exercise ' + (k + 1) };
     });
-    const r = await _aiCall('nl', { text, exercises:list, unit:'kg' }, 'nl');
+    // Names the user made up are swapped for their placeholder in the text too.
+    const sendText = _nlMaskNames(text, list.map(x => ({ ph: x.name, real: sessExs[idMap[x.id]] && sessExs[idMap[x.id]].name })));
+    const r = await _aiCall('nl', { text: sendText.slice(0, 140), exercises:list, unit:'kg' }, 'nl');
     if(!_nlState || _nlState.text !== text) return;            // user moved on
     _nlState.auditId = r.auditId || null; _nlState.idMap = idMap;
-    p = r.ok ? _nlFromAi(r.out, _nlCtx(), idMap) : { status:'unparsed', aiReason:r.reason };
+    _nlState.aiOut = r.ok ? r.out : null;
+    p = r.ok ? _nlFromAi(r.out, _nlCtx(), idMap, {}) : { status:'unparsed', aiReason:r.reason };
     _aiMetricBump(p.status === 'ok' ? 'nl_ai_ok' : p.status === 'clarify' ? 'nl_clarify' : 'nl_unparsed');
   } else {
     _aiMetricBump(p.status === 'ok' ? 'nl_local_ok' : p.status === 'pain' ? 'nl_pain' : p.status === 'clarify' ? 'nl_clarify' : 'nl_unparsed');
@@ -7113,10 +7135,11 @@ async function nlRead(){
 function _nlReparse(opts){
   if(!_nlState) return;
   _nlState.opts = Object.assign({}, _nlState.opts, opts);
-  const p = _nlParse(_nlState.text, _nlCtx(), _nlState.opts);
+  const p = _nlState.aiOut ? _nlFromAi(_nlState.aiOut, _nlCtx(), _nlState.idMap, _nlState.opts) : _nlParse(_nlState.text, _nlCtx(), _nlState.opts);
   _nlState.parse = p;
   _nlState.baseSets = p.status === 'ok' && sessExs[p.exIdx] ? sessExs[p.exIdx].sets : null;
   _nlRender();
+  const f = document.querySelector('#nlResult button'); if(f) f.focus();   // keep keyboard focus in the dialog
 }
 function nlChoose(k){
   const p = _nlState && _nlState.parse;
@@ -7125,6 +7148,7 @@ function nlChoose(k){
 }
 function nlUnit(u){ if(u === 'kg' || u === 'lb') _nlReparse({ forceUnit:u }); }
 function nlCount(mode){ if(mode === 'trim' || mode === 'add') _nlReparse({ countMode:mode }); }
+function nlShape(s){ if(s === 'sets' || s === 'weight') _nlReparse({ shape:s }); }
 function nlEdit(){ const i = document.getElementById('nlInput'); if(i){ i.focus(); i.select(); } }
 function nlCancel(){
   if(_nlState && _nlState.parse && _nlState.parse.status === 'ok'){ _aiMetricBump('nl_cancelled'); if(_nlState.auditId) _aiAuditEvent(_nlState.auditId, 'cancelled'); }
@@ -7140,8 +7164,10 @@ function nlSave(){
     || p.sets.some(s => (setsDone[p.exIdx] || []).indexOf(s.setIdx) !== -1);
   if(stale){ _nlState.parse = { status:'clarify', kind:'stale', question:'Something changed in your session — check it again.' }; _nlRender(); return; }
   if(curIdx !== p.exIdx){ curIdx = p.exIdx; updateSessUI(); }
+  const ei = p.exIdx;
   for(let k = 0; k < p.addSets; k++) addSett();
   p.sets.forEach(s => {
+    if(curIdx !== ei){ curIdx = ei; updateSessUI(); }   // markSet can route to a superset partner
     if(!repsLogged[curIdx]) repsLogged[curIdx] = {};
     if(!setWeights[curIdx]) setWeights[curIdx] = {};
     if(!rpeLogged[curIdx]) rpeLogged[curIdx] = {};
@@ -7189,6 +7215,7 @@ function _nlRender(){
     let choices = '';
     if(p.kind === 'exercise' && Array.isArray(p.choices)) choices = p.choices.map((ix, k) => sessExs[ix] ? btn(sessExs[ix].name, 'nlChoose(' + k + ')') : '').join('');
     else if(p.kind === 'unit') choices = btn('kg', "nlUnit('kg')") + btn('lb', "nlUnit('lb')");
+    else if(p.kind === 'shape') choices = btn(p.a + ' sets of ' + p.b, "nlShape('sets')") + btn(p.a + ' kg × ' + p.b, "nlShape('weight')");
     else if(p.kind === 'count' && p.left > 0) choices = btn('Log the first ' + p.left, "nlCount('trim')") + (p.canAdd ? btn('Add ' + p.extra + ' set' + (p.extra === 1 ? '' : 's'), "nlCount('add')") : '');
     el.innerHTML = `<p class="nl-q">${esc(p.question)}</p><div class="coach-actions">${choices}${btn('Edit', 'nlEdit()')}${btn('Cancel', 'nlCancel()')}</div>`;
     return;

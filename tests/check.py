@@ -3319,7 +3319,7 @@ def gate_coach_card(html, js):
 #      previews refused, RPE/weights/sets exactly as previewed
 #   c) lints: flag-gated, preview-before-save wiring, handlers literal, escaped
 # ─────────────────────────────────────────────────────────────────────────────
-NL_PURE = ['_aiMentionsPain', 'snapToSteps', '_nlNormalize', '_nlMatchExercise', '_nlReadNumbers', '_nlParse', '_nlBuild', '_nlFromAi']
+NL_PURE = ['_aiMentionsPain', 'snapToSteps', '_nlMaskNames', '_nlNormalize', '_nlMatchExercise', '_nlReadNumbers', '_nlParse', '_nlBuild', '_nlFromAi']
 NL_CONSTS = ['NL_NUM_WORDS', 'NL_FILLER', 'NL_ABBR', 'NL_LB_TO_KG']
 NL_ASSERTIONS = r"""
 var fails = [];
@@ -3339,6 +3339,21 @@ eq('80x8 (current exercise)', sets(P('80x8')), [0, [0,80,8,null]]);
 eq('80 × 8 with unicode times', sets(P('80 × 8')), [0, [0,80,8,null]]);
 eq('3x8 at 80 = sets x reps @ weight', sets(P('3x8 at 80')), [0, [0,80,8,null], [1,80,8,null], [2,80,8,null]]);
 eq('80 x 8 x 2 = weight x reps x sets', sets(P('80 x 8 x 2')), [0, [0,80,8,null], [1,80,8,null]]);
+eq('bare 3x8 → sets×reps or kg×reps? (asked)', sets(P('3x8')), 'clarify:shape');
+eq('…answer sets', sets(P('3x8', {shape:'sets'})), [0, [0,80,8,null], [1,80,8,null], [2,80,8,null]]);
+eq('…answer weight', sets(P('3x8', {shape:'weight'})), [0, [0,3,8,null]]);
+eq('5x5 on a bodyweight move is asked too', sets(P('pullups 5x5')), 'clarify:shape');
+eq('far below today\'s weight → asked', sets(P('bench 30 x 8')), 'clarify:low');
+eq('0 kg on a weighted lift → asked', sets(P('bench 0 x 8')), 'clarify:range');
+eq('a lone big number is not reps', sets(P('bench 100')), 'unparsed:');
+eq('decimal comma is not two sets', sets(P('bench 62,5')), 'unparsed:');
+eq('"80, 8" is not 80 reps', sets(P('bench 80, 8')), 'unparsed:');
+eq('kg+lb answered → no repeat question', sets(P('bench 80 kg for 8 lbs', {forceUnit:'kg'})), [0, [0,80,8,null]]);
+var ss = ctx(); ss.exercises[0].superset = true;
+eq('superset member: one set at a time', sets(_nlParse('bench 80 for 8, 8', ss, {})), 'clarify:superset');
+eq('superset member: a single set is fine', sets(_nlParse('bench 80 x 8', ss, {})), [0, [0,80,8,null]]);
+var bwp = ctx(); bwp.exercises[3].weight = 10;
+eq('bodyweight with planned load says so', _nlParse('pullups 8', bwp, {}).notes[0], 'Using today\'s BW +10 kg.');
 eq('3 sets of 8 uses today\'s weight (and says so)', [sets(P('3 sets of 8')), P('3 sets of 8').notes[0]], [[0, [0,80,8,null], [1,80,8,null], [2,80,8,null]], 'Weight not given — using today\'s 80 kg.']);
 eq('8 reps @ 80', sets(P('8 reps @ 80')), [0, [0,80,8,null]]);
 eq('just "12" → one set at today\'s weight', sets(P('12')), [0, [0,80,12,null]]);
@@ -3382,6 +3397,9 @@ eq('AI result is labelled for checking', _nlFromAi({sets:[{ex:'E2', weight:30, u
 eq('AI lb converted', sets(_nlFromAi({sets:[{ex:'E1', weight:176, unit:'lb', reps:5, rpe:null}], clarify:null}, ctx(), MAP)), [0, [0,80,5,null]]);
 eq('AI two exercises → ask', sets(_nlFromAi({sets:[{ex:'E1', weight:80, unit:null, reps:5, rpe:null}, {ex:'E2', weight:30, unit:null, reps:5, rpe:null}], clarify:null}, ctx(), MAP)), 'clarify:ai');
 eq('AI clarify passes through', _nlFromAi({sets:[], clarify:'Which exercise?'}, ctx(), MAP).question, 'Which exercise?');
+eq('custom names are masked in the typed text (any case, longest first)', _nlMaskNames('my Zercher Squat 80x8 and zercher squat pause', [{ph:'Exercise 2', real:'Zercher Squat'}, {ph:'Bench Press', real:'Bench Press'}, {ph:'Exercise 3', real:'Zercher Squat Pause'}]), 'my Exercise 2 80x8 and Exercise 3');
+eq('regex characters in a custom name are safe', _nlMaskNames('a+b (x) 5x5', [{ph:'Exercise 1', real:'a+b (x)'}]), 'Exercise 1 5x5');
+eq('AI count question answered with trim', sets(_nlFromAi({sets:[1,2,3,4].map(function(){ return {ex:'E1', weight:80, unit:null, reps:8, rpe:null}; }), clarify:null}, ctx(), MAP, {countMode:'trim'})), [0, [0,80,8,null], [1,80,8,null], [2,80,8,null]]);
 eq('AI too many sets → same count question', sets(_nlFromAi({sets:[1,2,3,4].map(function(){ return {ex:'E1', weight:80, unit:null, reps:8, rpe:null}; }), clarify:null}, ctx(), MAP)), 'clarify:count');
 JSON.stringify(fails);
 """
@@ -3392,7 +3410,8 @@ var __el = { innerHTML:'', removeAttribute:function(){}, setAttribute:function()
 var document = { getElementById:function(){ return __el; } };
 var window = {}; var restSec = 0, restStartTime = null;
 var __marked = [], __added = 0, __closed = 0, __pr = 0, __metrics = [], __events = [];
-function markSet(i){ __marked.push(i); (setsDone[curIdx] = setsDone[curIdx] || []).push(i); }
+var __route = false;
+function markSet(i){ __marked.push([curIdx, i]); (setsDone[curIdx] = setsDone[curIdx] || []).push(i); if(__route) curIdx = 1 - curIdx; }
 function addSett(){ sessExs[curIdx].sets++; __added++; }
 function updateSessUI(){} function stopRest(){} function showToast(){} function closeDialog(){ __closed++; }
 function _checkSetPR(){ __pr++; } function _aiMetricBump(n){ __metrics.push(n); } function _aiAuditEvent(id, e){ __events.push(e); }
@@ -3406,7 +3425,7 @@ var fails = []; function ok(label, cond){ if(!cond) fails.push(label); }
 NL_SAVE_ASSERTIONS = r"""
 reset(); state({status:'ok', exIdx:1, exName:'Squat', addSets:0, sets:[{setIdx:1, w:100, r:5, rpe:null}, {setIdx:2, w:100, r:4, rpe:9}]});
 nlSave();
-ok('save switches to the exercise and logs exactly the previewed sets', curIdx === 1 && JSON.stringify(__marked) === '[1,2]'
+ok('save switches to the exercise and logs exactly the previewed sets', JSON.stringify(__marked) === '[[1,1],[1,2]]'
   && repsLogged[1][1] === 5 && repsLogged[1][2] === 4 && setWeights[1][1] === 100 && rpeLogged[1][2] === 9 && !(1 in rpeLogged[1]));
 ok('save closes, counts and audits confirmed', __closed === 1 && __metrics.indexOf('nl_confirmed') !== -1 && __events.indexOf('confirmed') !== -1 && _nlState === null);
 reset(); state({status:'ok', exIdx:1, exName:'Squat', addSets:0, sets:[{setIdx:0, w:100, r:5, rpe:null}]});
@@ -3420,7 +3439,10 @@ nlSave();
 ok('a preview made before the set count changed is refused', __marked.length === 0);
 reset(); state({status:'ok', exIdx:0, exName:'Bench', addSets:1, sets:[{setIdx:0, w:80, r:8, rpe:null}, {setIdx:1, w:80, r:8, rpe:null}, {setIdx:2, w:80, r:8, rpe:null}, {setIdx:3, w:80, r:8, rpe:null}]});
 nlSave();
-ok('"add sets" adds exactly the extra slots, then logs them', __added === 1 && sessExs[0].sets === 4 && JSON.stringify(__marked) === '[0,1,2,3]');
+ok('"add sets" adds exactly the extra slots, then logs them', __added === 1 && sessExs[0].sets === 4 && JSON.stringify(__marked) === '[[0,0],[0,1],[0,2],[0,3]]');
+reset(); __route = true; state({status:'ok', exIdx:0, exName:'Bench', addSets:0, sets:[{setIdx:0, w:80, r:8, rpe:null}, {setIdx:1, w:80, r:7, rpe:null}]});
+nlSave(); __route = false;
+ok('even if markSet routes to a superset partner, every set lands on the previewed exercise', JSON.stringify(__marked) === '[[0,0],[0,1]]' && repsLogged[0][1] === 7 && !repsLogged[1]);
 reset(); state({status:'ok', exIdx:2, exName:'Pull-Up', addSets:0, sets:[{setIdx:0, w:0, r:12, rpe:null}]});
 nlSave();
 ok('bodyweight set stores the typed 0 added load (not the planned BW +5)', setWeights[2][0] === 0 && repsLogged[2][0] === 12);
@@ -3453,23 +3475,28 @@ def gate_nl_log(html, js):
         except Exception: problems.append('save runner errored: ' + out[:300])
     lint = []
     nl_fns = re.findall(r'\n(?:async )?function (_?nl[A-Za-z]+)\(', js)
-    writers = [f for f in nl_fns if re.search(r'markSet\(|repsLogged\[[^\]]*\]\[[^\]]*\] =|setWeights\[[^\]]*\]\[[^\]]*\] =', extract_async_decl(js, f) or '')]
+    writers = [f for f in nl_fns if re.search(r'markSet\(|addSett\(|(repsLogged|setWeights|rpeLogged|setsDone)\[[^\]]*\](\[[^\]]*\])? =|delete rpeLogged|sessExs\[[^\]]*\]\.\w+ =', extract_async_decl(js, f) or '')]
     if writers != ['nlSave']: lint.append(f'only nlSave may write logged sets; writers: {writers}')
-    calls = [m.start() for m in re.finditer(r"nlSave\(\)", js)]
+    calls = [m.start() for m in re.finditer(r"'nlSave\(\)'", js)]
     rend = extract_decl(js, '_nlRender') or ''
-    if len(calls) != 2 or "btn('Save ' + p.sets.length" not in rend or "'nlSave()', true)" not in rend:
+    if len(calls) != 1 or "btn('Save ' + p.sets.length" not in rend or "'nlSave()', true)" not in rend:
         lint.append('nlSave() must be reachable only from the preview\'s Save button')
     if "if(!p || p.status !== 'ok') return;" not in (extract_decl(js, 'nlSave') or ''): lint.append('nlSave must refuse anything but a previewed ok parse')
-    allowed = {"'nlEdit()'", "'nlCancel()'", "'nlSave()'", "'nlChoose(' + k + ')'", "\"nlUnit('kg')\"", "\"nlUnit('lb')\"", "\"nlCount('trim')\"", "\"nlCount('add')\""}
-    for m in re.finditer(r"btn\((?:[^,()]|\([^()]*\))+, ((?:'[^']*'(?: \+ k \+ '[^']*')?)|\"[^\"]*\")", rend):
+    allowed = {"'nlEdit()'", "'nlCancel()'", "'nlSave()'", "'nlChoose(' + k + ')'", "\"nlUnit('kg')\"", "\"nlUnit('lb')\"", "\"nlCount('trim')\"", "\"nlCount('add')\"", "\"nlShape('sets')\"", "\"nlShape('weight')\""}
+    found = list(re.finditer(r"btn\((?:[^,()]|\([^()]*\))+, ((?:'[^']*'(?: \+ k \+ '[^']*')?)|\"[^\"]*\")", rend))
+    for m in found:
         if m.group(1) not in allowed: lint.append(f'_nlRender handler is not a fixed call: {m.group(1)}')
+    if len(found) != len(re.findall(r'\bbtn\(', rend)): lint.append('a btn() call in _nlRender has a non-literal handler')
     if rend.count('onclick="${fn}"') != 1: lint.append('_nlRender must build every handler through btn()')
     safe = ('esc(', 'btn(', 'choices}', 'rows}', 'notes}', "p.exIdx !== curIdx ?", "primary ? ' coach-primary'", 'fn}')
     for m in re.finditer(r'\$\{', rend):
         nxt = rend[m.end():m.end() + 40].lstrip()
         if not nxt.startswith(safe): lint.append(f'_nlRender interpolates without esc(): ${{{nxt[:40]}')
     rd = extract_async_decl(js, 'nlRead') or ''
-    if not re.search(r"let p = _nlParse\(text, ctx, \{\}\);\s*if\(p\.status === 'unparsed'\)\{[\s\S]*?await _aiCall\('nl', \{ text, exercises:list, unit:'kg' \}, 'nl'\)", rd): lint.append('AI may only be asked when the local grammar could not read the text')
+    if not re.search(r"let p = _nlParse\(text, ctx, \{\}\);\s*if\(p\.status === 'unparsed'\)\{[\s\S]*?await _aiCall\('nl', \{ text: sendText\.slice\(0, 140\), exercises:list, unit:'kg' \}, 'nl'\)", rd): lint.append('AI may only be asked when the local grammar could not read the text')
+    if "const sendText = _nlMaskNames(text, list.map(" not in rd: lint.append('exercise names the user made up must be swapped out of the typed text too')
+    if "if(_nlState.parse && _nlState.parse.status === 'reading' && text === _nlState.text) return;" not in rd: lint.append('a second Check while the AI is reading must not ask again')
+    if '_nlState.aiOut ? _nlFromAi(' not in (extract_decl(js, '_nlReparse') or ''): lint.append('answering a question about an AI reading must re-use the AI reading')
     if "_nlIsCatalogueName(e.name) &&" not in rd: lint.append('exercise names the user made up must not be sent')
     if 'fetch(' in rd: lint.append('nlRead must use _aiCall')
     if "if(!_aiFlagOn('nl')) return;" not in (extract_decl(js, 'openNlLog') or '') or "_aiFlagOn('nl')" not in (extract_decl(js, '_nlUpdBtn') or ''):
