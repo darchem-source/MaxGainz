@@ -1,0 +1,8 @@
+{
+  "name": "maxgainz",
+  "private": true,
+  "description": "Max Gainz PWA. No build step: index.html is served as-is; this file only declares the Netlify function dependency.",
+  "dependencies": {
+    "@anthropic-ai/sdk": "1.13.0"
+  }
+}

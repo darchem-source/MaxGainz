@@ -1347,6 +1347,17 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
           <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Today · Plan · Progress · Profile, with the workout as a full-screen mode. Switch back any time.</div>
           <button id="rotateExBtn" onclick="toggleRotateExercises()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">🔄 Exercise variety: On</button>
           <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Accessory exercises rotate through fresh variations each time you repeat a workout day. Main lifts never change.</div>
+          <!-- Phase 2: AI coaching consent (shown only when the maxgainz_ai_v1 rollout flag is on) -->
+          <div id="aiSettings" hidden style="background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px;">
+            <button id="aiCoachBtn" type="button" aria-pressed="false" aria-describedby="aiCoachInfo aiCoachState" onclick="toggleAiCoach()" style="width:100%;background:var(--surface);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;min-height:44px;">✨ AI coaching: Off</button>
+            <p id="aiCoachState" role="status" style="font-size:11px;color:var(--text2);margin:6px 2px 0;line-height:1.4;">Off — nothing is sent. Everything works without it.</p>
+            <div id="aiCoachInfo" style="font-size:11px;color:var(--text2);line-height:1.5;margin:8px 2px 0;">
+              <p style="margin:0 0 6px;">When on, Max Gainz sends structured training facts to Anthropic's Claude so it can word your coach tips and weekly recap in plain language: exercise names from our catalogue, weights, reps, effort (RPE), how many days ago, and session counts. Names you made up yourself are replaced with a placeholder.</p>
+              <p style="margin:0 0 6px;">It never sends your name, email, body measurements or notes (unless you turn notes on below). If you type a set the app can't read on its own, that line is sent so it can be read. Your data is not used to train AI models.</p>
+              <p style="margin:0;">The app's numbers and decisions never depend on AI, and every suggestion asks before changing anything. Turn it off any time.</p>
+            </div>
+            <button id="aiNotesBtn" type="button" aria-pressed="false" disabled onclick="toggleAiNotes()" style="width:100%;margin-top:8px;background:transparent;border:0.5px solid var(--border);border-radius:10px;padding:10px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;min-height:44px;">Also send my exercise notes: Off</button>
+          </div>
           <!-- Feedback -->
           <button onclick="openFeedbackModal()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;">📬 Send Feedback</button>
         </div>
@@ -4645,7 +4656,8 @@ async function cloudSaveProfile(opts) {
       trackRPE:     !!userPreferences.trackRPE,
       periodize:    !!userPreferences.periodize,
       rotateExercises: userPreferences.rotateExercises !== false,
-      demoSex:      userPreferences.demoSex === 'female' ? 'female' : 'male'
+      demoSex:      userPreferences.demoSex === 'female' ? 'female' : 'male',
+      ai:           _aiPrefsNormalize(userPreferences.ai)
     }
   });
   const sentAt = new Date().toISOString();
@@ -4886,6 +4898,11 @@ async function cloudLoadAll() {
             if (blob.prefs.demoSex === 'male' || blob.prefs.demoSex === 'female') {
               userPreferences.demoSex = blob.prefs.demoSex;
               localStorage.setItem('userDemoSex', blob.prefs.demoSex);
+            }
+            if (blob.prefs.ai !== undefined) {
+              userPreferences.ai = _aiPrefsMerge(userPreferences.ai, blob.prefs.ai);
+              try { localStorage.setItem(AI_PREFS_KEY, JSON.stringify(userPreferences.ai)); } catch(e){}
+              if (typeof _renderAiSettings === 'function') _renderAiSettings();
             }
           }
           if (blob.userPath) {
@@ -5140,7 +5157,7 @@ function openDataHealth(){
       <div style="font-size:16px;flex-shrink:0;">${icon[st]}</div>
       <div style="font-size:13px;color:${colr[st]};line-height:1.4;">${msg}</div>
     </div>`).join('');
-  document.getElementById('dataHealthBody').innerHTML = summary + rows;
+  document.getElementById('dataHealthBody').innerHTML = summary + rows + (typeof _aiHealthHtml === 'function' ? _aiHealthHtml() : '');
   document.getElementById('dataHealthMod').classList.add('open');
 }
 
@@ -5713,6 +5730,7 @@ bus.on('sync:status', ({ status }) => {
 });
 
 // Floating sync banner — only show during cold-start sync (no cached data)
+bus.on('sync:status', () => { try { if(typeof _aiRetryConsentSync === 'function') _aiRetryConsentSync(); } catch(e){} });
 bus.on('sync:status', () => {
   const banner = document.getElementById('syncBanner');
   if(banner) banner.classList.toggle('show', _isColdSyncing());
@@ -5858,6 +5876,573 @@ function goTab(tab,el){
   if(tab==='game')renderGame();
   if(tab==='profile')renderProfile();
   if(tab==='path')renderPathTab();
+}
+
+
+// ── Phase 2: AI foundation ────────────────────────────────────────────────
+// Rules: (1) every AI surface first renders the app's own deterministic text;
+// AI wording replaces it only after validation. (2) _aiCall is the ONLY path
+// to /api/ai, and it refuses unless the rollout flag is on, the user has
+// consented (Profile → AI coaching), is signed in, online and under the cap.
+// (3) Model output is plain text: always esc(), never inside an on*="" handler.
+// (4) The audit trail and metrics live on this device only, per account.
+const AI_FLAG_KEYS = { master:'maxgainz_ai_v1', coach:'maxgainz_ai_coach', nl:'maxgainz_nl_log', recap:'maxgainz_ai_recap' };
+const AI_CONSENT_VERSION = 1;
+const AI_AUDIT_KEY = 'maxgainz_ai_audit_v1';
+const AI_METRICS_KEY = 'maxgainz_ai_metrics_v1';
+const AI_CACHE_KEY = 'maxgainz_ai_cache_v1';
+const AI_PREFS_KEY = 'maxgainz_ai_prefs';
+const AI_CLIENT_DAILY_CALLS = 30;
+const AI_TIMEOUT_MS = 12000;            // server: limits RPC ≤2.5 s + model ≤7 s + cold start
+const AI_CONSENT_SYNC_KEY = 'maxgainz_ai_consent_sync';
+const AI_AUDIT_MAX = 300;
+const AI_KEEP_DAYS = 90;
+
+// Shared with netlify/functions/ai/core.mjs — gate 15 keeps these byte-identical.
+function _aiNum(v, lo, hi, isInt){
+  return typeof v === 'number' && isFinite(v) && v >= lo && v <= hi && (!isInt || Math.floor(v) === v);
+}
+function _aiIsObj(o, keys){
+  if(!o || typeof o !== 'object' || Array.isArray(o)) return false;
+  const k = Object.keys(o);
+  return k.length === keys.length && keys.every(x => Object.prototype.hasOwnProperty.call(o, x));
+}
+// Every number a text states: digits in any script (NFKC → ASCII), 82.5,
+// 1,200, ranges (6–8 → 6 and 8), a leading minus (−12), and number words
+// including compounds (eighty-eight). Placeholders ({EX}, L1, E2) are not
+// numbers. Vulgar fractions (½) can never be grounded (NaN).
+function _aiNumbersIn(text){
+  const raw = String(text == null ? '' : text);
+  const out = [];
+  if(/[¼-¾⅐-⅟⁄∕]/.test(raw)) out.push(NaN);
+  const s = raw.normalize('NFKC')
+    .replace(/\{EX\}/g, ' ')
+    .replace(/\b[LE]\d{1,2}\b/g, ' ')
+    .replace(/(\d),(\d{3})(?!\d)/g, '$1$2');
+  const re = /\d+(?:[.,]\d+)?/g;
+  let m;
+  while((m = re.exec(s)) !== null){
+    const v = parseFloat(m[0].replace(',', '.'));
+    const i = m.index;
+    const neg = i > 0 && (s[i - 1] === '-' || s[i - 1] === '−') && (i < 2 || !/[0-9A-Za-z]/.test(s[i - 2]));
+    out.push(neg ? -v : v);
+  }
+  const W = { zero:0, one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10,
+    eleven:11, twelve:12, thirteen:13, fourteen:14, fifteen:15, sixteen:16, seventeen:17, eighteen:18,
+    nineteen:19, twenty:20, thirty:30, forty:40, fifty:50, sixty:60, seventy:70, eighty:80, ninety:90,
+    hundred:100, dozen:12 };
+  const words = s.toLowerCase().replace(/\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[-\s]+(one|two|three|four|five|six|seven|eight|nine)\b/g,
+    (all, t, u) => { out.push(W[t] + W[u]); return ' '; });
+  const wr = /[a-z]+/g;
+  while((m = wr.exec(words)) !== null){ if(Object.prototype.hasOwnProperty.call(W, m[0])) out.push(W[m[0]]); }
+  return out;
+}
+// Every number present anywhere in a facts object (values and inside strings).
+function _aiFactNumbers(v){
+  const out = [];
+  (function walk(x){
+    if(typeof x === 'number'){ if(isFinite(x)) out.push(x); }
+    else if(typeof x === 'string') _aiNumbersIn(x).forEach(n => out.push(n));
+    else if(Array.isArray(x)) x.forEach(walk);
+    else if(x && typeof x === 'object') Object.keys(x).forEach(k => walk(x[k]));
+  })(v);
+  return out;
+}
+// {ok, bad[]}: every number stated in `text` must exist in `allowed`.
+function _aiGrounded(text, allowed){
+  const bad = _aiNumbersIn(text).filter(n => !(allowed || []).some(a => Math.abs(a - n) < 1e-6));
+  return { ok: bad.length === 0, bad };
+}
+function _aiMentionsPain(text){
+  return /\b(pain\w*|hurt\w*|injur\w*|tweak\w*|twinge\w*|ache[sd]?|aching|sore\w*|strain\w*|sprain\w*|pulled|numb\w*|tingl\w*|swell\w*|swollen|dizz\w*|faint\w*)\b/i.test(String(text == null ? '' : text));
+}
+// '' when the facts for `task` have exactly the allowed shape, else a reason.
+function _aiValidateFacts(task, f){
+  const safeText = (s, max) => typeof s === 'string' && s.length >= 1 && s.length <= max && !/[<>{}`\\\u0000-\u001f]/.test(s);
+  if(task === 'coach'){
+    if(!_aiIsObj(f, ['ex','unit','last','target','decision','guard','note'])) return 'coach shape';
+    if(f.ex !== '{EX}') return 'coach ex';
+    if(f.unit !== 'kg' && f.unit !== 'kg/hand') return 'coach unit';
+    const L = f.last;
+    if(!_aiIsObj(L, ['daysAgo','weight','reps','rpe'])) return 'coach last';
+    if(!_aiNum(L.daysAgo, 0, 3650, true) || !_aiNum(L.weight, 0, 1000, false)) return 'coach last values';
+    if(!Array.isArray(L.reps) || L.reps.length > 10 || !L.reps.every(r => _aiNum(r, 0, 200, true))) return 'coach reps';
+    if(L.rpe !== null && !_aiNum(L.rpe, 1, 10, false)) return 'coach rpe';
+    const T = f.target;
+    if(!_aiIsObj(T, ['sets','reps']) || !_aiNum(T.sets, 1, 20, true) || typeof T.reps !== 'string' || !/^\d{1,3}([–-]\d{1,3})?$/.test(T.reps)) return 'coach target';
+    const D = f.decision;
+    if(!_aiIsObj(D, ['action','rule','from','to','confidence'])) return 'coach decision';
+    if(['increase','hold','deload','reps'].indexOf(D.action) === -1) return 'coach action';
+    if(typeof D.rule !== 'string' || !/^[A-Za-z_]{1,24}$/.test(D.rule)) return 'coach rule';
+    if(!_aiNum(D.from, 0, 1000, false) || !_aiNum(D.to, 0, 1000, false)) return 'coach weights';
+    if(['low','medium','high'].indexOf(D.confidence) === -1) return 'coach confidence';
+    const G = f.guard;
+    if(!_aiIsObj(G, ['rpeCeiling','fallbackWeight'])) return 'coach guard';
+    if(G.rpeCeiling !== null && !_aiNum(G.rpeCeiling, 1, 10, false)) return 'coach guard rpe';
+    if(G.fallbackWeight !== null && !_aiNum(G.fallbackWeight, 0, 1000, false)) return 'coach guard weight';
+    if(f.note !== null && (!safeText(f.note, 140) || _aiMentionsPain(f.note))) return 'coach note';
+    return '';
+  }
+  if(task === 'nl'){
+    if(!_aiIsObj(f, ['text','exercises','unit'])) return 'nl shape';
+    if(typeof f.text !== 'string' || f.text.trim().length < 1 || f.text.length > 140 || /[\u0000-\u001f]/.test(f.text)) return 'nl text';
+    if(_aiMentionsPain(f.text)) return 'pain';
+    if(f.unit !== 'kg' && f.unit !== 'lb') return 'nl unit';
+    if(!Array.isArray(f.exercises) || f.exercises.length < 1 || f.exercises.length > 20) return 'nl exercises';
+    const seen = {};
+    for(let i = 0; i < f.exercises.length; i++){
+      const e = f.exercises[i];
+      if(!_aiIsObj(e, ['id','name']) || typeof e.id !== 'string' || !/^E\d{1,2}$/.test(e.id) || seen[e.id]) return 'nl exercise';
+      if(typeof e.name !== 'string' || !/^[A-Za-z0-9 ()'&+.,\/–-]{1,60}$/.test(e.name)) return 'nl exercise name';
+      seen[e.id] = 1;
+    }
+    return '';
+  }
+  if(task === 'recap'){
+    if(!_aiIsObj(f, ['done','planned','plannedSource','activities','daysLeft','trend','pbs','under','balanced','smallSample','sessionsLogged','action'])) return 'recap shape';
+    if(!_aiNum(f.done, 0, 50, true) || !_aiNum(f.planned, 1, 30, true) || !_aiNum(f.activities, 0, 50, true) || !_aiNum(f.daysLeft, 0, 6, true) || !_aiNum(f.sessionsLogged, 0, 100000, true)) return 'recap counts';
+    if(f.plannedSource !== 'plan' && f.plannedSource !== 'default') return 'recap source';
+    if(f.trend !== null && (!_aiIsObj(f.trend, ['dir','pct']) || ['up','down','steady'].indexOf(f.trend.dir) === -1 || !_aiNum(f.trend.pct, -100, 1000, true))) return 'recap trend';
+    if(!Array.isArray(f.pbs) || f.pbs.length > 3) return 'recap pbs';
+    for(let i = 0; i < f.pbs.length; i++){
+      const p = f.pbs[i];
+      if(!_aiIsObj(p, ['ref','weight','prev']) || p.ref !== 'L' + (i + 1) || !_aiNum(p.weight, 0, 1000, false) || !_aiNum(p.prev, 0, 1000, false)) return 'recap pb';
+    }
+    if(f.under !== null && (!_aiIsObj(f.under, ['label','pct']) || typeof f.under.label !== 'string' || !/^[A-Za-z &\/-]{1,24}$/.test(f.under.label) || !_aiNum(f.under.pct, 0, 100, true))) return 'recap under';
+    if(typeof f.balanced !== 'boolean' || typeof f.smallSample !== 'boolean') return 'recap flags';
+    if(!safeText(f.action, 200)) return 'recap action';
+    return '';
+  }
+  return 'task';
+}
+// {ok, reason}: a model output is shown/saved only if this passes — the
+// schema, plus grounding (no number the facts don't contain) and guardrails.
+function _aiCheckOutput(task, out, f){
+  const medical = /\b(injur\w*|pain\w*|diagnos\w*|physio\w*|doctor\w*|medic\w*|treat\w*|rehab\w*|inflam\w*|tendon\w*|tendin\w*|sprain\w*|surgery)\b/i;
+  const str = (s, lo, hi) => typeof s === 'string' && s.trim().length >= lo && s.length <= hi;
+  const unsafe = x => medical.test(x) || _aiMentionsPain(x);
+  if(_aiValidateFacts(task, f)) return { ok:false, reason:'facts' };
+  if(task === 'coach'){
+    if(!_aiIsObj(out, ['text']) || !str(out.text, 1, 240)) return { ok:false, reason:'schema' };
+    if(out.text.indexOf('{EX}') === -1) return { ok:false, reason:'placeholder' };
+    if(unsafe(out.text)) return { ok:false, reason:'medical' };
+    const D = f.decision;
+    const allowed = _aiFactNumbers(f).concat([Math.round(Math.abs(D.to - D.from) * 100) / 100]);
+    if(!_aiGrounded(out.text, allowed).ok) return { ok:false, reason:'ungrounded' };
+    if((D.action === 'increase' || D.action === 'deload') && D.to !== D.from && _aiNumbersIn(out.text).indexOf(D.to) === -1) return { ok:false, reason:'missing target' };
+    return { ok:true, reason:'' };
+  }
+  if(task === 'nl'){
+    if(!_aiIsObj(out, ['sets','clarify'])) return { ok:false, reason:'schema' };
+    if(out.clarify !== null && !str(out.clarify, 1, 140)) return { ok:false, reason:'schema' };
+    if(!Array.isArray(out.sets) || out.sets.length > 10) return { ok:false, reason:'schema' };
+    if(!out.sets.length && out.clarify === null) return { ok:false, reason:'empty' };
+    const ids = f.exercises.map(e => e.id), said = _aiNumbersIn(f.text);
+    const inText = n => said.some(a => Math.abs(a - n) < 1e-6);
+    if(out.clarify !== null && (unsafe(out.clarify) || !_aiGrounded(out.clarify, said).ok)) return { ok:false, reason:'clarify' };
+    if(out.sets.length > Math.max(said.length, said.indexOf(out.sets.length) !== -1 ? out.sets.length : 0)) return { ok:false, reason:'set count' };
+    const saidLb = /\b(lbs?|pounds?)\b/i.test(f.text), saidKg = /\b(kgs?|kilos?|kilograms?)\b/i.test(f.text);
+    const saidBw = /\b(bw|body ?weight)\b/i.test(f.text);
+    for(let i = 0; i < out.sets.length; i++){
+      const s = out.sets[i];
+      if(!_aiIsObj(s, ['ex','weight','unit','reps','rpe'])) return { ok:false, reason:'schema' };
+      if(ids.indexOf(s.ex) === -1) return { ok:false, reason:'exercise' };
+      if(s.unit !== null && s.unit !== 'kg' && s.unit !== 'lb') return { ok:false, reason:'schema' };
+      if(s.weight !== null && !_aiNum(s.weight, 0, 1100, false)) return { ok:false, reason:'range' };
+      if(!_aiNum(s.reps, 1, 100, true)) return { ok:false, reason:'range' };
+      if(s.rpe !== null && (!_aiNum(s.rpe, 1, 10, false) || Math.round(s.rpe * 2) !== s.rpe * 2)) return { ok:false, reason:'range' };
+      if((s.unit === 'lb' && !saidLb) || (s.unit === 'kg' && !saidKg)) return { ok:false, reason:'unit' };
+      if(s.weight === 0 && !saidBw && !inText(0)) return { ok:false, reason:'ungrounded' };
+      if(!inText(s.reps) || (s.weight !== null && s.weight !== 0 && !inText(s.weight)) || (s.rpe !== null && !inText(s.rpe))) return { ok:false, reason:'ungrounded' };
+    }
+    return { ok:true, reason:'' };
+  }
+  if(task === 'recap'){
+    if(!_aiIsObj(out, ['headline','body','mentionsSmallSample']) || !str(out.headline, 1, 80) || !str(out.body, 1, 400) || typeof out.mentionsSmallSample !== 'boolean') return { ok:false, reason:'schema' };
+    const all = out.headline + ' ' + out.body;
+    if(unsafe(all)) return { ok:false, reason:'medical' };
+    const derived = f.pbs.map(p => Math.round((p.weight - p.prev) * 100) / 100)
+      .concat([Math.max(0, f.planned - f.done), f.daysLeft + 1, Math.abs(f.trend ? f.trend.pct : 0)]);
+    if(!_aiGrounded(all, _aiFactNumbers(f).concat(derived)).ok) return { ok:false, reason:'ungrounded' };
+    if(f.smallSample && (!out.mentionsSmallSample || !/\b(early|so far|few|small|limited|only|not enough|still building)\b/i.test(all))) return { ok:false, reason:'small sample' };
+    return { ok:true, reason:'' };
+  }
+  return { ok:false, reason:'task' };
+}
+// ── end shared validators
+
+// Pure: rollout flags from a ?ai= query value. 'all' → everything on, '0'/'off'
+// → everything off, 'coach,recap' → master + those. null = no ?ai= present.
+function _aiFlagsFromQuery(search){
+  const m = /[?&]ai=([^&#]*)/.exec(String(search || ''));
+  if(!m) return null;
+  const v = decodeURIComponent(m[1]).toLowerCase();
+  const all = ['coach', 'nl', 'recap'];
+  if(v === '0' || v === 'off') return { master:false, coach:false, nl:false, recap:false };
+  const want = v === 'all' || v === '1' ? all : v.split(',').map(s => s.trim()).filter(s => all.indexOf(s) !== -1);
+  if(v !== '1' && v !== 'all' && !want.length) return null;
+  return { master:true, coach:want.indexOf('coach') !== -1, nl:want.indexOf('nl') !== -1, recap:want.indexOf('recap') !== -1 };
+}
+function _aiApplyFlagQuery(){
+  let f = null;
+  try { f = _aiFlagsFromQuery(location.search); } catch(e){ f = null; }
+  if(!f) return;
+  try {
+    Object.keys(AI_FLAG_KEYS).forEach(k => {
+      if(k === 'master') { if(f.master) localStorage.setItem(AI_FLAG_KEYS.master, '1'); else localStorage.removeItem(AI_FLAG_KEYS.master); }
+      else if(f[k]) localStorage.setItem(AI_FLAG_KEYS[k], '1');
+      else if(!f.master) localStorage.removeItem(AI_FLAG_KEYS[k]);
+    });
+    history.replaceState(null, '', location.pathname + location.hash);
+  } catch(e){}
+}
+if(typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', () => { _aiApplyFlagQuery(); try { _renderAiSettings(); } catch(e){} });
+
+// Device-level rollout flag (like maxgainz_nav_v2). Features need master + own flag.
+function _aiFlagOn(name){
+  try {
+    if(localStorage.getItem(AI_FLAG_KEYS.master) !== '1') return false;
+    return name === 'master' ? true : localStorage.getItem(AI_FLAG_KEYS[name]) === '1';
+  } catch(e){ return false; }
+}
+
+// Pure: the account's AI consent, normalised. Anything unexpected → off.
+function _aiPrefsNormalize(p){
+  const o = (p && typeof p === 'object' && !Array.isArray(p)) ? p : {};
+  const on = o.on === true && o.v === AI_CONSENT_VERSION;
+  const ts = v => typeof v === 'number' && isFinite(v) && v > 0 ? v : null;
+  return { on, notes: on && o.notes === true, v: on ? AI_CONSENT_VERSION : 0, at: on ? ts(o.at) : null, changedAt: ts(o.changedAt) };
+}
+// Pure: merge this device's consent with the cloud copy — the most recent
+// change wins, and on a tie (or no timestamps at all) OFF wins. A stale
+// device can therefore never switch AI back on after it was turned off.
+function _aiPrefsMerge(local, cloud){
+  const l = _aiPrefsNormalize(local), c = _aiPrefsNormalize(cloud);
+  const lt = l.changedAt || 0, ct = c.changedAt || 0;
+  if(ct > lt) return c;
+  if(lt > ct) return l;
+  if(!l.on) return l;
+  if(!c.on) return c;
+  return (l.notes && !c.notes) ? c : l;
+}
+function _aiPrefsLoadLocal(){
+  try { return _aiPrefsNormalize(JSON.parse(localStorage.getItem(AI_PREFS_KEY) || 'null')); } catch(e){ return _aiPrefsNormalize(null); }
+}
+function _aiConsented(p){ return !!p && p.on === true && p.v === AI_CONSENT_VERSION; }
+
+// Pure: why an AI call must not happen ('' = allowed). Order matters: a
+// feature that is not rolled out says nothing at all.
+function _aiGate(s){
+  const x = s || {};
+  if(!x.master || !x.feature) return 'flag';
+  if(!x.consented) return 'off';
+  if(!x.signedIn) return 'signed_out';
+  if(!x.online) return 'offline';
+  if(x.capped) return 'cap';
+  return '';
+}
+
+function _aiDayKey(ms){
+  const d = new Date(ms);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+// Small stable hash for facts (cache keys / audit), not security.
+function _aiHash(str){
+  let h = 0x811c9dc5;
+  const s = String(str);
+  for(let i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(36);
+}
+
+// Pure loader/migrator for the two local stores. Anything unreadable, from
+// another account, or from an unknown version starts fresh; old entries are
+// pruned (≤ AI_AUDIT_MAX entries, ≤ AI_KEEP_DAYS days).
+function _aiStoreLoad(raw, uid, kind, nowMs){
+  let o = null;
+  try { o = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch(e){ o = null; }
+  const fresh = kind === 'audit' ? { v:1, uid, entries:[] } : { v:1, uid, days:{} };
+  if(!o || typeof o !== 'object' || Array.isArray(o) || o.v !== 1 || o.uid !== uid) return fresh;
+  const minT = nowMs - AI_KEEP_DAYS * 864e5;
+  if(kind === 'audit'){
+    const list = Array.isArray(o.entries) ? o.entries : [];
+    fresh.entries = list.filter(e => e && typeof e === 'object' && typeof e.id === 'string' && /^a_[a-z0-9_]{1,40}$/.test(e.id)
+        && typeof e.t === 'number' && isFinite(e.t) && e.t >= minT && e.t <= nowMs + 864e5)
+      .map(e => Object.assign({}, e, { events: Array.isArray(e.events) ? e.events.filter(v => v && typeof v.e === 'string' && typeof v.t === 'number').slice(-20) : [] }))
+      .slice(-AI_AUDIT_MAX);
+    return fresh;
+  }
+  const minDay = _aiDayKey(minT);
+  const days = (o.days && typeof o.days === 'object' && !Array.isArray(o.days)) ? o.days : {};
+  Object.keys(days).forEach(k => {
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(k) || k < minDay) return;
+    const row = days[k], clean = {};
+    if(!row || typeof row !== 'object') return;
+    Object.keys(row).forEach(n => { const v = row[n]; if(/^[a-z_]{1,40}$/.test(n) && typeof v === 'number' && isFinite(v) && v >= 0) clean[n] = v; });
+    fresh.days[k] = clean;
+  });
+  return fresh;
+}
+function _aiUid(){ return (typeof getCurrentUserId === 'function' && getCurrentUserId()) || 'local'; }
+function _aiStoreGet(key, kind){
+  let raw = null;
+  try { raw = localStorage.getItem(key); } catch(e){}
+  return _aiStoreLoad(raw, _aiUid(), kind, Date.now());
+}
+function _aiStorePut(key, store){ try { localStorage.setItem(key, JSON.stringify(store)); } catch(e){} }
+
+function _aiMetricBump(name, n){
+  if(!/^[a-z_]{1,40}$/.test(String(name))) return;
+  const st = _aiStoreGet(AI_METRICS_KEY, 'metrics');
+  const day = _aiDayKey(Date.now());
+  const row = st.days[day] || (st.days[day] = {});
+  row[name] = (row[name] || 0) + (typeof n === 'number' && isFinite(n) ? n : 1);
+  _aiStorePut(AI_METRICS_KEY, st);
+}
+function _aiCapped(){
+  const row = _aiStoreGet(AI_METRICS_KEY, 'metrics').days[_aiDayKey(Date.now())] || {};
+  return (row.capped || 0) > 0 || (row.calls || 0) >= AI_CLIENT_DAILY_CALLS;
+}
+
+// Audit trail: one entry per suggestion (AI-worded or deterministic).
+function _aiAuditAdd(entry){
+  const st = _aiStoreGet(AI_AUDIT_KEY, 'audit');
+  const now = Date.now();
+  const id = 'a_' + now.toString(36) + '_' + Math.floor(Math.random() * 1e8).toString(36);
+  st.entries.push(Object.assign({ id, t: now, kind:'', model:null, prompt:null, source:'deterministic', facts:null, factsHash:'', out:null, fallback:null, costMicroUsd:0, events:[] }, entry || {}, { id, t: now }));
+  st.entries = st.entries.slice(-AI_AUDIT_MAX);
+  _aiStorePut(AI_AUDIT_KEY, st);
+  return id;
+}
+const AI_REASON_LABELS = { off:'AI off', signed_out:'signed out', offline:'offline', cap:'daily limit', timeout:'slow reply', invalid:'failed checks', refusal:'declined', pain:'pain mentioned', auth:'sign-in expired', unavailable:'service off', error:'error' };
+const AI_AUDIT_EVENTS = ['shown', 'accepted', 'adjusted', 'undone', 'why', 'confirmed', 'cancelled', 'edited'];
+function _aiAuditEvent(id, ev){
+  if(AI_AUDIT_EVENTS.indexOf(ev) === -1) return false;
+  const st = _aiStoreGet(AI_AUDIT_KEY, 'audit');
+  const e = st.entries.find(x => x.id === id);
+  if(!e) return false;
+  e.events = (e.events || []).concat([{ t: Date.now(), e: ev }]).slice(-20);
+  _aiStorePut(AI_AUDIT_KEY, st);
+  return true;
+}
+
+// Map a server/transport failure to the fallback reason we record.
+function _aiReasonFor(status, body){
+  const r = body && typeof body.reason === 'string' ? body.reason : '';
+  if(r === 'user_cap' || r === 'global_cap' || status === 429) return 'cap';
+  if(r === 'timeout' || status === 504) return 'timeout';
+  if(r === 'refusal') return 'refusal';
+  if(r === 'invalid' || r === 'bad_facts') return 'invalid';
+  if(r === 'pain') return 'pain';
+  if(r === 'consent_off') return 'off';
+  if(r === 'auth' || status === 401) return 'auth';
+  if(r === 'disabled' || r === 'not_configured' || r === 'limits_unavailable') return 'unavailable';
+  return 'error';
+}
+
+// The ONLY network path to the model proxy.
+async function _aiPost(task, facts, signal){
+  return fetch('/api/ai', {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + authToken },
+    body: JSON.stringify({ task, facts }),
+    signal
+  });
+}
+
+// One AI request. Never throws, never blocks the caller's own text: resolves
+// {ok:true, out, auditId} or {ok:false, reason, auditId} ('flag' = feature not
+// rolled out → record nothing at all).
+async function _aiCall(task, factsIn, feature){
+  let facts = factsIn;
+  try {
+    const why = _aiGate({
+      master: _aiFlagOn('master'),
+      feature: _aiFlagOn(feature || task),
+      consented: _aiConsented(typeof userPreferences === 'object' && userPreferences ? userPreferences.ai : null),
+      signedIn: typeof isAuthenticated === 'function' && isAuthenticated(),
+      online: typeof navigator === 'undefined' || navigator.onLine !== false,
+      capped: _aiCapped()
+    });
+    if(why === 'flag') return { ok:false, reason:'flag', auditId:null };
+    const base = { kind: task, facts, factsHash: _aiHash(JSON.stringify(facts)) };
+    const fallback = (reason, extra) => {
+      const id = _aiAuditAdd(Object.assign({}, base, { source:'deterministic', fallback: reason }, extra || {}));
+      _aiMetricBump('fallback_' + reason);
+      return { ok:false, reason, auditId:id };
+    };
+    if(why) return fallback(why);
+    // Notes go out only with the separate notes consent (the server checks too).
+    const prefs = _aiPrefsNormalize(userPreferences.ai);
+    if(task === 'coach' && facts && facts.note !== null && facts.note !== undefined && !prefs.notes){
+      facts = Object.assign({}, facts, { note: null });
+      base.facts = facts; base.factsHash = _aiHash(JSON.stringify(facts));
+    }
+    const factErr = _aiValidateFacts(task, facts);
+    if(factErr) return fallback(factErr === 'pain' ? 'pain' : 'invalid');
+
+    _aiMetricBump('calls');
+    let res = null, body = null, timedOut = false;
+    for(let attempt = 0; attempt < 2; attempt++){
+      const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+      const timer = setTimeout(() => { timedOut = true; if(ctl) ctl.abort(); }, AI_TIMEOUT_MS);
+      try {
+        res = await _aiPost(task, facts, ctl ? ctl.signal : undefined);
+        try { body = await res.json(); } catch(e){ body = null; }
+      }
+      catch(e){ res = null; }
+      finally { clearTimeout(timer); }
+      if(!res || timedOut) return fallback(timedOut ? 'timeout' : (typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'error'));
+      // An expired session token: refresh once (bounded) and retry once.
+      if(attempt === 0 && res.status === 401 && typeof refreshAuthToken === 'function'){
+        const refreshed = await Promise.race([refreshAuthToken(), new Promise(r => setTimeout(() => r(false), 5000))]);
+        if(refreshed === true) continue;
+      }
+      break;
+    }
+    const meta = body && typeof body === 'object' ? {
+      model: typeof body.model === 'string' ? body.model.slice(0, 40) : null,
+      prompt: typeof body.prompt === 'string' ? body.prompt.slice(0, 20) : null,
+      costMicroUsd: typeof body.costMicroUsd === 'number' && isFinite(body.costMicroUsd) && body.costMicroUsd >= 0 ? Math.round(body.costMicroUsd) : 0
+    } : { model:null, prompt:null, costMicroUsd:0 };
+    if(meta.costMicroUsd) _aiMetricBump('cost_micro_usd', meta.costMicroUsd);
+    if(!res.ok || !body || body.ok !== true){
+      const reason = _aiReasonFor(res.status, body);
+      if(reason === 'cap') _aiMetricBump('capped');
+      if(reason === 'off') _aiAdoptServerOff();
+      return fallback(reason, meta);
+    }
+    const chk = _aiCheckOutput(task, body.out, facts);
+    if(!chk.ok) return fallback('invalid', Object.assign({ out: null }, meta));
+    const id = _aiAuditAdd(Object.assign({}, base, meta, { source:'ai', out: body.out, fallback:null }));
+    _aiMetricBump('ai_ok');
+    return { ok:true, out: body.out, auditId:id, model: meta.model, prompt: meta.prompt };
+  } catch(e){
+    return { ok:false, reason:'error', auditId:null };
+  }
+}
+
+// ── Profile: AI coaching consent ──
+// The server copy (Supabase ai_consent via ai_set_consent) is what /api/ai
+// checks, so a switch-off on one device stops every device. Switching ON needs
+// the server to confirm; switching OFF takes effect here at once and is
+// retried until the server has it.
+async function _aiSetServerConsent(p){
+  if(typeof isAuthenticated !== 'function' || !isAuthenticated() || typeof sbFetch !== 'function') return false;
+  const r = await sbFetch('rpc/ai_set_consent', { method:'POST', silent:true,
+    body: JSON.stringify({ p_enabled: !!p.on, p_notes: !!p.notes, p_version: p.on ? AI_CONSENT_VERSION : 0 }) });
+  return !!(r && r.ok === true);
+}
+function _aiSaveLocalPrefs(){
+  try { localStorage.setItem(AI_PREFS_KEY, JSON.stringify(userPreferences.ai)); } catch(e){}
+  if(typeof cloudSaveProfile === 'function') cloudSaveProfile();
+}
+async function _aiApplyConsent(next){
+  const cur = _aiPrefsNormalize(userPreferences.ai);
+  const p = _aiPrefsNormalize(Object.assign({}, next, { changedAt: Date.now() }));
+  const widening = (p.on && !cur.on) || (p.notes && !cur.notes);
+  if(widening){
+    if(typeof isAuthenticated !== 'function' || !isAuthenticated()){ showToast('Sign in to turn on AI coaching', { duration: 2400 }); return false; }
+    const b = document.getElementById(p.notes && cur.on ? 'aiNotesBtn' : 'aiCoachBtn');
+    if(b) b.setAttribute('aria-busy', 'true');
+    const ok = await _aiSetServerConsent(p);
+    if(b) b.removeAttribute('aria-busy');
+    if(!ok){ showToast('⚠️ Couldn\'t turn that on — check your connection and try again', { duration: 3000 }); _renderAiSettings(); return false; }
+    try { localStorage.removeItem(AI_CONSENT_SYNC_KEY); } catch(e){}
+  } else {
+    // Narrowing (off / notes off): local first, then the server; retried later if offline.
+    try { localStorage.setItem(AI_CONSENT_SYNC_KEY, JSON.stringify({ uid: _aiUid(), on: p.on, notes: p.notes })); } catch(e){}
+  }
+  userPreferences.ai = p;
+  if(!p.on){ try { localStorage.removeItem(AI_CACHE_KEY); } catch(e){} }
+  _aiSaveLocalPrefs();
+  _renderAiSettings();
+  if(!widening) _aiRetryConsentSync();
+  return true;
+}
+async function _aiRetryConsentSync(){
+  let q = null;
+  try { q = JSON.parse(localStorage.getItem(AI_CONSENT_SYNC_KEY) || 'null'); } catch(e){ q = null; }
+  if(!q || q.uid !== _aiUid()) return;
+  if(await _aiSetServerConsent(q)){ try { localStorage.removeItem(AI_CONSENT_SYNC_KEY); } catch(e){} }
+}
+if(typeof window !== 'undefined') window.addEventListener('online', () => { try { _aiRetryConsentSync(); } catch(e){} });
+// The server said consent is off (switched off on another device): follow it here.
+function _aiAdoptServerOff(){
+  if(!_aiPrefsNormalize(userPreferences.ai).on) return;
+  userPreferences.ai = _aiPrefsNormalize({ on:false, changedAt: Date.now() });
+  try { localStorage.removeItem(AI_CACHE_KEY); } catch(e){}
+  _aiSaveLocalPrefs();
+  try { _renderAiSettings(); } catch(e){}
+}
+async function toggleAiCoach(){
+  const cur = _aiPrefsNormalize(userPreferences.ai);
+  const done = await _aiApplyConsent(cur.on ? { on:false } : { on:true, notes:false, v:AI_CONSENT_VERSION, at:Date.now() });
+  if(done) showToast(userPreferences.ai.on ? '✨ AI coaching on — turn it off any time' : 'AI coaching off — nothing is sent', { duration: 2400 });
+}
+async function toggleAiNotes(){
+  const cur = _aiPrefsNormalize(userPreferences.ai);
+  if(!cur.on) return;
+  await _aiApplyConsent(Object.assign({}, cur, { notes: !cur.notes }));
+}
+function _renderAiSettings(){
+  const box = document.getElementById('aiSettings');
+  if(!box) return;
+  const show = _aiFlagOn('master');
+  box.hidden = !show;
+  if(!show) return;
+  const p = _aiPrefsNormalize(typeof userPreferences === 'object' && userPreferences ? userPreferences.ai : null);
+  const b = document.getElementById('aiCoachBtn'), n = document.getElementById('aiNotesBtn'), st = document.getElementById('aiCoachState');
+  if(b){ b.setAttribute('aria-pressed', String(p.on)); b.textContent = '✨ AI coaching: ' + (p.on ? 'On' : 'Off'); b.style.color = p.on ? 'var(--accent2)' : 'var(--text)'; }
+  if(n){ n.setAttribute('aria-pressed', String(p.notes)); n.disabled = !p.on; n.textContent = 'Also send my exercise notes: ' + (p.notes ? 'On' : 'Off'); }
+  if(st){
+    const signedIn = typeof isAuthenticated === 'function' && isAuthenticated();
+    st.textContent = !p.on ? (signedIn ? 'Off — nothing is sent. Everything works without it.' : 'Off — sign in to turn it on. Everything works without it.')
+      : !signedIn ? 'On, but needs you to be signed in. Until then you see the app\'s own text.'
+      : 'On since ' + (p.at ? new Date(p.at).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : 'today') + '.';
+  }
+}
+
+// ── Data health: AI outcomes on this device (internal view) ──
+// Pure: totals over the last `days` days of the metrics store.
+function _aiMetricsSummary(store, nowMs, days){
+  const from = _aiDayKey(nowMs - (days - 1) * 864e5), to = _aiDayKey(nowMs);
+  const tot = {};
+  Object.keys((store && store.days) || {}).forEach(k => {
+    if(k < from || k > to) return;
+    const row = store.days[k];
+    Object.keys(row).forEach(n => { tot[n] = (tot[n] || 0) + row[n]; });
+  });
+  return tot;
+}
+// Pure: rows for the Data health section. Plain text cells (caller escapes).
+function _aiHealthRows(t7, t28, flags, consent){
+  const g = (t, k) => t[k] || 0;
+  const fb = t => Object.keys(t).filter(k => k.indexOf('fallback_') === 0).reduce((a, k) => a + t[k], 0);
+  const usd = m => '$' + (m / 1e6).toFixed(4);
+  const rate = (a, b) => b ? Math.round(a / b * 100) + '%' : '–';
+  const reasons = Object.keys(t28).filter(k => k.indexOf('fallback_') === 0 && t28[k] > 0)
+    .map(k => (AI_REASON_LABELS[k.slice(9)] || k.slice(9)) + ' ' + t28[k]).join(' · ');
+  return [
+    ['Rollout', 'coach ' + (flags.coach ? 'on' : 'off') + ' · typed sets ' + (flags.nl ? 'on' : 'off') + ' · recap ' + (flags.recap ? 'on' : 'off')],
+    ['AI coaching', consent ? 'On (consented)' : 'Off — nothing is sent'],
+    ['AI answers used', g(t7, 'ai_ok') + ' (7 days) · ' + g(t28, 'ai_ok') + ' (28 days)'],
+    ['Own text shown instead', fb(t7) + ' (7 days) · ' + fb(t28) + ' (28 days)' + (reasons ? ' — ' + reasons : '')],
+    ['Coach tips', g(t28, 'coach_shown') + ' shown · ' + rate(g(t28, 'coach_accepted'), g(t28, 'coach_shown')) + ' accepted · ' + g(t28, 'coach_adjusted') + ' adjusted · ' + g(t28, 'coach_undone') + ' undone'],
+    ['Typed sets', g(t28, 'nl_confirmed') + ' saved · ' + g(t28, 'nl_cancelled') + ' cancelled · ' + g(t28, 'nl_unparsed') + ' not understood'],
+    ['Weekly recap', g(t28, 'recap_views') + ' views'],
+    ['Cost', usd(g(t7, 'cost_micro_usd')) + ' (7 days) · ' + usd(g(t28, 'cost_micro_usd')) + ' (28 days)']
+  ];
+}
+function _aiHealthHtml(){
+  if(!_aiFlagOn('master')) return '';
+  const st = _aiStoreGet(AI_METRICS_KEY, 'metrics'), now = Date.now();
+  const flags = { coach:_aiFlagOn('coach'), nl:_aiFlagOn('nl'), recap:_aiFlagOn('recap') };
+  const rows = _aiHealthRows(_aiMetricsSummary(st, now, 7), _aiMetricsSummary(st, now, 28), flags,
+    _aiConsented(typeof userPreferences === 'object' && userPreferences ? userPreferences.ai : null));
+  const audit = _aiStoreGet(AI_AUDIT_KEY, 'audit').entries.length;
+  return `<div style="margin-top:14px;font-size:11px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:1px;">AI outcomes · this device</div>
+    ${rows.map(r => `<div style="display:flex;gap:10px;padding:8px 0;border-top:0.5px solid var(--border);font-size:12px;line-height:1.4;"><div style="flex:0 0 38%;color:var(--text2);">${esc(r[0])}</div><div style="flex:1;color:var(--text);">${esc(r[1])}</div></div>`).join('')}
+    <div style="font-size:11px;color:var(--text2);margin-top:6px;">${esc(audit)} suggestion record${audit === 1 ? '' : 's'} kept on this device for ${esc(AI_KEEP_DAYS)} days. Nothing here is uploaded.</div>`;
 }
 
 
@@ -25266,6 +25851,7 @@ function renderProfile(){
   if(typeof _refreshTrackRPEBtn === 'function') _refreshTrackRPEBtn();
   if(typeof _refreshPeriodizeBtn === 'function') _refreshPeriodizeBtn();
   if(typeof _refreshRotateExBtn === 'function') _refreshRotateExBtn();
+  if(typeof _renderAiSettings === 'function') _renderAiSettings();
   document.getElementById('profileFirstName').value=userProfile.firstName||'';
   document.getElementById('profileLastName').value=userProfile.lastName||'';
   // Populate email from authenticated user if not already set
@@ -25398,6 +25984,8 @@ let userPreferences = {
   // Opt-in light periodization (default OFF) — a rolling 4-week
   // accumulate→intensify→recover rhythm that softens borderline increases.
   periodize:    localStorage.getItem('maxgainz_periodize') === '1',
+  // Phase 2: AI coaching consent (per account, default OFF; see _aiPrefsNormalize).
+  ai:           _aiPrefsLoadLocal(),
   // Exercise variety (default ON) — accessory slots rotate through curated
   // alternates each time a programme day is repeated. Main lifts never rotate.
   rotateExercises: localStorage.getItem('maxgainz_rotateExercises') !== '0',
@@ -25951,6 +26539,15 @@ function authLogout(opts){
   // Form-guide usage is the previous user's activity and feeds an achievement
   // ("Always Learning", +100 XP), so leaving it also inflates the next user's XP.
   localStorage.removeItem('maxgainz_fg_seen');
+  // AI consent is this account's choice, and the AI audit trail, metrics and
+  // cached wording describe its training: none may carry over to the next
+  // account. (The rollout flags are device-level, like the nav flag.)
+  if(typeof userPreferences === 'object' && userPreferences) userPreferences.ai = _aiPrefsNormalize(null);
+  localStorage.removeItem(AI_PREFS_KEY);
+  localStorage.removeItem(AI_AUDIT_KEY);
+  localStorage.removeItem(AI_METRICS_KEY);
+  localStorage.removeItem(AI_CACHE_KEY);
+  localStorage.removeItem(AI_CONSENT_SYNC_KEY);
   // Pending-sync queue + sync markers belong to this account: drop them so the
   // next account can never upload (or be shown) the previous one's changes.
   _pending = null; clearTimeout(_syncRetryTimer); _syncRetryTimer = null; _syncBackoff = 0;
