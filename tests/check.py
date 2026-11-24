@@ -2136,34 +2136,242 @@ def gate_core_a11y(html, js):
     return ok_all
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gate 12 — Phase 1 "Start today" (first-use flow) + shortened Path wizard
+# (a) recommender properties over EVERY answer combination against the REAL
+#     catalogue (never suggests kit you don't have, respects short sessions,
+#     PPL variant matches its days), plus anchor cases;
+# (b) schedule always includes today; (c) saved-answer migration: old
+#     onboarding blobs (no version:2 fields) and junk values still yield valid
+#     answers; (d) wizard routing 1→3→5 with optional 2/4 detours;
+# (e) the flow's real renderer: every question explains its effect, optional
+#     ones offer Skip, options are pressed-state buttons, safe handlers,
+#     well-formed markup; first run is routed here; presets include today.
+# ─────────────────────────────────────────────────────────────────────────────
+START_FNS = ['_stProgEquip', 'recommendProgramme', '_spreadDays', '_stAnswersFrom', '_stCatalogue', '_pathWizardRoute']
+
+START_ASSERTIONS = r"""
+var fails = [];
+function eq(label, got, want){ if(JSON.stringify(got)!==JSON.stringify(want)) fails.push(label+' — got '+JSON.stringify(got)+', want '+JSON.stringify(want)); }
+function ok(label, cond){ if(!cond) fails.push(label); }
+var CAT = _stCatalogue();
+ok('catalogue has built-ins + library', CAT.length === _BUILTIN_STRENGTH.length + LIBRARY_PROGRAMMES.length && CAT[0].key === 'ULF');
+var byKey = {}; CAT.forEach(function(p){ byKey[p.key] = p; });
+function R(a){ return recommendProgramme(a, CAT); }
+
+// anchors
+eq('new lifter, gym, strength, 3 days → ULF', (R({goal:'strength', equipment:'gym', days:3, experience:'beginner'})||{}).key, 'ULF');
+eq('dumbbells at home, muscle → DB Home Full-Body', (R({goal:'muscle', equipment:'home', days:3, experience:'beginner'})||{}).key, 'library:db-home-fb');
+eq('no equipment → Home Gainz', (R({goal:'strength', equipment:'bodyweight', days:4, experience:'advanced'})||{}).key, 'library:home-gainz');
+eq('advanced, gym, muscle, 6 days → Arnold Split', (R({goal:'muscle', equipment:'gym', days:6, experience:'advanced'})||{}).key, 'library:arnold-split');
+eq('skipped goal + experience still recommends', !!R({equipment:'gym', days:3}), true);
+eq('empty catalogue → null', recommendProgramme({equipment:'gym'}, []), null);
+
+// properties over every combination
+var GOALS=[null,'strength','muscle','fitness','health'], EQ=['gym','home','bodyweight'], DAYS=[2,3,4,5,6], MINS=[null,30,45,60,75], EXP=[null,'beginner','intermediate','advanced'];
+var fitsKit = {gym:{gym:1,home:1,bodyweight:1}, home:{home:1,bodyweight:1}, bodyweight:{bodyweight:1}};
+var nCombos = 0, badKit = [], badDays = [], badPPL = [], badShort = [], noRec = [], noReason = [];
+GOALS.forEach(function(g){ EQ.forEach(function(e){ DAYS.forEach(function(d){ MINS.forEach(function(m){ EXP.forEach(function(x){
+  nCombos++;
+  var a = {goal:g, equipment:e, days:d, minutes:m, experience:x}, r = R(a), tag = JSON.stringify(a);
+  if(!r){ noRec.push(tag); return; }
+  var p = byKey[r.key];
+  if(!p || !fitsKit[e][p.equip]) badKit.push(tag + ' → ' + r.key);
+  if(r.key !== 'PPL' && r.daysPerWeek > d) badDays.push(tag + ' → ' + r.daysPerWeek + ' days');
+  if(r.key === 'PPL' && !((r.variant === '6day' && r.daysPerWeek === 6) || (r.variant === '3day' && r.daysPerWeek === 3))) badPPL.push(tag);
+  if(m && m <= 45 && e === 'gym' && p && p.daysOptions[0] >= 5 && x !== 'advanced') badShort.push(tag + ' → ' + r.key);
+  if(!r.reason || r.reason.length < 20) noReason.push(tag);
+}); }); }); }); });
+ok('every one of ' + nCombos + ' answer combinations gets a recommendation (' + noRec.length + ' missing, e.g. ' + noRec[0] + ')', noRec.length === 0);
+ok('never recommends kit the user lacks (' + badKit.length + ', e.g. ' + badKit[0] + ')', badKit.length === 0);
+ok('never schedules more days than chosen (' + badDays.length + ', e.g. ' + badDays[0] + ')', badDays.length === 0);
+ok('PPL variant always matches its days (' + badPPL.length + ')', badPPL.length === 0);
+ok('a ≤45-min session never gets a 5–6-day split unless advanced (' + badShort.length + ', e.g. ' + badShort[0] + ')', badShort.length === 0);
+ok('every recommendation explains why (' + noReason.length + ')', noReason.length === 0);
+
+// _spreadDays
+var NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'], ORDER = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+var sdBad = [];
+for(var ti=0; ti<7; ti++) for(var n=1; n<=7; n++){
+  var s = _spreadDays(ti, n);
+  var uniq = s.filter(function(v,i){ return s.indexOf(v) === i; }).length === s.length;
+  var sorted = s.every(function(v,i){ return i === 0 || ORDER.indexOf(s[i-1]) < ORDER.indexOf(v); });
+  if(s.length !== n || !uniq || !sorted || s.indexOf(NAMES[ti]) === -1) sdBad.push(ti + '/' + n + ' → ' + s.join(','));
+}
+ok('schedule always has n unique days, Monday-first, including today (' + sdBad.length + ' bad, e.g. ' + sdBad[0] + ')', sdBad.length === 0);
+eq('3 days from a Tuesday', _spreadDays(2, 3), ['Tuesday','Thursday','Sunday']);
+
+// _stAnswersFrom — migration safety for saved onboarding blobs
+eq('no blob → defaults', _stAnswersFrom(undefined), {goal:null, equipment:null, days:3, minutes:null, experience:null});
+eq('old (pre-Phase-1) blob maps across', _stAnswersFrom({experienceLevel:'intermediate', trainingGoal:'muscle', trainingFrequency:'4-5', equipmentAccess:['dumbbells','bands']}),
+   {goal:'muscle', equipment:'home', days:4, minutes:null, experience:'intermediate'});
+eq('old blob with barbells → gym', _stAnswersFrom({equipmentAccess:['barbells'], trainingGoal:'fat_loss'}).equipment, 'gym');
+eq('old fat_loss goal → fitness', _stAnswersFrom({trainingGoal:'fat_loss'}).goal, 'fitness');
+eq('v2 blob round-trips', _stAnswersFrom({version:2, goal:'health', equipment:'bodyweight', daysPerWeek:5, sessionMinutes:45, experienceLevel:'advanced'}),
+   {goal:'health', equipment:'bodyweight', days:5, minutes:45, experience:'advanced'});
+eq('junk values are rejected', _stAnswersFrom({goal:'<img>', equipment:'moon', daysPerWeek:99, sessionMinutes:'x', experienceLevel:'god'}),
+   {goal:null, equipment:null, days:3, minutes:null, experience:null});
+
+// wizard routing
+eq('wizard next: 1→3, 3→5, detours 2/4 → 5', [1,3,2,4].map(function(s){ return _pathWizardRoute(s, 1); }), [3,5,5,5]);
+eq('wizard back: 5→3, 3→1, detours 2/4 → 5', [5,3,2,4].map(function(s){ return _pathWizardRoute(s, -1); }), [3,1,5,5]);
+JSON.stringify(fails);
+"""
+
+START_RENDER = r"""
+function mkEl(id){ return { id:id, _html:'', style:{}, dataset:{}, focus:function(){}, querySelectorAll:function(){ return []; },
+  get innerHTML(){ return this._html; }, set innerHTML(v){ this._html = String(v); } }; }
+var _els = {};
+var document = { getElementById: function(id){ return _els[id] || (_els[id] = mkEl(id)); } };
+function setTimeout(f){ f(); }
+var userPath = null;
+function isPathActive(){ return false; }
+var out = {};
+[0,1,2,3,4].forEach(function(s){
+  _st = { step:-1, goal:null, equipment:null, days:3, minutes:null, experience:null, fromProfile:false };
+  renderStartTodayStep(s); out['s' + s + '_empty'] = document.getElementById('onboardContent').innerHTML;
+  _st = { step:-1, goal:'strength', equipment:'gym', days:4, minutes:45, experience:'beginner', fromProfile:false };
+  renderStartTodayStep(s); out['s' + s + '_picked'] = document.getElementById('onboardContent').innerHTML;
+});
+JSON.stringify(out);
+"""
+
+def gate_start_today(html, js):
+    ok_all = True
+    pieces = []
+    for cname in ['_BUILTIN_STRENGTH', 'LIBRARY_PROGRAMMES']:
+        src = extract_const_array(js, cname)
+        if not src:
+            print(f'  ✗ could not extract {cname}'); return False
+        pieces.append(src)
+    for c in ['ST_DAYS', 'ST_MINUTES', 'ST_WEEKDAYS', 'PATH_WIZARD_NEXT', 'PATH_WIZARD_BACK']:
+        line = extract_const_line(js, c)
+        if not line:
+            print(f'  ✗ could not extract {c}'); return False
+        pieces.append(line)
+    for fn in START_FNS:
+        src = extract_decl(js, fn)
+        if not src:
+            print(f'  ✗ could not extract function {fn}'); return False
+        pieces.append(src)
+    out, _ = run_jxa('\n'.join(pieces) + '\n' + START_ASSERTIONS)
+    try:
+        fails = json.loads(out)
+    except Exception:
+        fails = ['start-today runner errored: ' + out[:300]]
+    for f in fails: print('  ✗ ' + f)
+    if fails: ok_all = False
+    else: print('  ✓ recommender holds over all 1,500 answer combinations; schedule includes today; old onboarding blobs migrate; wizard routes 1→3→5')
+
+    # (e) real renderer
+    rp = []
+    for c in ['ST_GOALS', 'ST_EQUIP', 'ST_EXP']:
+        src = extract_const_array(js, c)
+        if not src:
+            print(f'  ✗ could not extract {c}'); return False
+        rp.append(src)
+    for c in ['ST_DAYS', 'ST_MINUTES']:
+        rp.append(extract_const_line(js, c))
+    rp.append('var _st = {};')
+    for fn in ['esc', '_stOpt', '_stChip', '_stHead', '_stNav', 'renderStartTodayStep']:
+        src = extract_decl(js, fn)
+        if not src:
+            print(f'  ✗ could not extract function {fn}'); return False
+        rp.append(src)
+    out, _ = run_jxa('\n'.join(rp) + '\n' + START_RENDER)
+    try:
+        r = json.loads(out)
+    except Exception:
+        print('  ✗ start-today render runner errored: ' + out[:300]); return False
+    lint = []
+    for k, frag in r.items():
+        bad = _html_wellformed(frag)
+        if bad: lint.append(f'{k}: malformed markup near {bad[:70]!r}')
+        for attr, code in re.findall(r'\son([a-z]+)\s*=\s*"([^"]*)"', frag):
+            if not re.fullmatch(_SAFE_CALL + r'(?:;' + _SAFE_CALL + r')*;?', code.strip()):
+                lint.append(f'{k}: on{attr}="{code[:60]}" is not index/dataset-passing')
+        if re.search(r'<(div|span)\b[^>]*\sonclick=', frag):
+            lint.append(f'{k}: renders a clickable div/span')
+        if 'id="stTitle"' not in frag:
+            lint.append(f'{k}: no focusable step heading #stTitle')
+    for s in [1, 2, 3, 4]:
+        for v in ['empty', 'picked']:
+            if 'How this changes your plan' not in r[f's{s}_{v}']:
+                lint.append(f'step {s} ({v}) does not say how the answer changes the plan')
+    for s in [1, 2, 4]:
+        if 'aria-pressed="true"' not in r[f's{s}_picked']:
+            lint.append(f'step {s}: the chosen option is not exposed as aria-pressed="true"')
+    for s in [1, 4]:
+        if 'onclick="stSkip()"' not in r[f's{s}_empty']:
+            lint.append(f'step {s} (optional) offers no Skip')
+    if 'onclick="stSkip()"' in r['s2_empty']:
+        lint.append('step 2 (equipment, essential) must not be skippable')
+    if not re.search(r'st-next"[^>]*disabled', r['s2_empty']):
+        lint.append('step 2 lets you continue without choosing equipment')
+    if 'Session length' not in r['s3_empty'] or 'optional' not in r['s3_empty']:
+        lint.append('step 3 does not mark session length as optional')
+    if 'onclick="stSkipAll()"' not in r['s0_empty']:
+        lint.append('welcome step has no way to skip the whole flow')
+    # wiring
+    co = extract_decl(js, 'checkOnboarding') or ''
+    if 'openStartToday(' not in co or 'renderOnboardStep(0)' in co:
+        lint.append('first run (checkOnboarding) is not routed to the Start-today flow')
+    qs = extract_decl(js, 'quickStartPath') or ''
+    if "'Monday','Wednesday','Friday'" in qs:
+        lint.append('quick-start presets hard-code Mon/Wed/Fri (most sign-ups land on a rest day)')
+    sv = extract_decl(js, '_stSaveProfile') or ''
+    if 'Object.assign({}, userProfile.onboarding' not in sv:
+        lint.append('_stSaveProfile replaces userProfile.onboarding instead of extending it')
+    oc = extract_decl(js, '_obComplete') or ''
+    if '...(userProfile.onboarding' not in oc:
+        lint.append('_obComplete (detailed setup) drops the Start-today answers')
+    acw = extract_decl(js, 'applyCustomWeights') or ''
+    if 'ULF_VARIANTS' not in acw or not re.search(r'const ULF_VARIANTS=\{[\s\S]*?\n\};\napplyCustomWeights\(\);', js):
+        lint.append('saved starting weights do not reach ULF_VARIANTS (getULFDay reads those)')
+    for fn in ['renderPathStep1', 'renderPathStep3']:
+        src = extract_decl(js, fn) or ''
+        for m in re.finditer(r'<div class="path-(?:prog-card|duration-btn)[^>]*>', src):
+            if 'role="button"' not in m.group(0) or 'tabindex="0"' not in m.group(0) or '_cardKey(' not in m.group(0):
+                lint.append(f'{fn}: a clickable card is not keyboard-operable: {m.group(0)[:80]}')
+    if lint:
+        for f in lint: print('  ✗ ' + f)
+        ok_all = False
+    else:
+        print('  ✓ Start-today steps explain their effect, skip only what is optional, render pressed-state buttons; first run, presets and weights wired')
+    return ok_all
+
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/11] parse')
+    print('[1/12] parse')
     p = gate_parse(js)
-    print('[2/11] invariants')
+    print('[2/12] invariants')
     inv = gate_invariants(js)
-    print('[3/11] video map')
+    print('[3/12] video map')
     vm = gate_videomap(js)
-    print('[4/11] inline handler wiring')
+    print('[4/12] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/11] auth log hygiene')
+    print('[5/12] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/11] sign-out scrub')
+    print('[6/12] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/11] safe rendering of user text')
+    print('[7/12] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/11] sync honesty')
+    print('[8/12] sync honesty')
     sy = gate_sync(js)
-    print('[9/11] media fallback + reminder copy')
+    print('[9/12] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/11] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/12] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/11] core-journey accessibility (session + dialogs)')
+    print('[11/12] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
+    print('[12/12] Start today (first-use flow) + shortened Path wizard')
+    st = gate_start_today(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 
