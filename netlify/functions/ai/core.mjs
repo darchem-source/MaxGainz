@@ -27,23 +27,34 @@ function _aiIsObj(o, keys){
   const k = Object.keys(o);
   return k.length === keys.length && keys.every(x => Object.prototype.hasOwnProperty.call(o, x));
 }
-// Every number a text states: digits (82.5, 1,200, 6–8 → 6 and 8) and number
-// words. Placeholders ({EX}, L1, E2) are not numbers.
+// Every number a text states: digits in any script (NFKC → ASCII), 82.5,
+// 1,200, ranges (6–8 → 6 and 8), a leading minus (−12), and number words
+// including compounds (eighty-eight). Placeholders ({EX}, L1, E2) are not
+// numbers. Vulgar fractions (½) can never be grounded (NaN).
 function _aiNumbersIn(text){
-  const s = String(text == null ? '' : text)
+  const raw = String(text == null ? '' : text);
+  const out = [];
+  if(/[¼-¾⅐-⅟⁄∕]/.test(raw)) out.push(NaN);
+  const s = raw.normalize('NFKC')
     .replace(/\{EX\}/g, ' ')
     .replace(/\b[LE]\d{1,2}\b/g, ' ')
     .replace(/(\d),(\d{3})(?!\d)/g, '$1$2');
-  const out = [];
   const re = /\d+(?:[.,]\d+)?/g;
   let m;
-  while((m = re.exec(s)) !== null) out.push(parseFloat(m[0].replace(',', '.')));
+  while((m = re.exec(s)) !== null){
+    const v = parseFloat(m[0].replace(',', '.'));
+    const i = m.index;
+    const neg = i > 0 && (s[i - 1] === '-' || s[i - 1] === '−') && (i < 2 || !/[0-9A-Za-z]/.test(s[i - 2]));
+    out.push(neg ? -v : v);
+  }
   const W = { zero:0, one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10,
     eleven:11, twelve:12, thirteen:13, fourteen:14, fifteen:15, sixteen:16, seventeen:17, eighteen:18,
     nineteen:19, twenty:20, thirty:30, forty:40, fifty:50, sixty:60, seventy:70, eighty:80, ninety:90,
     hundred:100, dozen:12 };
-  const wr = /[a-z]+/gi;
-  while((m = wr.exec(s)) !== null){ const w = m[0].toLowerCase(); if(Object.prototype.hasOwnProperty.call(W, w)) out.push(W[w]); }
+  const words = s.toLowerCase().replace(/\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[-\s]+(one|two|three|four|five|six|seven|eight|nine)\b/g,
+    (all, t, u) => { out.push(W[t] + W[u]); return ' '; });
+  const wr = /[a-z]+/g;
+  while((m = wr.exec(words)) !== null){ if(Object.prototype.hasOwnProperty.call(W, m[0])) out.push(W[m[0]]); }
   return out;
 }
 // Every number present anywhere in a facts object (values and inside strings).
@@ -63,7 +74,7 @@ function _aiGrounded(text, allowed){
   return { ok: bad.length === 0, bad };
 }
 function _aiMentionsPain(text){
-  return /\b(pain\w*|hurt\w*|injur\w*|tweak\w*|twinge\w*|ache[sd]?|aching|sore\w*|strain\w*|sprain\w*|pulled|numb\w*|tingl\w*|swell\w*|swollen|dizz\w*|faint\w*|chest)\b/i.test(String(text == null ? '' : text));
+  return /\b(pain\w*|hurt\w*|injur\w*|tweak\w*|twinge\w*|ache[sd]?|aching|sore\w*|strain\w*|sprain\w*|pulled|numb\w*|tingl\w*|swell\w*|swollen|dizz\w*|faint\w*)\b/i.test(String(text == null ? '' : text));
 }
 // '' when the facts for `task` have exactly the allowed shape, else a reason.
 function _aiValidateFacts(task, f){
@@ -129,11 +140,12 @@ function _aiValidateFacts(task, f){
 function _aiCheckOutput(task, out, f){
   const medical = /\b(injur\w*|pain\w*|diagnos\w*|physio\w*|doctor\w*|medic\w*|treat\w*|rehab\w*|inflam\w*|tendon\w*|tendin\w*|sprain\w*|surgery)\b/i;
   const str = (s, lo, hi) => typeof s === 'string' && s.trim().length >= lo && s.length <= hi;
+  const unsafe = x => medical.test(x) || _aiMentionsPain(x);
   if(_aiValidateFacts(task, f)) return { ok:false, reason:'facts' };
   if(task === 'coach'){
     if(!_aiIsObj(out, ['text']) || !str(out.text, 1, 240)) return { ok:false, reason:'schema' };
     if(out.text.indexOf('{EX}') === -1) return { ok:false, reason:'placeholder' };
-    if(medical.test(out.text)) return { ok:false, reason:'medical' };
+    if(unsafe(out.text)) return { ok:false, reason:'medical' };
     const D = f.decision;
     const allowed = _aiFactNumbers(f).concat([Math.round(Math.abs(D.to - D.from) * 100) / 100]);
     if(!_aiGrounded(out.text, allowed).ok) return { ok:false, reason:'ungrounded' };
@@ -147,6 +159,10 @@ function _aiCheckOutput(task, out, f){
     if(!out.sets.length && out.clarify === null) return { ok:false, reason:'empty' };
     const ids = f.exercises.map(e => e.id), said = _aiNumbersIn(f.text);
     const inText = n => said.some(a => Math.abs(a - n) < 1e-6);
+    if(out.clarify !== null && (unsafe(out.clarify) || !_aiGrounded(out.clarify, said).ok)) return { ok:false, reason:'clarify' };
+    if(out.sets.length > Math.max(said.length, said.indexOf(out.sets.length) !== -1 ? out.sets.length : 0)) return { ok:false, reason:'set count' };
+    const saidLb = /\b(lbs?|pounds?)\b/i.test(f.text), saidKg = /\b(kgs?|kilos?|kilograms?)\b/i.test(f.text);
+    const saidBw = /\b(bw|body ?weight)\b/i.test(f.text);
     for(let i = 0; i < out.sets.length; i++){
       const s = out.sets[i];
       if(!_aiIsObj(s, ['ex','weight','unit','reps','rpe'])) return { ok:false, reason:'schema' };
@@ -155,6 +171,8 @@ function _aiCheckOutput(task, out, f){
       if(s.weight !== null && !_aiNum(s.weight, 0, 1100, false)) return { ok:false, reason:'range' };
       if(!_aiNum(s.reps, 1, 100, true)) return { ok:false, reason:'range' };
       if(s.rpe !== null && (!_aiNum(s.rpe, 1, 10, false) || Math.round(s.rpe * 2) !== s.rpe * 2)) return { ok:false, reason:'range' };
+      if((s.unit === 'lb' && !saidLb) || (s.unit === 'kg' && !saidKg)) return { ok:false, reason:'unit' };
+      if(s.weight === 0 && !saidBw && !inText(0)) return { ok:false, reason:'ungrounded' };
       if(!inText(s.reps) || (s.weight !== null && s.weight !== 0 && !inText(s.weight)) || (s.rpe !== null && !inText(s.rpe))) return { ok:false, reason:'ungrounded' };
     }
     return { ok:true, reason:'' };
@@ -162,7 +180,7 @@ function _aiCheckOutput(task, out, f){
   if(task === 'recap'){
     if(!_aiIsObj(out, ['headline','body','mentionsSmallSample']) || !str(out.headline, 1, 80) || !str(out.body, 1, 400) || typeof out.mentionsSmallSample !== 'boolean') return { ok:false, reason:'schema' };
     const all = out.headline + ' ' + out.body;
-    if(medical.test(all)) return { ok:false, reason:'medical' };
+    if(unsafe(all)) return { ok:false, reason:'medical' };
     const derived = f.pbs.map(p => Math.round((p.weight - p.prev) * 100) / 100)
       .concat([Math.max(0, f.planned - f.done), f.daysLeft + 1, Math.abs(f.trend ? f.trend.pct : 0)]);
     if(!_aiGrounded(all, _aiFactNumbers(f).concat(derived)).ok) return { ok:false, reason:'ungrounded' };
@@ -245,14 +263,7 @@ function _aiCostMicroUsd(usage){
   return Math.round(inTok * 0.1 + (Number(u.output_tokens) || 0) * 0.5);
 }
 
-function _aiSafeEqual(a, b){
-  if(typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
-  let d = 0;
-  for(let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return d === 0;
-}
-
-// req = {method, auth, bodyText}; deps = {env, fetchFn, callModel(params), isTimeout(err)}.
+// req = {method, auth, bodyText}; deps = {env, fetchFn, callModel(params), isTimeout(err), rpcSignal()}.
 // Returns {status, body}. Never throws; never echoes secrets or upstream errors.
 async function handleAiRequest(req, deps){
   const env = (deps && deps.env) || {};
@@ -269,27 +280,30 @@ async function handleAiRequest(req, deps){
   const factErr = _aiValidateFacts(task, facts);
   if(factErr) return fail(400, factErr === 'pain' ? 'pain' : 'bad_facts');
 
+  // Every call — evals included — books the user's consent + daily limits
+  // first, with the user's own JWT. Evals run this handler locally with
+  // their own deps (tests/evals), so production has no bypass.
   const auth = typeof req.auth === 'string' ? req.auth : '';
-  const evalTok = typeof env.AI_EVAL_TOKEN === 'string' && env.AI_EVAL_TOKEN.length >= 24 ? env.AI_EVAL_TOKEN : '';
-  const isEval = !!evalTok && _aiSafeEqual(auth, 'Bearer ' + evalTok);
-  if(!isEval){
-    if(!/^Bearer [A-Za-z0-9._-]{20,4096}$/.test(auth)) return fail(401, 'auth');
-    let rr;
-    try {
-      rr = await deps.fetchFn(AI_SB_URL + '/rest/v1/rpc/ai_reserve', {
-        method:'POST',
-        headers:{ 'apikey':AI_SB_ANON, 'Authorization':auth, 'Content-Type':'application/json' },
-        body:JSON.stringify({ p_kind:task })
-      });
-    } catch(e){ return fail(503, 'limits_unavailable'); }
-    if(!rr || rr.status === 401 || rr.status === 403) return fail(401, 'auth');
-    if(!rr.ok) return fail(503, 'limits_unavailable');
-    let res = null;
-    try { res = await rr.json(); } catch(e){ res = null; }
-    if(!res || res.ok !== true){
-      const why = res && (res.reason === 'user_cap' || res.reason === 'global_cap') ? res.reason : (res && res.reason === 'auth' ? 'auth' : 'limits_unavailable');
-      return why === 'auth' ? fail(401, 'auth') : why === 'limits_unavailable' ? fail(503, why) : fail(429, why);
-    }
+  if(!/^Bearer [A-Za-z0-9._-]{20,4096}$/.test(auth)) return fail(401, 'auth');
+  let rr;
+  try {
+    rr = await deps.fetchFn(AI_SB_URL + '/rest/v1/rpc/ai_reserve', {
+      method:'POST',
+      headers:{ 'apikey':AI_SB_ANON, 'Authorization':auth, 'Content-Type':'application/json' },
+      body:JSON.stringify({ p_kind:task, p_note: task === 'coach' && facts.note !== null }),
+      signal: deps.rpcSignal ? deps.rpcSignal() : undefined
+    });
+  } catch(e){ return fail(503, 'limits_unavailable'); }
+  if(!rr || rr.status === 401 || rr.status === 403) return fail(401, 'auth');
+  if(!rr.ok) return fail(503, 'limits_unavailable');
+  let res = null;
+  try { res = await rr.json(); } catch(e){ res = null; }
+  if(!res || res.ok !== true){
+    const r = res && res.reason;
+    if(r === 'user_cap' || r === 'global_cap') return fail(429, r);
+    if(r === 'consent_off') return fail(403, 'consent_off');
+    if(r === 'auth') return fail(401, 'auth');
+    return fail(503, 'limits_unavailable');
   }
 
   let msg;

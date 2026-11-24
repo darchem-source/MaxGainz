@@ -2,8 +2,7 @@
 // The Anthropic key lives only in the Netlify env var ANTHROPIC_API_KEY and is
 // never sent to the client. All logic is in core.mjs (pure, gate-tested);
 // this file only adapts the Netlify Request/Response and owns the SDK client.
-// Env: ANTHROPIC_API_KEY (required), AI_ENABLED=1 (server kill switch),
-//      AI_EVAL_TOKEN (optional, ≥24 chars, lets the eval runner skip Supabase).
+// Env: ANTHROPIC_API_KEY (required), AI_ENABLED=1 (server kill switch).
 import Anthropic from '@anthropic-ai/sdk';
 import { handleAiRequest } from './core.mjs';
 
@@ -23,7 +22,9 @@ export default async (req) => {
       if(!client) client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, timeout: 7000, maxRetries: 0 });
       return client.messages.create(params);
     },
-    isTimeout: (e) => e instanceof Anthropic.APIConnectionTimeoutError
+    isTimeout: (e) => e instanceof Anthropic.APIConnectionTimeoutError,
+    // The limits RPC gets 2.5 s; client waits 12 s for RPC + model (7 s) + cold start.
+    rpcSignal: () => AbortSignal.timeout(2500)
   });
   return new Response(JSON.stringify(result.body), {
     status: result.status,

@@ -1352,7 +1352,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
             <button id="aiCoachBtn" type="button" aria-pressed="false" aria-describedby="aiCoachInfo aiCoachState" onclick="toggleAiCoach()" style="width:100%;background:var(--surface);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;min-height:44px;">✨ AI coaching: Off</button>
             <p id="aiCoachState" role="status" style="font-size:11px;color:var(--text2);margin:6px 2px 0;line-height:1.4;">Off — nothing is sent. Everything works without it.</p>
             <div id="aiCoachInfo" style="font-size:11px;color:var(--text2);line-height:1.5;margin:8px 2px 0;">
-              <p style="margin:0 0 6px;">When on, Max Gainz sends structured training facts to Anthropic's Claude so it can word your coach tips and weekly recap in plain language: exercise names from our catalogue, weights, reps, effort (RPE), how many days ago, and session counts.</p>
+              <p style="margin:0 0 6px;">When on, Max Gainz sends structured training facts to Anthropic's Claude so it can word your coach tips and weekly recap in plain language: exercise names from our catalogue, weights, reps, effort (RPE), how many days ago, and session counts. Names you made up yourself are replaced with a placeholder.</p>
               <p style="margin:0 0 6px;">It never sends your name, email, body measurements or notes (unless you turn notes on below). If you type a set the app can't read on its own, that line is sent so it can be read. Your data is not used to train AI models.</p>
               <p style="margin:0;">The app's numbers and decisions never depend on AI, and every suggestion asks before changing anything. Turn it off any time.</p>
             </div>
@@ -4900,7 +4900,7 @@ async function cloudLoadAll() {
               localStorage.setItem('userDemoSex', blob.prefs.demoSex);
             }
             if (blob.prefs.ai !== undefined) {
-              userPreferences.ai = _aiPrefsNormalize(blob.prefs.ai);
+              userPreferences.ai = _aiPrefsMerge(userPreferences.ai, blob.prefs.ai);
               try { localStorage.setItem(AI_PREFS_KEY, JSON.stringify(userPreferences.ai)); } catch(e){}
               if (typeof _renderAiSettings === 'function') _renderAiSettings();
             }
@@ -5730,6 +5730,7 @@ bus.on('sync:status', ({ status }) => {
 });
 
 // Floating sync banner — only show during cold-start sync (no cached data)
+bus.on('sync:status', () => { try { if(typeof _aiRetryConsentSync === 'function') _aiRetryConsentSync(); } catch(e){} });
 bus.on('sync:status', () => {
   const banner = document.getElementById('syncBanner');
   if(banner) banner.classList.toggle('show', _isColdSyncing());
@@ -5892,7 +5893,8 @@ const AI_METRICS_KEY = 'maxgainz_ai_metrics_v1';
 const AI_CACHE_KEY = 'maxgainz_ai_cache_v1';
 const AI_PREFS_KEY = 'maxgainz_ai_prefs';
 const AI_CLIENT_DAILY_CALLS = 30;
-const AI_TIMEOUT_MS = 8000;
+const AI_TIMEOUT_MS = 12000;            // server: limits RPC ≤2.5 s + model ≤7 s + cold start
+const AI_CONSENT_SYNC_KEY = 'maxgainz_ai_consent_sync';
 const AI_AUDIT_MAX = 300;
 const AI_KEEP_DAYS = 90;
 
@@ -5905,23 +5907,34 @@ function _aiIsObj(o, keys){
   const k = Object.keys(o);
   return k.length === keys.length && keys.every(x => Object.prototype.hasOwnProperty.call(o, x));
 }
-// Every number a text states: digits (82.5, 1,200, 6–8 → 6 and 8) and number
-// words. Placeholders ({EX}, L1, E2) are not numbers.
+// Every number a text states: digits in any script (NFKC → ASCII), 82.5,
+// 1,200, ranges (6–8 → 6 and 8), a leading minus (−12), and number words
+// including compounds (eighty-eight). Placeholders ({EX}, L1, E2) are not
+// numbers. Vulgar fractions (½) can never be grounded (NaN).
 function _aiNumbersIn(text){
-  const s = String(text == null ? '' : text)
+  const raw = String(text == null ? '' : text);
+  const out = [];
+  if(/[¼-¾⅐-⅟⁄∕]/.test(raw)) out.push(NaN);
+  const s = raw.normalize('NFKC')
     .replace(/\{EX\}/g, ' ')
     .replace(/\b[LE]\d{1,2}\b/g, ' ')
     .replace(/(\d),(\d{3})(?!\d)/g, '$1$2');
-  const out = [];
   const re = /\d+(?:[.,]\d+)?/g;
   let m;
-  while((m = re.exec(s)) !== null) out.push(parseFloat(m[0].replace(',', '.')));
+  while((m = re.exec(s)) !== null){
+    const v = parseFloat(m[0].replace(',', '.'));
+    const i = m.index;
+    const neg = i > 0 && (s[i - 1] === '-' || s[i - 1] === '−') && (i < 2 || !/[0-9A-Za-z]/.test(s[i - 2]));
+    out.push(neg ? -v : v);
+  }
   const W = { zero:0, one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10,
     eleven:11, twelve:12, thirteen:13, fourteen:14, fifteen:15, sixteen:16, seventeen:17, eighteen:18,
     nineteen:19, twenty:20, thirty:30, forty:40, fifty:50, sixty:60, seventy:70, eighty:80, ninety:90,
     hundred:100, dozen:12 };
-  const wr = /[a-z]+/gi;
-  while((m = wr.exec(s)) !== null){ const w = m[0].toLowerCase(); if(Object.prototype.hasOwnProperty.call(W, w)) out.push(W[w]); }
+  const words = s.toLowerCase().replace(/\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[-\s]+(one|two|three|four|five|six|seven|eight|nine)\b/g,
+    (all, t, u) => { out.push(W[t] + W[u]); return ' '; });
+  const wr = /[a-z]+/g;
+  while((m = wr.exec(words)) !== null){ if(Object.prototype.hasOwnProperty.call(W, m[0])) out.push(W[m[0]]); }
   return out;
 }
 // Every number present anywhere in a facts object (values and inside strings).
@@ -5941,7 +5954,7 @@ function _aiGrounded(text, allowed){
   return { ok: bad.length === 0, bad };
 }
 function _aiMentionsPain(text){
-  return /\b(pain\w*|hurt\w*|injur\w*|tweak\w*|twinge\w*|ache[sd]?|aching|sore\w*|strain\w*|sprain\w*|pulled|numb\w*|tingl\w*|swell\w*|swollen|dizz\w*|faint\w*|chest)\b/i.test(String(text == null ? '' : text));
+  return /\b(pain\w*|hurt\w*|injur\w*|tweak\w*|twinge\w*|ache[sd]?|aching|sore\w*|strain\w*|sprain\w*|pulled|numb\w*|tingl\w*|swell\w*|swollen|dizz\w*|faint\w*)\b/i.test(String(text == null ? '' : text));
 }
 // '' when the facts for `task` have exactly the allowed shape, else a reason.
 function _aiValidateFacts(task, f){
@@ -6007,11 +6020,12 @@ function _aiValidateFacts(task, f){
 function _aiCheckOutput(task, out, f){
   const medical = /\b(injur\w*|pain\w*|diagnos\w*|physio\w*|doctor\w*|medic\w*|treat\w*|rehab\w*|inflam\w*|tendon\w*|tendin\w*|sprain\w*|surgery)\b/i;
   const str = (s, lo, hi) => typeof s === 'string' && s.trim().length >= lo && s.length <= hi;
+  const unsafe = x => medical.test(x) || _aiMentionsPain(x);
   if(_aiValidateFacts(task, f)) return { ok:false, reason:'facts' };
   if(task === 'coach'){
     if(!_aiIsObj(out, ['text']) || !str(out.text, 1, 240)) return { ok:false, reason:'schema' };
     if(out.text.indexOf('{EX}') === -1) return { ok:false, reason:'placeholder' };
-    if(medical.test(out.text)) return { ok:false, reason:'medical' };
+    if(unsafe(out.text)) return { ok:false, reason:'medical' };
     const D = f.decision;
     const allowed = _aiFactNumbers(f).concat([Math.round(Math.abs(D.to - D.from) * 100) / 100]);
     if(!_aiGrounded(out.text, allowed).ok) return { ok:false, reason:'ungrounded' };
@@ -6025,6 +6039,10 @@ function _aiCheckOutput(task, out, f){
     if(!out.sets.length && out.clarify === null) return { ok:false, reason:'empty' };
     const ids = f.exercises.map(e => e.id), said = _aiNumbersIn(f.text);
     const inText = n => said.some(a => Math.abs(a - n) < 1e-6);
+    if(out.clarify !== null && (unsafe(out.clarify) || !_aiGrounded(out.clarify, said).ok)) return { ok:false, reason:'clarify' };
+    if(out.sets.length > Math.max(said.length, said.indexOf(out.sets.length) !== -1 ? out.sets.length : 0)) return { ok:false, reason:'set count' };
+    const saidLb = /\b(lbs?|pounds?)\b/i.test(f.text), saidKg = /\b(kgs?|kilos?|kilograms?)\b/i.test(f.text);
+    const saidBw = /\b(bw|body ?weight)\b/i.test(f.text);
     for(let i = 0; i < out.sets.length; i++){
       const s = out.sets[i];
       if(!_aiIsObj(s, ['ex','weight','unit','reps','rpe'])) return { ok:false, reason:'schema' };
@@ -6033,6 +6051,8 @@ function _aiCheckOutput(task, out, f){
       if(s.weight !== null && !_aiNum(s.weight, 0, 1100, false)) return { ok:false, reason:'range' };
       if(!_aiNum(s.reps, 1, 100, true)) return { ok:false, reason:'range' };
       if(s.rpe !== null && (!_aiNum(s.rpe, 1, 10, false) || Math.round(s.rpe * 2) !== s.rpe * 2)) return { ok:false, reason:'range' };
+      if((s.unit === 'lb' && !saidLb) || (s.unit === 'kg' && !saidKg)) return { ok:false, reason:'unit' };
+      if(s.weight === 0 && !saidBw && !inText(0)) return { ok:false, reason:'ungrounded' };
       if(!inText(s.reps) || (s.weight !== null && s.weight !== 0 && !inText(s.weight)) || (s.rpe !== null && !inText(s.rpe))) return { ok:false, reason:'ungrounded' };
     }
     return { ok:true, reason:'' };
@@ -6040,7 +6060,7 @@ function _aiCheckOutput(task, out, f){
   if(task === 'recap'){
     if(!_aiIsObj(out, ['headline','body','mentionsSmallSample']) || !str(out.headline, 1, 80) || !str(out.body, 1, 400) || typeof out.mentionsSmallSample !== 'boolean') return { ok:false, reason:'schema' };
     const all = out.headline + ' ' + out.body;
-    if(medical.test(all)) return { ok:false, reason:'medical' };
+    if(unsafe(all)) return { ok:false, reason:'medical' };
     const derived = f.pbs.map(p => Math.round((p.weight - p.prev) * 100) / 100)
       .concat([Math.max(0, f.planned - f.done), f.daysLeft + 1, Math.abs(f.trend ? f.trend.pct : 0)]);
     if(!_aiGrounded(all, _aiFactNumbers(f).concat(derived)).ok) return { ok:false, reason:'ungrounded' };
@@ -6090,7 +6110,20 @@ function _aiFlagOn(name){
 function _aiPrefsNormalize(p){
   const o = (p && typeof p === 'object' && !Array.isArray(p)) ? p : {};
   const on = o.on === true && o.v === AI_CONSENT_VERSION;
-  return { on, notes: on && o.notes === true, v: on ? AI_CONSENT_VERSION : 0, at: on && typeof o.at === 'number' && isFinite(o.at) ? o.at : null };
+  const ts = v => typeof v === 'number' && isFinite(v) && v > 0 ? v : null;
+  return { on, notes: on && o.notes === true, v: on ? AI_CONSENT_VERSION : 0, at: on ? ts(o.at) : null, changedAt: ts(o.changedAt) };
+}
+// Pure: merge this device's consent with the cloud copy — the most recent
+// change wins, and on a tie (or no timestamps at all) OFF wins. A stale
+// device can therefore never switch AI back on after it was turned off.
+function _aiPrefsMerge(local, cloud){
+  const l = _aiPrefsNormalize(local), c = _aiPrefsNormalize(cloud);
+  const lt = l.changedAt || 0, ct = c.changedAt || 0;
+  if(ct > lt) return c;
+  if(lt > ct) return l;
+  if(!l.on) return l;
+  if(!c.on) return c;
+  return (l.notes && !c.notes) ? c : l;
 }
 function _aiPrefsLoadLocal(){
   try { return _aiPrefsNormalize(JSON.parse(localStorage.getItem(AI_PREFS_KEY) || 'null')); } catch(e){ return _aiPrefsNormalize(null); }
@@ -6200,6 +6233,7 @@ function _aiReasonFor(status, body){
   if(r === 'refusal') return 'refusal';
   if(r === 'invalid' || r === 'bad_facts') return 'invalid';
   if(r === 'pain') return 'pain';
+  if(r === 'consent_off') return 'off';
   if(r === 'auth' || status === 401) return 'auth';
   if(r === 'disabled' || r === 'not_configured' || r === 'limits_unavailable') return 'unavailable';
   return 'error';
@@ -6218,7 +6252,8 @@ async function _aiPost(task, facts, signal){
 // One AI request. Never throws, never blocks the caller's own text: resolves
 // {ok:true, out, auditId} or {ok:false, reason, auditId} ('flag' = feature not
 // rolled out → record nothing at all).
-async function _aiCall(task, facts, feature){
+async function _aiCall(task, factsIn, feature){
+  let facts = factsIn;
   try {
     const why = _aiGate({
       master: _aiFlagOn('master'),
@@ -6236,6 +6271,12 @@ async function _aiCall(task, facts, feature){
       return { ok:false, reason, auditId:id };
     };
     if(why) return fallback(why);
+    // Notes go out only with the separate notes consent (the server checks too).
+    const prefs = _aiPrefsNormalize(userPreferences.ai);
+    if(task === 'coach' && facts && facts.note !== null && facts.note !== undefined && !prefs.notes){
+      facts = Object.assign({}, facts, { note: null });
+      base.facts = facts; base.factsHash = _aiHash(JSON.stringify(facts));
+    }
     const factErr = _aiValidateFacts(task, facts);
     if(factErr) return fallback(factErr === 'pain' ? 'pain' : 'invalid');
 
@@ -6244,13 +6285,18 @@ async function _aiCall(task, facts, feature){
     for(let attempt = 0; attempt < 2; attempt++){
       const ctl = typeof AbortController === 'function' ? new AbortController() : null;
       const timer = setTimeout(() => { timedOut = true; if(ctl) ctl.abort(); }, AI_TIMEOUT_MS);
-      try { res = await _aiPost(task, facts, ctl ? ctl.signal : undefined); }
+      try {
+        res = await _aiPost(task, facts, ctl ? ctl.signal : undefined);
+        try { body = await res.json(); } catch(e){ body = null; }
+      }
       catch(e){ res = null; }
       finally { clearTimeout(timer); }
-      if(!res) return fallback(timedOut ? 'timeout' : (typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'error'));
-      try { body = await res.json(); } catch(e){ body = null; }
-      // An expired session token: refresh once and retry once.
-      if(attempt === 0 && res.status === 401 && typeof refreshAuthToken === 'function' && (await refreshAuthToken()) === true) continue;
+      if(!res || timedOut) return fallback(timedOut ? 'timeout' : (typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'error'));
+      // An expired session token: refresh once (bounded) and retry once.
+      if(attempt === 0 && res.status === 401 && typeof refreshAuthToken === 'function'){
+        const refreshed = await Promise.race([refreshAuthToken(), new Promise(r => setTimeout(() => r(false), 5000))]);
+        if(refreshed === true) continue;
+      }
       break;
     }
     const meta = body && typeof body === 'object' ? {
@@ -6262,6 +6308,7 @@ async function _aiCall(task, facts, feature){
     if(!res.ok || !body || body.ok !== true){
       const reason = _aiReasonFor(res.status, body);
       if(reason === 'cap') _aiMetricBump('capped');
+      if(reason === 'off') _aiAdoptServerOff();
       return fallback(reason, meta);
     }
     const chk = _aiCheckOutput(task, body.out, facts);
@@ -6275,23 +6322,67 @@ async function _aiCall(task, facts, feature){
 }
 
 // ── Profile: AI coaching consent ──
-function toggleAiCoach(){
-  const cur = _aiPrefsNormalize(userPreferences.ai);
-  userPreferences.ai = cur.on ? _aiPrefsNormalize(null)
-    : _aiPrefsNormalize({ on:true, notes:false, v:AI_CONSENT_VERSION, at:Date.now() });
-  try { localStorage.setItem(AI_PREFS_KEY, JSON.stringify(userPreferences.ai)); } catch(e){}
-  if(!userPreferences.ai.on){ try { localStorage.removeItem(AI_CACHE_KEY); } catch(e){} }
-  _renderAiSettings();
-  if(typeof cloudSaveProfile === 'function') cloudSaveProfile();
-  showToast(userPreferences.ai.on ? '✨ AI coaching on — turn it off any time' : 'AI coaching off — nothing is sent', { duration: 2400 });
+// The server copy (Supabase ai_consent via ai_set_consent) is what /api/ai
+// checks, so a switch-off on one device stops every device. Switching ON needs
+// the server to confirm; switching OFF takes effect here at once and is
+// retried until the server has it.
+async function _aiSetServerConsent(p){
+  if(typeof isAuthenticated !== 'function' || !isAuthenticated() || typeof sbFetch !== 'function') return false;
+  const r = await sbFetch('rpc/ai_set_consent', { method:'POST', silent:true,
+    body: JSON.stringify({ p_enabled: !!p.on, p_notes: !!p.notes, p_version: p.on ? AI_CONSENT_VERSION : 0 }) });
+  return !!(r && r.ok === true);
 }
-function toggleAiNotes(){
+function _aiSaveLocalPrefs(){
+  try { localStorage.setItem(AI_PREFS_KEY, JSON.stringify(userPreferences.ai)); } catch(e){}
+  if(typeof cloudSaveProfile === 'function') cloudSaveProfile();
+}
+async function _aiApplyConsent(next){
+  const cur = _aiPrefsNormalize(userPreferences.ai);
+  const p = _aiPrefsNormalize(Object.assign({}, next, { changedAt: Date.now() }));
+  const widening = (p.on && !cur.on) || (p.notes && !cur.notes);
+  if(widening){
+    if(typeof isAuthenticated !== 'function' || !isAuthenticated()){ showToast('Sign in to turn on AI coaching', { duration: 2400 }); return false; }
+    const b = document.getElementById(p.notes && cur.on ? 'aiNotesBtn' : 'aiCoachBtn');
+    if(b) b.setAttribute('aria-busy', 'true');
+    const ok = await _aiSetServerConsent(p);
+    if(b) b.removeAttribute('aria-busy');
+    if(!ok){ showToast('⚠️ Couldn\'t turn that on — check your connection and try again', { duration: 3000 }); _renderAiSettings(); return false; }
+    try { localStorage.removeItem(AI_CONSENT_SYNC_KEY); } catch(e){}
+  } else {
+    // Narrowing (off / notes off): local first, then the server; retried later if offline.
+    try { localStorage.setItem(AI_CONSENT_SYNC_KEY, JSON.stringify({ uid: _aiUid(), on: p.on, notes: p.notes })); } catch(e){}
+  }
+  userPreferences.ai = p;
+  if(!p.on){ try { localStorage.removeItem(AI_CACHE_KEY); } catch(e){} }
+  _aiSaveLocalPrefs();
+  _renderAiSettings();
+  if(!widening) _aiRetryConsentSync();
+  return true;
+}
+async function _aiRetryConsentSync(){
+  let q = null;
+  try { q = JSON.parse(localStorage.getItem(AI_CONSENT_SYNC_KEY) || 'null'); } catch(e){ q = null; }
+  if(!q || q.uid !== _aiUid()) return;
+  if(await _aiSetServerConsent(q)){ try { localStorage.removeItem(AI_CONSENT_SYNC_KEY); } catch(e){} }
+}
+if(typeof window !== 'undefined') window.addEventListener('online', () => { try { _aiRetryConsentSync(); } catch(e){} });
+// The server said consent is off (switched off on another device): follow it here.
+function _aiAdoptServerOff(){
+  if(!_aiPrefsNormalize(userPreferences.ai).on) return;
+  userPreferences.ai = _aiPrefsNormalize({ on:false, changedAt: Date.now() });
+  try { localStorage.removeItem(AI_CACHE_KEY); } catch(e){}
+  _aiSaveLocalPrefs();
+  try { _renderAiSettings(); } catch(e){}
+}
+async function toggleAiCoach(){
+  const cur = _aiPrefsNormalize(userPreferences.ai);
+  const done = await _aiApplyConsent(cur.on ? { on:false } : { on:true, notes:false, v:AI_CONSENT_VERSION, at:Date.now() });
+  if(done) showToast(userPreferences.ai.on ? '✨ AI coaching on — turn it off any time' : 'AI coaching off — nothing is sent', { duration: 2400 });
+}
+async function toggleAiNotes(){
   const cur = _aiPrefsNormalize(userPreferences.ai);
   if(!cur.on) return;
-  userPreferences.ai = _aiPrefsNormalize(Object.assign({}, cur, { notes: !cur.notes }));
-  try { localStorage.setItem(AI_PREFS_KEY, JSON.stringify(userPreferences.ai)); } catch(e){}
-  _renderAiSettings();
-  if(typeof cloudSaveProfile === 'function') cloudSaveProfile();
+  await _aiApplyConsent(Object.assign({}, cur, { notes: !cur.notes }));
 }
 function _renderAiSettings(){
   const box = document.getElementById('aiSettings');
@@ -6305,7 +6396,7 @@ function _renderAiSettings(){
   if(n){ n.setAttribute('aria-pressed', String(p.notes)); n.disabled = !p.on; n.textContent = 'Also send my exercise notes: ' + (p.notes ? 'On' : 'Off'); }
   if(st){
     const signedIn = typeof isAuthenticated === 'function' && isAuthenticated();
-    st.textContent = !p.on ? 'Off — nothing is sent. Everything works without it.'
+    st.textContent = !p.on ? (signedIn ? 'Off — nothing is sent. Everything works without it.' : 'Off — sign in to turn it on. Everything works without it.')
       : !signedIn ? 'On, but needs you to be signed in. Until then you see the app\'s own text.'
       : 'On since ' + (p.at ? new Date(p.at).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : 'today') + '.';
   }
@@ -26456,6 +26547,7 @@ function authLogout(opts){
   localStorage.removeItem(AI_AUDIT_KEY);
   localStorage.removeItem(AI_METRICS_KEY);
   localStorage.removeItem(AI_CACHE_KEY);
+  localStorage.removeItem(AI_CONSENT_SYNC_KEY);
   // Pending-sync queue + sync markers belong to this account: drop them so the
   // next account can never upload (or be shown) the previous one's changes.
   _pending = null; clearTimeout(_syncRetryTimer); _syncRetryTimer = null; _syncBackoff = 0;

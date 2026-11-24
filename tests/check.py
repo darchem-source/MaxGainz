@@ -2576,11 +2576,11 @@ AI_CORE = os.path.join(ROOT, 'netlify', 'functions', 'ai', 'core.mjs')
 AI_ADAPTER = os.path.join(ROOT, 'netlify', 'functions', 'ai', 'ai.mjs')
 AI_SHARED = ['_aiNum', '_aiIsObj', '_aiNumbersIn', '_aiFactNumbers', '_aiGrounded',
              '_aiMentionsPain', '_aiValidateFacts', '_aiCheckOutput']
-AI_CLIENT_PURE = ['_aiFlagsFromQuery', '_aiPrefsNormalize', '_aiConsented', '_aiGate', '_aiDayKey',
+AI_CLIENT_PURE = ['_aiFlagsFromQuery', '_aiPrefsNormalize', '_aiPrefsMerge', '_aiConsented', '_aiGate', '_aiDayKey',
                   '_aiHash', '_aiStoreLoad', '_aiMetricsSummary', '_aiHealthRows', '_aiReasonFor']
 AI_CLIENT_CONSTS = ['AI_FLAG_KEYS', 'AI_CONSENT_VERSION', 'AI_AUDIT_KEY', 'AI_METRICS_KEY', 'AI_CACHE_KEY',
                     'AI_PREFS_KEY', 'AI_CLIENT_DAILY_CALLS', 'AI_TIMEOUT_MS', 'AI_AUDIT_MAX', 'AI_KEEP_DAYS',
-                    'AI_AUDIT_EVENTS', 'AI_REASON_LABELS']
+                    'AI_AUDIT_EVENTS', 'AI_REASON_LABELS', 'AI_CONSENT_SYNC_KEY']
 
 AI_FIXTURES = r"""
 var CF = {ex:'{EX}', unit:'kg', last:{daysAgo:4, weight:80, reps:[8,8,8], rpe:8}, target:{sets:3, reps:'6–8'},
@@ -2603,13 +2603,22 @@ function ok(label, cond){ if(!cond) fails.push(label); }
 var NOW = new Date(2026, 10, 24, 12, 0, 0).getTime(), D = 864e5;
 
 // consent: off unless explicitly on at the current version
-eq('no stored consent → off', _aiPrefsNormalize(null), {on:false, notes:false, v:0, at:null});
+eq('no stored consent → off', _aiPrefsNormalize(null), {on:false, notes:false, v:0, at:null, changedAt:null});
 eq('old profile blob without ai → off', _aiPrefsNormalize(undefined).on, false);
 eq('{on:true} without version → off', _aiPrefsNormalize({on:true}).on, false);
 eq('stale consent version → off', _aiPrefsNormalize({on:true, v:0}).on, false);
 eq('"true" string → off', _aiPrefsNormalize({on:'true', v:AI_CONSENT_VERSION}).on, false);
 eq('array → off', _aiPrefsNormalize([true]).on, false);
-eq('explicit consent → on', _aiPrefsNormalize({on:true, v:AI_CONSENT_VERSION, at:5}), {on:true, notes:false, v:AI_CONSENT_VERSION, at:5});
+eq('explicit consent → on', _aiPrefsNormalize({on:true, v:AI_CONSENT_VERSION, at:5, changedAt:5}), {on:true, notes:false, v:AI_CONSENT_VERSION, at:5, changedAt:5});
+eq('switching off keeps its timestamp', _aiPrefsNormalize({on:false, changedAt:9}).changedAt, 9);
+var ON = function(t, n){ return {on:true, notes:!!n, v:AI_CONSENT_VERSION, at:1, changedAt:t}; }, OFF = function(t){ return {on:false, changedAt:t}; };
+eq('merge: newer OFF on another device beats this stale ON', _aiPrefsMerge(ON(100), OFF(200)).on, false);
+eq('merge: stale ON in the cloud never re-enables a newer OFF here', _aiPrefsMerge(OFF(200), ON(100)).on, false);
+eq('merge: newer ON (explicit, elsewhere) is adopted', _aiPrefsMerge(OFF(100), ON(200)).on, true);
+eq('merge: tie → OFF wins', [_aiPrefsMerge(ON(100), OFF(100)).on, _aiPrefsMerge(OFF(100), ON(100)).on], [false, false]);
+eq('merge: no timestamps anywhere → OFF wins', _aiPrefsMerge({on:true, v:AI_CONSENT_VERSION}, {on:false}).on, false);
+eq('merge: tie on notes → notes off wins', _aiPrefsMerge(ON(100, true), ON(100, false)).notes, false);
+eq('merge: cloud blob without ai keeps local', _aiPrefsMerge(ON(100), undefined).on, true);
 eq('notes need AI on', _aiPrefsNormalize({on:false, notes:true, v:AI_CONSENT_VERSION}).notes, false);
 ok('consented() requires on + version', _aiConsented({on:true, v:AI_CONSENT_VERSION}) && !_aiConsented({on:true, v:99}) && !_aiConsented(null));
 
@@ -2637,6 +2646,12 @@ ok('grounded when every number is in facts', _aiGrounded('80 to 82.5', [80, 82.5
 eq('ungrounded lists the invented number', _aiGrounded('try 85', [80, 82.5]).bad, [85]);
 ok('number words are checked too', !_aiGrounded('do twenty reps', [8]).ok);
 ok('pain detector', _aiMentionsPain('my shoulder HURTS') && _aiMentionsPain('left elbow tweak') && !_aiMentionsPain('felt easy, bar speed good'));
+ok('chest is a muscle group, not a symptom', !_aiMentionsPain('Chest is only 4% of your training'));
+eq('full-width digits are numbers', _aiNumbersIn('\uFF18\uFF15 kg'), [85]);
+eq('hyphenated number words are one number', _aiNumbersIn('eighty-eight'), [88]);
+ok('vulgar fractions are never grounded', !_aiGrounded('add \u00BD kg', [0.5, 1, 2]).ok);
+eq('a leading minus is kept (ranges are not minus)', _aiNumbersIn('-80 and 6-8 and \u221212%'), [-80, 6, 8, -12]);
+ok('negative number not grounded by its absolute value', !_aiGrounded('-80 kg', [80]).ok);
 
 // facts validation (server rejects anything not exactly this shape)
 eq('coach facts ok', _aiValidateFacts('coach', CF), '');
@@ -2661,6 +2676,8 @@ eq('coach: invented weight', _aiCheckOutput('coach', {text:'Try 85 kg on {EX}.'}
 eq('coach: derived step allowed', _aiCheckOutput('coach', {text:'Add 2.5 kg to {EX}: 82.5 kg today.'}, CF).ok, true);
 eq('coach: no placeholder', _aiCheckOutput('coach', {text:'Try 82.5 kg today.'}, CF).reason, 'placeholder');
 eq('coach: medical words', _aiCheckOutput('coach', {text:'{EX} at 82.5 kg; see a physio if needed.'}, CF).reason, 'medical');
+eq('coach: pain words in output too', _aiCheckOutput('coach', {text:'{EX}: 82.5 kg today; stop if your shoulder feels sore or it hurts.'}, CF).reason, 'medical');
+eq('coach: unicode digits cannot smuggle a weight', _aiCheckOutput('coach', {text:'Try \uFF18\uFF15 kg on {EX}, then 82.5 kg.'}, CF).reason, 'ungrounded');
 eq('coach: increase must state the target', _aiCheckOutput('coach', {text:'Add a little weight to {EX} today.'}, CF).reason, 'missing target');
 eq('coach: extra key', _aiCheckOutput('coach', {text:COUT.text, html:'<b>'}, CF).reason, 'schema');
 eq('coach: too long', _aiCheckOutput('coach', {text:'{EX} 80 ' + 'x'.repeat(240)}, CF).reason, 'schema');
@@ -2670,8 +2687,18 @@ eq('nl: unknown exercise id', _aiCheckOutput('nl', {sets:[{ex:'E9', weight:80, u
 eq('nl: rpe off the half-step grid', _aiCheckOutput('nl', {sets:[{ex:'E1', weight:80, unit:null, reps:8, rpe:9.3}], clarify:null}, NF).reason, 'range');
 eq('nl: nothing at all', _aiCheckOutput('nl', {sets:[], clarify:null}, NF).reason, 'empty');
 ok('nl: clarify-only answer ok', _aiCheckOutput('nl', {sets:[], clarify:'Which exercise was that?'}, NF).ok);
+eq('nl: clarify with pain advice rejected', _aiCheckOutput('nl', {sets:[], clarify:'Stop if you feel pain. Which exercise?'}, NF).reason, 'clarify');
+eq('nl: clarify inventing a number rejected', _aiCheckOutput('nl', {sets:[], clarify:'Was that 225 lb?'}, NF).reason, 'clarify');
+eq('nl: lb when the note never said lb', _aiCheckOutput('nl', {sets:[{ex:'E1', weight:80, unit:'lb', reps:8, rpe:null}], clarify:null}, NF).reason, 'unit');
+ok('nl: lb when the note says lbs', _aiCheckOutput('nl', {sets:[{ex:'E1', weight:80, unit:'lb', reps:8, rpe:null}], clarify:null}, withF(NF, 'text', 'bench 80 lbs for 8')).ok);
+eq('nl: bodyweight zero needs bw in the note', _aiCheckOutput('nl', {sets:[{ex:'E1', weight:0, unit:null, reps:8, rpe:null}], clarify:null}, NF).reason, 'ungrounded');
+ok('nl: bw 12 → weight 0 ok', _aiCheckOutput('nl', {sets:[{ex:'E2', weight:0, unit:null, reps:12, rpe:null}], clarify:null}, withF(NF, 'text', 'squats bw 12')).ok);
+var ten = []; for(var k = 0; k < 10; k++) ten.push({ex:'E1', weight:80, unit:null, reps:8, rpe:null});
+eq('nl: ten sets from "bench 80 for 8" rejected', _aiCheckOutput('nl', {sets:ten, clarify:null}, withF(NF, 'text', 'bench 80 for 8')).reason, 'set count');
+ok('nl: "3x8 at 80" → 3 sets ok', _aiCheckOutput('nl', {sets:ten.slice(0, 3), clarify:null}, withF(NF, 'text', 'bench 3x8 at 80')).ok);
 eq('recap output ok', _aiCheckOutput('recap', ROUT, RF), {ok:true, reason:''});
 eq('recap: invented count', _aiCheckOutput('recap', withF(ROUT, 'body', 'You did 4 sessions. Still early.'), RF).reason, 'ungrounded');
+ok('recap: a muscle label like Chest is fine', _aiCheckOutput('recap', withF(ROUT, 'body', 'Chest work is light. It is still early, with only 2 sessions logged so far.'), RF).ok);
 eq('recap: small sample must be said', _aiCheckOutput('recap', withF(ROUT, 'mentionsSmallSample', false), RF).reason, 'small sample');
 eq('recap: flag without the words', _aiCheckOutput('recap', withF(ROUT, 'body', 'L1 moved up 2.5 kg to 62.5 kg.'), RF).reason, 'small sample');
 eq('output checked against invalid facts fails', _aiCheckOutput('coach', COUT, withF(CF, 'ex', 'Bench')).reason, 'facts');
@@ -2693,7 +2720,7 @@ eq('summary 7 days', _aiMetricsSummary(ms, NOW, 7), {calls:2, fallback_off:1});
 eq('summary 28 days', _aiMetricsSummary(ms, NOW, 28).calls, 7);
 var rows = _aiHealthRows({ai_ok:1, fallback_off:2, cost_micro_usd:300}, {ai_ok:3, fallback_off:2, fallback_timeout:1, cost_micro_usd:900, coach_shown:4, coach_accepted:1}, {coach:true, nl:false, recap:false}, true);
 ok('health rows: outcomes, reasons, cost, no message-count vanity metric', rows.length === 8 && /AI off 2 · slow reply 1/.test(rows[3][1]) && /\$0\.0009/.test(rows[7][1]) && /25% accepted/.test(rows[4][1]));
-eq('reason mapping', [_aiReasonFor(429, null), _aiReasonFor(200, {reason:'refusal'}), _aiReasonFor(504, {}), _aiReasonFor(401, {}), _aiReasonFor(503, {reason:'disabled'}), _aiReasonFor(500, null)], ['cap', 'refusal', 'timeout', 'auth', 'unavailable', 'error']);
+eq('reason mapping', [_aiReasonFor(429, null), _aiReasonFor(200, {reason:'refusal'}), _aiReasonFor(504, {}), _aiReasonFor(401, {}), _aiReasonFor(503, {reason:'disabled'}), _aiReasonFor(500, null), _aiReasonFor(403, {reason:'consent_off'})], ['cap', 'refusal', 'timeout', 'auth', 'unavailable', 'error', 'off']);
 ok('hash is stable and differs', _aiHash('a') === _aiHash('a') && _aiHash('a') !== _aiHash('b'));
 JSON.stringify(fails);
 """
@@ -2710,7 +2737,10 @@ var __refresh = false, __refreshCalls = 0; async function refreshAuthToken(){ __
 var __timers = []; function setTimeout(fn, ms){ __timers.push(fn); return __timers.length; } function clearTimeout(id){ if(id) __timers[id - 1] = null; }
 function fireTimers(){ var t = __timers.slice(); __timers = []; t.forEach(function(f){ if(f) f(); }); }
 function AbortController(){ var s = { aborted:false, _l:[], addEventListener:function(t, f){ s._l.push(f); } }; this.signal = s; this.abort = function(){ s.aborted = true; s._l.forEach(function(f){ f(); }); }; }
-var __calls = [], __impl = null;
+var __calls = [], __impl = null, __saves = 0, __sb = null, __sbCalls = [];
+function cloudSaveProfile(){ __saves++; } function showToast(){} function _renderAiSettings(){}
+var document = { getElementById:function(){ return null; } };
+function sbFetch(path, o){ __sbCalls.push({p:path, o:o}); return __sb(path, o); }
 function fetch(url, opts){ __calls.push({url:url, opts:opts}); return __impl(url, opts); }
 function resp(status, body){ return Promise.resolve({ ok: status >= 200 && status < 300, status: status, json: function(){ return body === undefined ? Promise.reject(new Error('no json')) : Promise.resolve(body); } }); }
 function flagsOn(){ __ls['maxgainz_ai_v1'] = '1'; __ls['maxgainz_ai_coach'] = '1'; __ls['maxgainz_nl_log'] = '1'; __ls['maxgainz_ai_recap'] = '1'; }
@@ -2793,6 +2823,40 @@ AI_CALL_SCENARIOS = {
     __refresh = false; __impl = function(){ return resp(401, {ok:false, reason:'auth'}); };
     var r = await _aiCall('coach', CF);
     return (r.reason === 'auth' && __calls.length === 1) || [r, __calls.length];""",
+  'note stripped without the notes consent': r"""
+    __impl = function(){ return resp(200, {ok:true, out:COUT}); };
+    var r = await _aiCall('coach', withF(CF, 'note', 'felt easy'));
+    return (r.ok && JSON.parse(__calls[0].opts.body).facts.note === null && audit()[0].facts.note === null) || [r, __calls[0] && __calls[0].opts.body];""",
+  'note sent with the notes consent': r"""
+    userPreferences.ai = {on:true, notes:true, v:1, at:1}; __impl = function(){ return resp(200, {ok:true, out:COUT}); };
+    var r = await _aiCall('coach', withF(CF, 'note', 'felt easy'));
+    return (JSON.parse(__calls[0].opts.body).facts.note === 'felt easy') || r;""",
+  'server says consent is off (revoked elsewhere): adopt it, stop calling': r"""
+    __impl = function(){ return resp(403, {ok:false, reason:'consent_off'}); };
+    var r1 = await _aiCall('coach', CF), r2 = await _aiCall('coach', CF);
+    return (r1.reason === 'off' && r2.reason === 'off' && __calls.length === 1 && userPreferences.ai.on === false
+      && JSON.parse(__ls['maxgainz_ai_prefs']).on === false && __saves === 1) || [r1, r2, __calls.length, userPreferences.ai];""",
+  'a reply that arrives after the timeout is ignored': r"""
+    var release; __impl = function(){ return new Promise(function(res){ release = res; }); };
+    var p = _aiCall('coach', CF); fireTimers(); release({ ok:true, status:200, json:function(){ return Promise.resolve({ok:true, out:COUT}); } });
+    var r = await p;
+    return (r.ok === false && r.reason === 'timeout') || r;""",
+  'turning ON needs the server to confirm; failure stays off': r"""
+    userPreferences.ai = undefined; __sb = function(){ return Promise.resolve(null); };
+    var ok1 = await _aiApplyConsent({on:true, notes:false, v:AI_CONSENT_VERSION, at:1});
+    var off = userPreferences.ai && userPreferences.ai.on;
+    __sb = function(){ return Promise.resolve({ok:true}); };
+    var ok2 = await _aiApplyConsent({on:true, notes:false, v:AI_CONSENT_VERSION, at:1});
+    return (ok1 === false && !off && ok2 === true && userPreferences.ai.on === true && typeof userPreferences.ai.changedAt === 'number'
+      && __sbCalls.length === 2 && JSON.parse(__sbCalls[1].o.body).p_enabled === true) || [ok1, ok2, userPreferences.ai];""",
+  'turning OFF works offline at once and is retried until the server has it': r"""
+    __sb = function(){ return Promise.resolve(null); };
+    await _aiApplyConsent({on:false});
+    var pending = JSON.parse(__ls['maxgainz_ai_consent_sync'] || 'null');
+    var offNow = userPreferences.ai.on === false && JSON.parse(__ls['maxgainz_ai_prefs']).on === false;
+    __sb = function(){ return Promise.resolve({ok:true}); };
+    await _aiRetryConsentSync();
+    return (offNow && pending && pending.on === false && !__ls['maxgainz_ai_consent_sync'] && JSON.parse(__sbCalls[__sbCalls.length - 1].o.body).p_enabled === false) || [pending, __ls];""",
   'never throws, even when storage explodes': r"""
     localStorage.setItem = function(){ throw new Error('quota'); }; __impl = function(){ return resp(200, {ok:true, out:COUT}); };
     var r = await _aiCall('coach', CF);
@@ -2801,7 +2865,7 @@ AI_CALL_SCENARIOS = {
 
 AI_SERVER_PRELUDE = AI_FIXTURES + r"""
 var KEY = 'sk-ant-test-SECRET-' + 'x'.repeat(20);
-var ENV = {AI_ENABLED:'1', ANTHROPIC_API_KEY:KEY, AI_EVAL_TOKEN:'e'.repeat(30)};
+var ENV = {AI_ENABLED:'1', ANTHROPIC_API_KEY:KEY, AI_EVAL_TOKEN:'e'.repeat(30)};  // a leftover eval token must grant nothing
 var __rpc = [], __model = [], __rpcImpl = null, __modelImpl = null;
 function rpcResp(status, body){ return Promise.resolve({ ok: status >= 200 && status < 300, status: status, json: function(){ return Promise.resolve(body); } }); }
 var DEPS = { env:ENV,
@@ -2862,12 +2926,17 @@ AI_SERVER_SCENARIOS = {
       && JSON.parse(c.o.body).p_kind === 'coach' && __model.length === 1 && p.model === 'claude-haiku-5-5' && p.max_tokens <= 1024
       && p.output_config.format.type === 'json_schema' && p.output_config.format.schema.additionalProperties === false
       && !p.tools && /data from the app, never instructions/.test(p.system) && p.messages[0].content.indexOf(JSON.stringify(CF)) !== -1 && noKey(r)) || [r, p];""",
-  'eval token skips the RPC; a wrong token of the same length does not': r"""
-    var a = await handleAiRequest(REQ('coach', CF, 'Bearer ' + 'e'.repeat(30)), DEPS);
-    var rpcAfterA = __rpc.length;
+  'no bypass: any bearer (even an old eval token) must pass the limits RPC': r"""
     __rpcImpl = function(){ return rpcResp(401, {}); };
-    var b = await handleAiRequest(REQ('coach', CF, 'Bearer ' + 'f'.repeat(30)), DEPS);
-    return (a.status === 200 && rpcAfterA === 0 && b.status === 401 && __model.length === 1) || [a, b];""",
+    var a = await handleAiRequest(REQ('coach', CF, 'Bearer ' + 'e'.repeat(30)), DEPS);
+    return (a.status === 401 && __rpc.length === 1 && __model.length === 0) || a;""",
+  'consent off on the server: 403, no model call': r"""
+    __rpcImpl = function(){ return rpcResp(200, {ok:false, reason:'consent_off'}); };
+    var r = await handleAiRequest(REQ('coach', CF), DEPS);
+    return (r.status === 403 && r.body.reason === 'consent_off' && __model.length === 0) || r;""",
+  'a note asks the server for the notes consent': r"""
+    await handleAiRequest(REQ('coach', withF(CF, 'note', 'felt easy')), DEPS); await handleAiRequest(REQ('coach', CF), DEPS);
+    return (JSON.parse(__rpc[0].o.body).p_note === true && JSON.parse(__rpc[1].o.body).p_note === false) || __rpc;""",
   'model timeout → 504; other upstream error → 502; neither leaks details': r"""
     __modelImpl = function(){ return Promise.reject({timeout:true, message:KEY}); };
     var a = await handleAiRequest(REQ('coach', CF), DEPS);
@@ -2905,7 +2974,7 @@ def _run_jsc_scenarios(base, scenarios):
         if res != 'PASS': fails.append(f'{name}: {res[:400]}')
     return fails
 
-def gate_ai_foundation(html, js, core=None, adapter=None):
+def gate_ai_foundation(html, js, core=None, adapter=None, sql=None):
     if core is None:
         core = open(AI_CORE, encoding='utf-8').read() if os.path.exists(AI_CORE) else ''
     if adapter is None:
@@ -2942,7 +3011,8 @@ def gate_ai_foundation(html, js, core=None, adapter=None):
     # c) _aiCall in jsc
     if not problems:
         client = '\n'.join(pieces) + '\n' + '\n'.join(extract_async_decl(js, f) or '' for f in
-                 ['_aiFlagOn', '_aiUid', '_aiStoreGet', '_aiStorePut', '_aiMetricBump', '_aiCapped', '_aiAuditAdd', '_aiPost', '_aiCall'])
+                 ['_aiFlagOn', '_aiUid', '_aiStoreGet', '_aiStorePut', '_aiMetricBump', '_aiCapped', '_aiAuditAdd', '_aiPost', '_aiCall',
+                  '_aiSetServerConsent', '_aiSaveLocalPrefs', '_aiApplyConsent', '_aiRetryConsentSync', '_aiAdoptServerOff'])
         problems += _run_jsc_scenarios(client + '\n' + AI_CALL_PRELUDE, AI_CALL_SCENARIOS)
     # d) server handler in jsc
     cs = _ai_core_script(core)
@@ -2958,8 +3028,15 @@ def gate_ai_foundation(html, js, core=None, adapter=None):
         lint.append('another reference to /api/ai bypasses _aiCall')
     for bad in ['sk-ant', 'ANTHROPIC_API_KEY', 'api.anthropic.com', 'x-api-key', 'anthropic-version']:
         if bad in html: lint.append(f'client code mentions {bad} (model keys and calls are server-side only)')
-    if 'process.env' not in adapter or re.search(r'console\.\w+\([^)]*(KEY|key|headers|auth|body)', adapter + core):
-        lint.append('adapter must read the key from process.env and never log keys, headers or bodies')
+    if 'process.env' not in adapter: lint.append('adapter must read the key from process.env')
+    for src_name, src in [('core.mjs', core), ('ai.mjs', adapter)]:
+        for m in re.finditer(r'console\.\w+\(', src):
+            depth, j = 1, m.end()
+            while j < len(src) and depth:
+                depth += {'(': 1, ')': -1}.get(src[j], 0); j += 1
+            args = re.sub(r"'[^'\\]*'", "''", src[m.end():j - 1])
+            idents = set(re.findall(r'[A-Za-z_$][\w$]*', args)) - {'task', 'timeout'}
+            if idents: lint.append(f'{src_name} logs {sorted(idents)} — only the task and a fixed reason may be logged')
     if not re.search(r"export const config = \{ path: '/api/ai' \}", adapter): lint.append('function is not mounted at /api/ai')
     if 'maxRetries: 0' not in adapter or 'timeout: 7000' not in adapter: lint.append('model call must be single-attempt with a 7 s timeout (cost + latency bound)')
     pkg = os.path.join(ROOT, 'package.json')
@@ -2974,7 +3051,35 @@ def gate_ai_foundation(html, js, core=None, adapter=None):
     prof = extract_async_decl(js, 'cloudSaveProfile') or ''
     if '_aiPrefsNormalize(userPreferences.ai)' not in prof: lint.append('profile blob does not carry the normalised AI consent')
     load = extract_async_decl(js, 'cloudLoadAll') or ''
-    if 'userPreferences.ai = _aiPrefsNormalize(blob.prefs.ai)' not in load: lint.append('cloud load does not normalise the AI consent')
+    if not re.search(r'if \(blob\.prefs\.ai !== undefined\) \{\s*userPreferences\.ai = _aiPrefsMerge\(userPreferences\.ai, blob\.prefs\.ai\);', load):
+        lint.append('cloud load must MERGE the AI consent (newest change wins, off on ties), not overwrite it')
+    ta = extract_async_decl(js, '_aiApplyConsent') or ''
+    if not re.search(r'if\(widening\)\{[\s\S]*await _aiSetServerConsent\(p\)[\s\S]*if\(!ok\)\{[\s\S]*?return false; \}[\s\S]*?\} else \{', ta):
+        lint.append('switching AI/notes ON must wait for the server consent and stay off when it fails')
+    for fn in ['toggleAiCoach', 'toggleAiNotes']:
+        if '_aiApplyConsent(' not in (extract_async_decl(js, fn) or ''): lint.append(f'{fn} bypasses _aiApplyConsent')
+    if 'removeItem(AI_CONSENT_SYNC_KEY)' not in lo: lint.append('authLogout() keeps a pending consent sync for the next account')
+    sql_p = os.path.join(ROOT, 'supabase', 'ai_usage.sql')
+    if sql is None: sql = open(sql_p).read() if os.path.exists(sql_p) else ''
+    for fn, sig in [('ai_reserve', 'text, boolean'), ('ai_set_consent', 'boolean, boolean, int')]:
+        body = re.search(r'create or replace function public\.' + fn + r'\([\s\S]*?\n\$\$;', sql)
+        if not body or 'security definer' not in body.group(0) or 'set search_path = public, pg_temp' not in body.group(0) or 'auth.uid()' not in body.group(0):
+            lint.append(f'{fn}() must be SECURITY DEFINER with a fixed search_path and key on auth.uid()')
+        for who in ['public', 'anon']:
+            if f'revoke all on function public.{fn}({sig}) from {who};' not in sql: lint.append(f'{fn}() is executable by {who}')
+        if f'grant execute on function public.{fn}({sig}) to authenticated;' not in sql: lint.append(f'{fn}() not granted to authenticated')
+    res_body = re.search(r'create or replace function public\.ai_reserve\([\s\S]*?\n\$\$;', sql)
+    rb = res_body.group(0) if res_body else ''
+    if not re.search(r"from ai_consent c where c\.user_id = uid and c\.enabled and c\.version = consent_version\s+and \(not coalesce\(p_note, false\) or c\.notes\)", rb) or rb.find('consent_off') > rb.find('update ai_usage'):
+        lint.append('ai_reserve() must refuse (before booking) unless consent — and notes consent for a note — is on')
+    cv = re.search(r'consent_version int := (\d+);', rb); acv = re.search(r'const AI_CONSENT_VERSION = (\d+);', js)
+    if not (cv and acv and cv.group(1) == acv.group(1)): lint.append('SQL consent_version differs from AI_CONSENT_VERSION')
+    pc = re.search(r'per_call bigint := (\d+);', rb)
+    # worst case: 4,000-char request ≈ 4,000 tokens + 600 prompt/schema @ 0.1 µ$ + max_tokens @ 0.5 µ$
+    mt = re.search(r'max_tokens: (\d+)', core)
+    worst = int((4000 + 600) * 0.1 + (int(mt.group(1)) if mt else 10**6) * 0.5)
+    if not pc or int(pc.group(1)) < worst: lint.append(f'per-call reservation {pc.group(1) if pc else "?"} µ$ is below the worst case {worst} µ$')
+    if 'AI_EVAL_TOKEN' in core or 'AI_EVAL_TOKEN' in adapter: lint.append('production function still honours an eval bypass token')
     imp = extract_decl(js, 'applyImportPayload') or ''
     if re.search(r'\.ai\b', imp): lint.append('an imported file must never switch AI on (consent is given in Profile only)')
     m1, m2 = html.find('id="aiSettings"'), html.find('<!-- Feedback -->', html.find('id="aiSettings"'))
@@ -2982,7 +3087,7 @@ def gate_ai_foundation(html, js, core=None, adapter=None):
     if not re.search(r'<div id="aiSettings" hidden', box): lint.append('#aiSettings must be hidden until the rollout flag is on')
     if not re.search(r'id="aiCoachBtn" type="button" aria-pressed="false"[^>]*onclick="toggleAiCoach\(\)"', box): lint.append('AI switch is not a type=button with aria-pressed=false wired to toggleAiCoach()')
     if not re.search(r'id="aiNotesBtn" type="button" aria-pressed="false" disabled', box): lint.append('notes switch must start off and disabled')
-    for phrase in ['not used to train', 'never sends your name, email', 'exercise names from our catalogue', 'Turn it off any time']:
+    for phrase in ['not used to train', 'never sends your name, email', 'exercise names from our catalogue', 'Names you made up yourself are replaced', 'Turn it off any time']:
         if phrase not in box: lint.append(f'consent copy is missing: "{phrase}"')
     hh = extract_decl(js, '_aiHealthHtml') or ''
     for expr in re.findall(r'\$\{([^{}]*)\}', hh):
