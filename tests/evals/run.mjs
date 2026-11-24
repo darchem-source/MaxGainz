@@ -14,14 +14,16 @@ import { handleAiRequest, AI_MODEL } from '../../netlify/functions/ai/core.mjs';
 
 const key = process.env.ANTHROPIC_API_KEY;
 if(!key){ console.error('Set ANTHROPIC_API_KEY in this shell first.'); process.exit(2); }
-const filter = process.argv[2] || '';
+const filter = process.argv[2] ? new RegExp(process.argv[2], 'i') : null;   // e.g. 'deload|core|two PBs'
 const { cases } = JSON.parse(readFileSync(new URL('./cases.json', import.meta.url)));
 const client = new Anthropic({ apiKey: key, timeout: 15000, maxRetries: 1 });
-let modelCalls = 0;
+let modelCalls = 0, lastRaw = '';
 const deps = {
   env: { AI_ENABLED: '1', ANTHROPIC_API_KEY: key },
   fetchFn: async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }),
-  callModel: (p) => { modelCalls++; return client.messages.create(p); },
+  // Eval-only diagnostic: keep the raw reply so a REJECTED answer can be read here
+  // (production never returns rejected text).
+  callModel: async (p) => { modelCalls++; const m = await client.messages.create(p); const t = (m.content || []).find(b => b.type === 'text'); lastRaw = t ? t.text : ''; return m; },
   isTimeout: (e) => e instanceof Anthropic.APIConnectionTimeoutError
 };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -39,16 +41,16 @@ function judge(c, r){
 }
 const rows = []; let pass = 0, micro = 0, inTok = 0, outTok = 0, n = 0;
 for(const c of cases){
-  if(filter && !c.name.includes(filter)) continue;
+  if(filter && !filter.test(c.name)) continue;
   n++;
-  const before = modelCalls, t0 = Date.now();
+  const before = modelCalls, t0 = Date.now(); lastRaw = '';
   const r = await handleAiRequest({ method: 'POST', auth: 'Bearer ' + 'e'.repeat(40), bodyText: JSON.stringify({ task: c.task, facts: c.facts }) }, deps);
   const called = modelCalls > before;
   const ok = judge(c, r) && (!c.expect.noModel || !called);
   pass += ok ? 1 : 0;
   micro += r.body.costMicroUsd || 0; inTok += (r.body.usage && r.body.usage.in) || 0; outTok += (r.body.usage && r.body.usage.out) || 0;
-  rows.push({ name: c.name, pass: ok, ms: Date.now() - t0, reason: r.body.reason || null, detail: r.body.detail || null, out: r.body.out || null, costMicroUsd: r.body.costMicroUsd || 0 });
-  console.log((ok ? 'PASS ' : 'FAIL ') + c.name + (ok ? '' : '  → ' + JSON.stringify(r.body).slice(0, 300)));
+  rows.push({ name: c.name, pass: ok, ms: Date.now() - t0, reason: r.body.reason || null, detail: r.body.detail || null, out: r.body.out || null, raw: ok ? undefined : lastRaw, costMicroUsd: r.body.costMicroUsd || 0 });
+  console.log((ok ? 'PASS ' : 'FAIL ') + c.name + (ok ? '' : '  → ' + JSON.stringify(r.body).slice(0, 300) + (lastRaw ? '\n     model said: ' + lastRaw.slice(0, 400) : '')));
 }
 const byTask = {};
 rows.forEach(r => { const t = r.name.split(':')[0]; byTask[t] = byTask[t] || [0, 0]; byTask[t][0] += r.pass ? 1 : 0; byTask[t][1]++; });

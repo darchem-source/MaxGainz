@@ -6076,7 +6076,10 @@ function _aiCheckOutput(task, out, f){
     if(out.text.indexOf('{EX}') === -1) return { ok:false, reason:'placeholder' };
     if(unsafe(out.text)) return { ok:false, reason:'medical' };
     const D = f.decision;
-    const allowed = _aiFactNumbers(f).concat([Math.round(Math.abs(D.to - D.from) * 100) / 100]);
+    // Plain derivations of the facts the tip may state: the change, weeks off, % change.
+    const wk = f.last.daysAgo / 7;
+    const allowed = _aiFactNumbers(f).concat([Math.round(Math.abs(D.to - D.from) * 100) / 100, Math.round(wk), Math.floor(wk),
+      D.from > 0 ? Math.round(Math.abs(D.to - D.from) / D.from * 100) : 0]);
     if(!_aiGrounded(out.text, allowed).ok) return { ok:false, reason:'ungrounded' };
     if((D.action === 'increase' || D.action === 'deload') && D.to !== D.from && _aiNumbersIn(out.text).indexOf(D.to) === -1) return { ok:false, reason:'missing target' };
     return { ok:true, reason:'' };
@@ -6121,8 +6124,17 @@ function _aiCheckOutput(task, out, f){
     if(pbClaim && _aiNumbersIn(pbClaim[1])[0] !== f.pbs.length) return { ok:false, reason:'pb count' };
     // A sentence with a percentage must point the same way as the trend.
     const up = /\b(up|above|higher|more|increas\w*|rose|grew|gain\w*)\b/i, down = /\b(down|below|lower|less|decreas\w*|fell|dropped|lighter)\b/i;
-    const wrongWay = all.split(/[.!?]/).some(s => /%/.test(s) && !!f.trend && ((f.trend.dir === 'down' && up.test(s) && !down.test(s)) || (f.trend.dir === 'up' && down.test(s) && !up.test(s)) || (f.trend.dir === 'steady' && (up.test(s) || down.test(s)))));
-    if(/%/.test(all) && (!f.trend || wrongWay)) return { ok:false, reason:'direction' };
+    // Percentages: only the volume trend's (pointing the right way) or the under-trained share.
+    const tp = f.trend ? Math.abs(f.trend.pct) : null, up2 = f.under ? f.under.pct : null;
+    const pctIn = s => (s.match(/\d+(?:\.\d+)?(?=\s*(?:%|per ?cent))/gi) || []).map(Number);
+    for(const s of all.split(/[.!?]/)){
+      for(const n of pctIn(s)){
+        if(n === tp){
+          const bad = (f.trend.dir === 'down' && up.test(s) && !down.test(s)) || (f.trend.dir === 'up' && down.test(s) && !up.test(s));
+          if(bad) return { ok:false, reason:'direction' };
+        } else if(n !== up2) return { ok:false, reason:'percent' };
+      }
+    }
     if(f.smallSample && (!out.mentionsSmallSample || !/\b(early|so far|few|small sample|limited|not enough|still building)\b|\bonly (?:\d+|one|two|three|four|five) sessions?\b/i.test(all))) return { ok:false, reason:'small sample' };
     return { ok:true, reason:'' };
   }
