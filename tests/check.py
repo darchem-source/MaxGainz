@@ -1338,6 +1338,20 @@ def gate_sync(js):
         problems.append("authLogin() takes the display name of whichever account was saved before (another account's name)")
     if li.find('_restoreStash()') < 0 or li.find('_restoreStash()') < li.find('saveAuthState('):
         problems.append('authLogin() does not restore the stash after the new auth state is saved')
+    # An unfinished workout lives only in memory: sign-out must warn about it,
+    # and a DIFFERENT account signing in must never inherit (and save) it.
+    cso = extract_async_decl(js, 'confirmSignOut') or ''
+    if '_activeSessionInfo()' not in cso:
+        problems.append('confirmSignOut() does not warn about a workout in progress')
+    if '_activeSessionOwner = getCurrentUserId()' not in lo:
+        problems.append("authLogout() does not record whose unfinished workout is still open")
+    for fn_name, src_ in (('authLogin', li), ('authSignup', su)):
+        a_, b_ = src_.find('saveAuthState('), src_.find('_settleActiveSessionOwner()')
+        if b_ < 0 or b_ < a_:
+            problems.append(f"{fn_name}() does not end another account's unfinished workout after signing in")
+    asi = extract_async_decl(js, '_activeSessionInfo') or ''
+    if 'nav-active' not in asi or '_sessionFinalized' not in asi:
+        problems.append('_activeSessionInfo() does not use the Session tab + _sessionFinalized (sessDay survives Finish)')
     ia = extract_async_decl(js, 'applyImportPayload') or ''
     if not re.search(r'delete s\.cloud_id', ia):
         problems.append("applyImportPayload() keeps backup cloud_ids — imported sessions look 'deleted elsewhere' and vanish on the next load")

@@ -4282,6 +4282,16 @@ function cancelReauth(){
 // Sign-out that never silently discards work: try to sync first; if anything
 // is still unsynced, let the user keep it (restored on their next sign-in).
 async function confirmSignOut(){
+  // An unfinished workout is NOT saved anywhere until Finish — say so first.
+  const act = (typeof _activeSessionInfo === 'function') ? _activeSessionInfo() : null;
+  if(act){
+    const setsTxt = act.sets ? act.sets + ' set' + (act.sets === 1 ? '' : 's') + ' logged' : 'no sets logged yet';
+    if(confirm('You have a workout in progress (' + act.name + ', ' + setsTxt + ").\n\nIt isn't saved until you tap Finish. If you sign out, you can only resume it by signing back in to this account before closing the app.\n\nOK = go back to the workout\nCancel = sign out anyway")){
+      const nav = document.getElementById('nav-active');
+      if(typeof goTab === 'function') goTab('active', nav);
+      return;
+    }
+  }
   let n = _pendingCount();
   if(n > 0 && navigator.onLine !== false && _lastSyncError !== 'auth'){
     showToast('🔄 Syncing before you sign out…');
@@ -4290,7 +4300,7 @@ async function confirmSignOut(){
     n = _pendingCount();
   }
   if(n === 0){
-    if(confirm('Sign out of your account?')) authLogout();
+    if(act || confirm('Sign out of your account?')) authLogout(); // with a workout, the choice above was the confirmation
     return;
   }
   const what = n + ' change' + (n === 1 ? '' : 's');
@@ -6327,6 +6337,46 @@ function cancelSession(){
   // console.log('[CANCEL] cancelSession called');
   if(!confirm('Cancel this session? All progress will be lost.')) return;
   // console.log('[CANCEL] User confirmed cancel');
+  _teardownActiveSession();
+}
+
+var _activeSessionOwner = null; // uid that owned the running workout at sign-out
+
+// After any sign-in: a workout left running by ANOTHER account must never be
+// finished (and saved) under this one.
+function _settleActiveSessionOwner(){
+  const owner = _activeSessionOwner;
+  _activeSessionOwner = null;
+  if(owner && owner !== getCurrentUserId() && (_activeSessionInfo() || _sessionTabShown())){
+    try { _teardownActiveSession(); } catch(e) {}
+  }
+}
+
+// Is the Session tab showing (a workout started and not yet closed — including a
+// Finish that failed partway)?
+function _sessionTabShown(){
+  const nav = document.getElementById('nav-active');
+  return !!nav && nav.style.display !== '' && nav.style.display !== 'none';
+}
+
+// Is a workout running? (It lives only in memory until Finish saves it.)
+function _activeSessionInfo(){
+  try {
+    // Every start path shows the Session tab; Finish and Cancel hide it. (sessDay /
+    // sessExs are NOT cleared by Finish, so they can't be used on their own.)
+    const nav = document.getElementById('nav-active');
+    const shown = !!nav && nav.style.display !== '' && nav.style.display !== 'none';
+    if(!shown || window._sessionFinalized === true) return null;
+    let sets = 0;
+    Object.keys(setsDone || {}).forEach(k => { if(Array.isArray(setsDone[k])) sets += setsDone[k].length; });
+    return { name: sessDay || 'Workout', sets };
+  } catch(e) { return null; }
+}
+
+// End the running workout WITHOUT saving it (no prompt). Used by cancelSession
+// after its confirm, and by sign-out so an unfinished workout can never carry
+// over into the next account signed in on this device.
+function _teardownActiveSession(){
 
   // Nuke every registered timer in one call (registry-aware). Belt-and-
   // suspenders line-by-line clears below cover any timer not yet migrated
@@ -24356,6 +24406,7 @@ async function authSignup(){
     _lastSyncError = null;
     const user = {id: data.user.id, email: data.user.email, name: name};
     saveAuthState(user, token, refreshToken);
+    _settleActiveSessionOwner(); // a new account never inherits another account's unfinished workout
 
     // Hide auth modal and show app
     document.getElementById('authMod').classList.remove('show');
@@ -24463,6 +24514,7 @@ async function authLogin(){
     if(loginBtn){ loginBtn.textContent = 'Sign In'; loginBtn.disabled = false; }
     _lastSyncError = null;
     saveAuthState({id: data.user.id, email: data.user.email, name: userName}, data.access_token, data.refresh_token);
+    _settleActiveSessionOwner(); // another account's unfinished workout ends here; the same account's resumes
     // Unsynced work this account chose to keep at its last sign-out.
     const _restored = _restoreStash();
     if(_restored) showToast('↩️ Restored ' + _restored + ' unsynced change' + (_restored === 1 ? '' : 's') + ' — syncing now');
@@ -24511,6 +24563,10 @@ async function authLogin(){
 function authLogout(opts){
   // Unsynced work the user chose to keep goes to a per-account stash first.
   if(opts && opts.keepUnsynced) _stashUnsynced();
+  // An unfinished workout lives only in memory. Keep it so the SAME account can
+  // resume it after signing back in, but remember whose it is: if a different
+  // account signs in, _settleActiveSessionOwner() ends it (unsaved).
+  if(typeof _sessionTabShown === 'function' && _sessionTabShown()) _activeSessionOwner = getCurrentUserId();
   _reauthMode = false;
   const _rcBtn = document.getElementById('authReauthCancel'); if(_rcBtn) _rcBtn.style.display = 'none';
   _dashDisabled = true; clearTimeout(_dashTimer); _dashTimer = null; // no summary push once sign-out has started
