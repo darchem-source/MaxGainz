@@ -1179,8 +1179,8 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
           <!-- Path -->
           <button onclick="openPathWizard()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🎯 Change My Path</button>
           <!-- Reminders -->
-          <button id="notifEnableBtn" onclick="requestNotificationPermission()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;margin-bottom:2px;">🔔 Enable training reminders</button>
-          <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Nudges you when a muscle group is overdue — shown when you next open the app (background push coming later).</div>
+          <button id="notifEnableBtn" onclick="requestNotificationPermission()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;margin-bottom:2px;">🔔 Allow reminder alerts</button>
+          <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">If a muscle group goes 7+ days untrained, you'll see a reminder when you open or return to Max Gainz. Nothing is sent while the app is closed.</div>
           <!-- Effort (RPE) tracking -->
           <button id="trackRpeBtn" onclick="toggleTrackRPE()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">📊 Track effort (RPE): Off</button>
           <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Adds an optional effort chip when logging a set — the coach uses it to fine-tune weight suggestions.</div>
@@ -1899,6 +1899,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
       <div id="cooldownProg" style="font-size:12px;color:var(--text2);font-weight:700;">1 / 6</div>
     </div>
     <div id="cooldownName" style="font-size:18px;font-weight:800;margin-bottom:10px;">Stretch</div>
+    <div id="cooldownCue" style="font-size:12px;color:var(--text2);margin:-6px 0 10px;line-height:1.4;"></div>
     <div id="cooldownVideoWrap" style="position:relative;border-radius:12px;overflow:hidden;background:#000;margin-bottom:12px;">
       <div id="cooldownXfade" style="display:none;"></div>
       <video id="cooldownVideo" muted loop autoplay playsinline webkit-playsinline preload="metadata"
@@ -2696,6 +2697,7 @@ function getLibraryDayBadge(libProg, dayName){
 const EXDB=[
   {name:'Bench Press',cat:'push',muscles:['chest','triceps','shoulders'],diff:2,equip:'Barbell',sets:'3–6',reps:'3–5',benefits:'Primary horizontal push — best chest & tricep mass builder',cues:['Retract scapula before unracking','Drive feet into floor','Bar touches lower chest','Elbows ~75° from torso'],joints:['shoulder','elbow'],alts:['Dumbbell Bench Press','Floor Press','Incline Press']},
   {name:'Incline Press',cat:'push',muscles:['chest','shoulders'],diff:2,equip:'Barbell/DB',sets:'4–6',reps:'5–8',benefits:'Upper chest emphasis, more shoulder-friendly angle',cues:['30–45° incline angle','Control the eccentric','Elbows slightly in'],joints:['shoulder','elbow'],alts:['Bench Press','Dumbbell Bench Press']},
+  {name:'Incline Dumbbell Press',cat:'push',muscles:['chest','shoulders','triceps'],diff:1,equip:'Dumbbells + incline bench',sets:'3–5',reps:'6–12',benefits:'Upper chest emphasis with a free path for each arm — evens out left/right strength',cues:['Bench at roughly 30–45°','Shoulder blades back and down, feet planted','Lower the dumbbells under control to the sides of your upper chest','Press up and slightly in without clanking the dumbbells'],joints:['shoulder','elbow'],alts:['Incline Press','Dumbbell Bench Press']},
   {name:'Dumbbell Bench Press',cat:'push',muscles:['chest','triceps'],diff:1,equip:'Dumbbells',sets:'3–5',reps:'8–12',benefits:'Greater ROM than barbell, fixes left/right imbalances',cues:['Neutral or pronated grip','Greater ROM than barbell','Squeeze chest at top'],joints:['shoulder','elbow'],alts:['Bench Press','Floor Press']},
   {name:'Dips',cat:'push',muscles:['chest','triceps'],diff:3,equip:'Parallel bars',sets:'3–5',reps:'8–10',benefits:'Best loaded bodyweight push — chest + tricep mass',cues:['Lean forward for chest emphasis','Control descent fully','Full lockout at top'],joints:['shoulder','elbow'],alts:['Close Grip Bench','Push-Ups']},
   {name:'Push Press',cat:'push',muscles:['shoulders','triceps'],diff:3,equip:'Barbell',sets:'3–5',reps:'8–10',benefits:'Overhead power via leg drive — more load than strict press',cues:['Slight knee dip','Explosive hip extension','Lock out overhead'],joints:['shoulder','elbow','hip','knee'],alts:['Overhead Press','Arnold Press']},
@@ -2714,6 +2716,7 @@ const EXDB=[
   {name:'Close Grip Bench',cat:'arms',muscles:['triceps','chest'],diff:2,equip:'Barbell',sets:'3–4',reps:'6–10',benefits:'Compound tricep builder — can load heavier than isolation',cues:['Hands shoulder-width (not too close)','Elbows tuck in','Full lockout'],joints:['shoulder','elbow'],alts:['Skull Crushers','Dips']},
   {name:'Barbell Curls',cat:'arms',muscles:['biceps'],diff:1,equip:'Barbell/EZ bar',sets:'3',reps:'10–15',benefits:'Best barbell bicep mass builder',cues:['No swinging','Squeeze hard at top','Full extension at bottom'],joints:['elbow'],alts:['Dumbbell Curl','Cable Curl','Hammer Curl']},
   {name:'Dumbbell Curl',cat:'arms',muscles:['biceps'],diff:1,equip:'Dumbbells',sets:'3–4',reps:'10–15',benefits:'Unilateral, natural rotation, fixes imbalances',cues:['Supinate at the top','Alternate or simultaneous','Avoid swinging'],joints:['elbow'],alts:['Barbell Curls','Cable Curl']},
+  {name:'Dumbbell Bicep Curls',cat:'arms',muscles:['biceps'],diff:1,equip:'Dumbbells',sets:'3–4',reps:'10–15',benefits:'Simple, effective bicep builder — each arm works on its own',cues:['Stand tall, elbows close to your sides','Curl up while turning your palms to face you','Squeeze at the top without letting the elbows drift forward','Lower slowly — no swinging'],joints:['elbow'],alts:['Dumbbell Curl','Hammer Curls']},
   {name:'Hammer Curls',cat:'arms',muscles:['biceps'],diff:1,equip:'Dumbbells',sets:'3',reps:'10–15',benefits:'Brachialis & brachioradialis emphasis — thicker forearms and upper arms',cues:['Neutral grip throughout','Elbow stays at side','Builds arm thickness not just peak'],joints:['elbow'],alts:['Barbell Curls','Dumbbell Curl']},
   {name:'Standing One-Arm Cable Curl',cat:'arms',muscles:['biceps'],diff:1,equip:'Cable machine',sets:'3',reps:'10–15',benefits:'Constant tension through full range, great peak contraction',cues:['Stand side-on to cable','Supinate wrist at top','Hold contraction 1s'],joints:['elbow'],alts:['Barbell Curls','Dumbbell Curl']},
   {name:'Deadlift',cat:'pull',muscles:['back','legs','glutes'],diff:4,equip:'Barbell',sets:'3–6',reps:'3–5',benefits:'King of posterior chain — total body strength and mass',cues:['Bar over mid-foot','Hinge not squat','Brace 360° before pull','Drive floor away'],joints:['hip','knee','spine'],alts:['Romanian Deadlift','Rack Pulls','Trap Bar Deadlift']},
@@ -4740,7 +4743,8 @@ function getTrainingReminder(){
   };
 }
 
-function _todayDateKey(){ return new Date().toISOString().slice(0, 10); }
+// LOCAL calendar date (not UTC) so "Dismiss for today" rolls over at local midnight.
+function _todayDateKey(){ const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
 function _isReminderDismissedToday(){
   return localStorage.getItem('maxgainz_reminderDismissed') === _todayDateKey();
 }
@@ -4789,30 +4793,30 @@ function maybeFireOSNotification(){
 
 async function requestNotificationPermission(){
   if(!('Notification' in window)){
-    showToast('⚠️ Notifications not supported in this browser', { tone:'warning', duration: 3000 });
+    showToast('⚠️ This browser can\'t show reminder alerts — you\'ll still see reminders on Today', { tone:'warning', duration: 3000 });
     return;
   }
   if(Notification.permission === 'granted'){
-    showToast('✅ Reminders already enabled', { duration: 2500 });
+    showToast('✅ Reminder alerts are on — they appear when you open the app', { duration: 2500 });
     maybeFireOSNotification();
     _refreshNotificationButton();
     return;
   }
   if(Notification.permission === 'denied'){
-    showToast('⚠️ Blocked — re-enable notifications in your browser settings', { tone:'warning', duration: 4500 });
+    showToast('⚠️ Blocked — re-enable notifications in your browser settings · Today reminders still work', { tone:'warning', duration: 4500 });
     return;
   }
   try {
     const result = await Notification.requestPermission();
     if(result === 'granted'){
-      showToast('✅ Reminders enabled · we\'ll nudge you when a group is overdue', { duration: 3500 });
+      showToast('✅ Reminder alerts on — you\'ll see them when you open or return to the app', { duration: 3500 });
       maybeFireOSNotification();
     } else {
-      showToast('Notifications not enabled', { duration: 2500 });
+      showToast('Alerts not enabled — you\'ll still see reminders on Today', { duration: 2500 });
     }
     _refreshNotificationButton();
   } catch(e){
-    showToast('⚠️ Could not enable notifications', { tone:'warning', duration: 3000 });
+    showToast('⚠️ Couldn\'t turn on alerts — Today reminders still work', { tone:'warning', duration: 3000 });
   }
 }
 
@@ -4894,20 +4898,20 @@ function _refreshNotificationButton(){
   const btn = document.getElementById('notifEnableBtn');
   if(!btn) return;
   if(!('Notification' in window)){
-    btn.textContent = 'Notifications not supported';
+    btn.textContent = 'Alerts not supported on this browser';
     btn.disabled = true;
     btn.style.opacity = '0.5';
     return;
   }
   const p = Notification.permission;
   if(p === 'granted'){
-    btn.textContent = '✅ Reminders enabled';
+    btn.textContent = '✅ Reminder alerts on';
     btn.style.color = 'var(--green)';
   } else if(p === 'denied'){
-    btn.textContent = '🔕 Notifications blocked (settings)';
+    btn.textContent = '🔕 Alerts blocked in browser settings';
     btn.style.color = 'var(--text2)';
   } else {
-    btn.textContent = '🔔 Enable training reminders';
+    btn.textContent = '🔔 Allow reminder alerts';
     btn.style.color = 'var(--accent)';
   }
 }
@@ -11424,6 +11428,10 @@ function _renderCooldownStretch(){
   const progEl = document.getElementById('cooldownProg');
   const timerEl = document.getElementById('cooldownTimer');
   if(nameEl) nameEl.textContent = st.name;
+  // One general cue line — stretches have no EXDB text, and it is all the
+  // user gets when the demo image can't load offline.
+  const cueEl = document.getElementById('cooldownCue');
+  if(cueEl){ const gc = _genericCues(st.name); cueEl.textContent = gc[_cooldownState.idx % gc.length]; }
   if(progEl) progEl.textContent = (_cooldownState.idx + 1) + ' / ' + _cooldownState.list.length;
   if(timerEl) timerEl.textContent = (_cooldownState.secs || COOLDOWN_STRETCH_SECS) + 's';
   // On the final stretch, "Skip" would end the session — say so honestly.
@@ -11443,8 +11451,19 @@ function _renderCooldownStretch(){
   if(xf){
     xf.className = 'xfade-wrap';
     xf.style.display = 'block';
-    xf.innerHTML = `<img src="${EX_MEDIA_BASE}${mid}/0.jpg" alt="" class="xf-a"><img src="${EX_MEDIA_BASE}${mid}/1.jpg" alt="" class="xf-b">`;
+    xf.innerHTML = `<img src="${EX_MEDIA_BASE}${mid}/0.jpg" alt="" class="xf-a" onerror="_cooldownImgError(this)"><img src="${EX_MEDIA_BASE}${mid}/1.jpg" alt="" class="xf-b" onerror="_cooldownImgError(this)">`;
   }
+}
+// Failed stretch image (often offline): hide the media wrap; the cue line and
+// timer carry on. Inert for detached images (already moved to the next
+// stretch), a src-less phantom fire, or a closed player.
+function _cooldownImgError(img){
+  if(!img || img.isConnected === false || !img.getAttribute('src')) return;
+  const m = document.getElementById('cooldownMod');
+  if(!m || !m.classList.contains('open')) return;
+  if(typeof _cooldownExitFs === 'function') _cooldownExitFs();
+  const wrap = document.getElementById('cooldownVideoWrap');
+  if(wrap) wrap.style.display = 'none';
 }
 // Failed clip: retry the other sex once, then hide the player (timer runs on).
 function _cooldownVideoError(v){
@@ -14909,8 +14928,10 @@ function shouldShowFormGuidePulse(name){
 // exercise-posters/{male|female}/{slug}.jpg
 const EX_VIDEO_BASE = null; // was: 'https://pub-585d42eb1aa64a67aedf483ec328d3fe.r2.dev/'
 // Self-hosted demo media (public-domain free-exercise-db frames, mirrored
-// into this repo under exercise-media/). Relative base works on Netlify,
-// local http.server, and inside the service-worker cache.
+// into this repo under exercise-media/). Relative base works on Netlify and
+// local http.server. NOT precached by sw.js — offline it works only if the
+// browser's HTTP cache still holds the file; every media layer has an onerror
+// that falls back to text cues (_fgMediaFail).
 const EX_MEDIA_BASE = 'exercise-media/';
 // ── ExerciseDB free tier (oss.exercisedb.dev) — DOMINANT visual source ──
 // Animated muscle-highlight GIFs from static.exercisedb.dev (no auth; media
@@ -14966,11 +14987,12 @@ function _v2Bail(){
   if(w) w.style.display = 'none';
   const u = document.getElementById('fgUnderV2');
   if(u) u.style.display = '';
+  else _fgMediaFail(null); // no lower layer — show the "follow the cues" note
 }
 function _loadV2Video(v2id){
   const wrap = document.getElementById('fgV2Wrap');
   if(!wrap) return;
-  const bail = _v2Bail;
+  const bail = () => { if(document.getElementById('fgV2Wrap') === wrap) _v2Bail(); }; // stale timer from an earlier sheet must not touch this one
   const ctrl = ('AbortController' in window) ? new AbortController() : null;
   const t = setTimeout(() => { try{ ctrl && ctrl.abort(); }catch(e){} bail(); }, 5000);
   fetch('/api/edb-video?id=' + encodeURIComponent(v2id), ctrl ? { signal: ctrl.signal } : {})
@@ -15396,7 +15418,11 @@ function _exVideoBlockHtml(name){
   // Visual stack, most desirable first: V2 MP4 (live-fetched) → ExerciseDB
   // GIF → self-hosted JPG/loop. Lower layers render hidden and reveal on
   // failure of the layer above.
-  const v2id = (typeof _exV2Id === 'function') ? _exV2Id(name) : null;
+  // Offline at render time: skip the network-only layers and go straight to
+  // the self-hosted media (may still be HTTP-cached). navigator.onLine is
+  // unreliable, so each layer's onerror stays the real fallback.
+  const online = !(typeof navigator !== 'undefined' && navigator.onLine === false);
+  const v2id = (online && typeof _exV2Id === 'function') ? _exV2Id(name) : null;
   if(v2id){
     const under = _exVideoBlockHtmlNoV2(name);
     return `
@@ -15409,13 +15435,14 @@ function _exVideoBlockHtml(name){
 function _exVideoBlockHtmlNoV2(name){
   // ExerciseDB GIF wins when mapped; the self-hosted fallback rides along
   // hidden so a failed GIF load reveals it without a re-render.
-  const gifId = (typeof _exGifId === 'function') ? _exGifId(name) : null;
+  const online = !(typeof navigator !== 'undefined' && navigator.onLine === false);
+  const gifId = (online && typeof _exGifId === 'function') ? _exGifId(name) : null;
   if(gifId){
     const fb = _exFallbackBlockHtml(name);
     return `
     <div id="fgGifWrap" style="border-radius:12px;overflow:hidden;margin-bottom:14px;background:#fff;">
       <img src="${EDB_GIF_BASE}${gifId}.gif" alt="${String(name).replace(/"/g,'')} demonstration" loading="lazy"
-        onerror="const g=document.getElementById('fgGifWrap'); if(g) g.style.display='none'; const f=document.getElementById('fgFallbackWrap'); if(f) f.style.display='';"
+        onerror="const g=document.getElementById('fgGifWrap'); if(g) g.style.display='none'; const f=document.getElementById('fgFallbackWrap'); if(f) f.style.display=''; else _fgMediaFail(this);"
         style="width:100%;max-width:300px;display:block;margin:0 auto;">
     </div>` + (fb ? `<div id="fgFallbackWrap" style="display:none;">${fb}</div>` : '');
   }
@@ -15427,17 +15454,17 @@ function _exFallbackBlockHtml(name){
   const id = entry.slug;
   if(typeof EX_MEDIA_LOOPS !== 'undefined' && EX_MEDIA_LOOPS.has(id)){
     return `
-    <div style="position:relative;border-radius:12px;overflow:hidden;margin-bottom:14px;background:#000;">
+    <div class="fg-media" style="position:relative;border-radius:12px;overflow:hidden;margin-bottom:14px;background:#000;">
       <video src="${EX_MEDIA_BASE}${id}/loop.mp4" poster="${EX_MEDIA_BASE}${id}/0.jpg" muted loop autoplay playsinline webkit-playsinline preload="metadata"
-        style="width:100%;aspect-ratio:16/9;display:block;object-fit:cover;"></video>
+        onerror="_fgMediaFail(this)" style="width:100%;aspect-ratio:16/9;display:block;object-fit:cover;"></video>
       <div style="position:absolute;bottom:0;left:0;right:0;padding:3px 8px;font-size:9px;color:rgba(255,255,255,0.75);background:rgba(0,0,0,0.45);text-align:right;">Video: Goulart · CC BY-SA 4.0 · wger.de</div>
     </div>`;
   }
   const safe = String(name).replace(/"/g,'');
   return `
-    <div class="xfade-wrap" style="margin-bottom:14px;">
-      <img src="${EX_MEDIA_BASE}${id}/0.jpg" alt="${safe} start position" class="xf-a">
-      <img src="${EX_MEDIA_BASE}${id}/1.jpg" alt="${safe} end position" class="xf-b">
+    <div class="xfade-wrap fg-media" style="margin-bottom:14px;">
+      <img src="${EX_MEDIA_BASE}${id}/0.jpg" alt="${safe} start position" class="xf-a" onerror="_fgMediaFail(this)">
+      <img src="${EX_MEDIA_BASE}${id}/1.jpg" alt="${safe} end position" class="xf-b" onerror="_fgMediaFail(this)">
     </div>`;
 }
 // Video load failed. If both sexes exist and we haven't retried yet, fall back
@@ -15501,24 +15528,115 @@ function closeFormGuide(){
   if(m) m.classList.remove('open');
 }
 
-// Fuzzy EXDB lookup by exercise name — exact match first, then a loose
-// first-two-words match (pre-existing behaviour, extracted for reuse).
+// Movement stem of an exercise name: the EARLIEST movement word, ignoring any
+// parenthetical ("Side Plank Dips (Left)" → plank, "Leg Press (Single Leg)" →
+// press). null when the name carries no recognisable movement word.
+const _EX_STEMS = [
+  ['pushup', /\bpush[- ]?ups?\b/], ['pushdown', /\bpush[- ]?downs?\b/],
+  ['pullup', /\b(pull|chin)[- ]?ups?\b/], ['pulldown', /\bpull[- ]?downs?\b/],
+  ['pullover', /\bpull[- ]?overs?\b/], ['situp', /\bsit[- ]?ups?\b/], ['stepup', /\bstep[- ]?ups?\b/],
+  ['press', /\bpress(es)?\b/], ['curl', /\bcurls?\b/], ['row', /\brows?\b/],
+  ['squat', /\bsquats?\b/], ['lunge', /\blunges?\b/], ['raise', /\braises?\b/],
+  ['stretch', /\bstretch(es)?\b/], ['fly', /\bfl(y|ys|ies)\b/], ['deadlift', /\bdeadlifts?\b/],
+  ['extension', /\bextensions?\b/], ['dip', /\bdips?\b/], ['plank', /\bplanks?\b/],
+  ['crunch', /\bcrunch(es)?\b/], ['thrust', /\bthrusts?\b/], ['bridge', /\bbridges?\b/],
+  ['clean', /\bcleans?\b/], ['snatch', /\bsnatch(es)?\b/], ['swing', /\bswings?\b/],
+  ['chop', /\b(wood)?chop(s|pers?)?\b/], ['twist', /\btwists?\b/], ['shrug', /\bshrugs?\b/],
+  ['kickback', /\bkickbacks?\b/], ['rollout', /\brollouts?\b/], ['thruster', /\bthrusters?\b/],
+  ['jump', /\bjumps?\b/], ['burpee', /\bburpees?\b/], ['climber', /\bclimbers?\b/],
+  ['sprint', /\bsprints?\b/], ['jog', /\bjog(ging)?\b/], ['run', /\brun\b/], ['walk', /\bwalk(s|ing)?\b/],
+  ['hold', /\bholds?\b/], ['carry', /\bcarr(y|ies)\b/],
+];
+function _exStem(name){
+  const l = String(name || '').toLowerCase().replace(/\([^)]*\)/g, ' ').replace(/['’]/g, '');
+  let best = null, at = Infinity;
+  for(const [stem, re] of _EX_STEMS){
+    const m = re.exec(l);
+    if(m && m.index < at){ at = m.index; best = stem; }
+  }
+  return best;
+}
+// Fuzzy EXDB lookup by exercise name — exact match first, then the loose
+// first-two-words match, accepted only when the candidate's movement stem
+// matches (stops "Incline Dumbbell Press" resolving to a curl, or a stretch to
+// a raise). A bare one-word name ("Press") only matches an entry that merely
+// adds an implement ("Kettlebell Clean"), never a different lift.
 function _findEXDBEntry(name){
   const lower = String(name || '').toLowerCase();
   if(!lower) return null;
   let dbEx = EXDB.find(e => e.name.toLowerCase() === lower);
   if(!dbEx){
+    const stem = _exStem(lower);
+    if(!stem) return null;
+    const bare = lower.trim().split(/\s+/).length === 1;
     const firstTwo = lower.split(' ').slice(0,2).join(' ');
-    dbEx = EXDB.find(e => e.name.toLowerCase().includes(firstTwo) || lower.includes(e.name.toLowerCase().split(' ').slice(0,2).join(' ')));
+    const cands = EXDB.filter(e => {
+      const en = e.name.toLowerCase();
+      if(!(en.includes(firstTwo) || lower.includes(en.split(' ').slice(0,2).join(' ')))) return false;
+      if(_exStem(en) !== stem) return false;
+      if(bare && !/^(kettlebell|dumbbell|barbell|cable|kb|db) \S+$/.test(en)) return false;
+      return true;
+    });
+    // Prefer the most specific entry whose full name appears in the query
+    // ("Barbell Romanian Deadlift" → Romanian Deadlift over Deadlift).
+    const contained = cands.filter(e => lower.includes(e.name.toLowerCase()))
+      .sort((a, b) => b.name.length - a.name.length);
+    dbEx = contained[0] || cands[0];
   }
   return dbEx || null;
 }
-// Is there anything worth showing for this exercise (a demo clip or a guide)?
+// Is there anything worth showing for this exercise? Always, for a real name:
+// with no demo and no EXDB entry the sheet still shows general cues (_genericCues).
 function _hasExerciseGuide(name){
-  if(typeof _exV2Id === 'function' && _exV2Id(name)) return true;
-  if(typeof _exGifId === 'function' && _exGifId(name)) return true;
-  if(typeof _exVideoEntry === 'function' && _exVideoEntry(name, EX_VIDEO_MAP)) return true;
-  return !!_findEXDBEntry(name);
+  return !!String(name || '').trim();
+}
+// Pure: conservative, honest technique reminders chosen by the movement
+// pattern inferred from the name (muscles as a tie-breaker). Always non-empty.
+// Shown under a "General cues" label — never presented as exercise-specific.
+function _genericCues(name, muscles){
+  const l = String(name || '').toLowerCase();
+  const ms = (Array.isArray(muscles) ? muscles : []).join(' ').toLowerCase();
+  const C = {
+    stretch: ['Ease into the position slowly — no bouncing','Stretch to mild tension, never to pain','Breathe slowly and relax into the hold','Keep the rest of your body steady and supported'],
+    cardio: ['Start at a pace you can control, then build','Stay tall with relaxed shoulders','Land softly and keep breathing steadily','Ease off or rest if your form starts to slip'],
+    core: ['Brace your midsection before each rep','Keep your lower back in a neutral position','Move slowly — control beats speed','Breathe out on the effort; don\'t hold your breath'],
+    hinge: ['Push your hips back with a flat back','Keep the weight close to your body','Drive through your hips to stand tall','Stop the range before your back starts to round'],
+    legs: ['Keep your whole foot planted, weight mid-foot','Knees track in line with your toes','Chest up and core braced throughout','Lower under control, then drive up'],
+    push: ['Set your shoulder blades and brace before each rep','Lower under control to a comfortable depth','Press smoothly — no bouncing','Keep wrists stacked over elbows'],
+    pull: ['Set your shoulders down and back before you pull','Pull with your elbows, not just your hands','Pause briefly at the squeeze','Return slowly to a full stretch'],
+    arms: ['Keep your upper arm still — only the elbow moves','Use a weight you can control without swinging','Squeeze at the end of the range','Lower slowly over 2–3 seconds'],
+    general: ['Use a weight you can control for every rep','Move through a comfortable, pain-free range','Keep your core braced and breathe steadily','End the set if your form breaks down'],
+  };
+  if(/stretch|mobility|rotation|circles?\b|pass-through|reach|down-?dog|cat.?cow|yoga|stand(ing)? knee raise/.test(l)) return C.stretch;
+  if(/\b(run|jog|sprint|walk|recover|rest|march\w*|jumping jacks?|jump rope|skip\w*|high knees|burpees?|bike|treadmill|hops?|bounds?|jumps?)\b|climbers?/.test(l)) return C.cardio;
+  if(/plank|crunch|sit-?ups?|twist|hollow|bird dog|dead bug|v-ups?|leg raises?|flutter|heel taps|pallof|wood ?chop|rollout|\bab\b|abdominal|superman/.test(l)) return C.core;
+  if(/deadlift|good morning|\brdl\b|swing|clean|snatch|high pull|hip thrust|bridge|pull-through|back extension|hip extension/.test(l)) return C.hinge;
+  if(/curl|tricep|bicep|skull|kickback|pushdown|extension/.test(l)) return C.arms;
+  if(/squat|lunge|leg press|step-?ups?|calf|wall sit|split|glute/.test(l)) return C.legs;
+  if(/press|push|dip|fly|fly's|pec|raise/.test(l)) return C.push;
+  if(/row|pull|chin|pulldown|pullover|shrug|face pull|rear delt/.test(l)) return C.pull;
+  if(/chest|shoulder|tricep/.test(ms)) return C.push;
+  if(/back|lat|bicep/.test(ms)) return C.pull;
+  if(/leg|glute|quad|hamstring|calf|calves/.test(ms)) return C.legs;
+  if(/core|abs|oblique/.test(ms)) return C.core;
+  return C.general;
+}
+// A demo layer failed to load (often: offline). Hide that media wrapper and
+// show the "follow the cues below" note. Idempotent; inert for detached nodes
+// (sheet re-rendered), the phantom error from src removal, or a closed sheet.
+function _fgMediaFail(el){
+  try{
+    if(el){
+      if(el.isConnected === false) return;
+      if(el.getAttribute && !el.getAttribute('src')) return;
+    }
+    const m = document.getElementById('formGuideMod');
+    if(!m || !m.classList.contains('open')) return;
+    const w = el && el.closest ? el.closest('.fg-media') : null;
+    if(w) w.style.display = 'none';
+    const n = document.getElementById('fgMediaNote');
+    if(n) n.style.display = '';
+  }catch(e){}
 }
 
 function openFormGuide(){
@@ -15537,7 +15655,8 @@ function openFormGuideFor(name){
 
   const content = document.getElementById('formGuideContent');
   // Demo clip (when mapped) sits at the top of the sheet, above "Why this lift".
-  const videoHtml = (typeof _exVideoBlockHtml === 'function') ? _exVideoBlockHtml(name) : '';
+  const videoHtml = ((typeof _exVideoBlockHtml === 'function') ? _exVideoBlockHtml(name) : '')
+    + '<div id="fgMediaNote" style="display:none;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--text2);text-align:center;">Demo unavailable offline — follow the cues below.</div>';
   if(dbEx){
     let html = videoHtml;
     if(dbEx.benefits){
@@ -15560,7 +15679,12 @@ function openFormGuideFor(name){
     }
     content.innerHTML = html;
   } else {
-    content.innerHTML = videoHtml + '<div style="text-align:center;padding:24px 12px;color:var(--text2);font-size:13px;">No form guide available for this exercise yet.</div>';
+    const gen = _genericCues(name);
+    content.innerHTML = videoHtml + `<div style="margin-bottom:14px;">
+        <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:4px;">📝 General cues</div>
+        <div style="font-size:11px;color:var(--text2);margin-bottom:8px;">General technique reminders for this type of movement — not specific to this exercise.</div>
+        ${gen.map((c,i) => `<div style="display:flex;gap:10px;padding:8px 0;border-top:0.5px solid var(--border);"><div style="font-size:11px;font-weight:800;color:var(--accent);width:22px;flex-shrink:0;">${i+1}</div><div style="font-size:13px;color:var(--text);">${c}</div></div>`).join('')}
+      </div>`;
   }
   document.getElementById('formGuideMod').classList.add('open');
   // Kick playback once visible — some browsers won't autoplay a video that
