@@ -12,3 +12,6 @@ node_modules/
 
 # Secrets
 .env
+
+# Eval run output (local)
+tests/evals/last-run.json

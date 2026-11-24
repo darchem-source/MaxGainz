@@ -51,7 +51,12 @@ function _aiNumbersIn(text){
     eleven:11, twelve:12, thirteen:13, fourteen:14, fifteen:15, sixteen:16, seventeen:17, eighteen:18,
     nineteen:19, twenty:20, thirty:30, forty:40, fifty:50, sixty:60, seventy:70, eighty:80, ninety:90,
     hundred:100, dozen:12 };
-  const words = s.toLowerCase().replace(/\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[-\s]+(one|two|three|four|five|six|seven|eight|nine)\b/g,
+  const tensRe = '(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[-\\s]+(?:one|two|three|four|five|six|seven|eight|nine))?|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|one|two|three|four|five|six|seven|eight|nine';
+  const val = w => w.split(/[-\s]+/).reduce((a, x) => a + (W[x] || 0), 0);
+  const words = s.toLowerCase()
+    .replace(new RegExp('\\b(a|one|two|three|four|five|six|seven|eight|nine)\\s+hundred(?:\\s+(?:and\\s+)?(' + tensRe + '))?\\b', 'g'),
+      (all, h, rest) => { out.push((h === 'a' ? 1 : W[h]) * 100 + (rest ? val(rest) : 0)); return ' '; })
+    .replace(/\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[-\s]+(one|two|three|four|five|six|seven|eight|nine)\b/g,
     (all, t, u) => { out.push(W[t] + W[u]); return ' '; });
   const wr = /[a-z]+/g;
   while((m = wr.exec(words)) !== null){ if(Object.prototype.hasOwnProperty.call(W, m[0])) out.push(W[m[0]]); }
