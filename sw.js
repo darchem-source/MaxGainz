@@ -90,10 +90,14 @@ function _swParseRange(h, size){
   return { start, end };
 }
 async function _swMediaResponse(req){
-  const cache = await caches.open(MEDIA_CACHE);
-  // Keys carry ?v=hash; the page requests the bare path. The page removes
-  // entries whose hash is stale, so at most one version of a file is present.
-  const hit = await cache.match(req.url.split('?')[0], { ignoreSearch: true, ignoreVary: true });
+  // The page requests exercise-media/{id}/{file}?v={hash8} — the same string
+  // as the cache key — so only the CURRENT version of a file can ever match;
+  // a stale copy left in the cache is simply never served.
+  let hit = null;
+  try {
+    const cache = await caches.open(MEDIA_CACHE);
+    hit = await cache.match(req.url, { ignoreVary: true });
+  } catch(e){ hit = null; }
   if(!hit) return fetch(req);          // not downloaded: plain network, never cached here
   const range = req.headers.get('range');
   if(!range) return hit;
@@ -114,6 +118,11 @@ self.addEventListener('message', e => {
   if (e.data && e.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
+  // The page asks which media cache this worker serves before it promises
+  // "available offline" (an older worker would silently ignore the download).
+  if (e.data && e.data.type === 'MEDIA_CAPS' && e.ports && e.ports[0]) {
+    e.ports[0].postMessage({ media: MEDIA_CACHE });
+  }
 });
 
 // ── FETCH ──
@@ -132,7 +141,7 @@ self.addEventListener('fetch', e => {
   // cache only ever holds what the user chose to download). Same origin only:
   // ExerciseDB GIFs/V2 clips never reach this branch.
   if (url.origin === self.location.origin && url.pathname.includes('/exercise-media/') && e.request.method === 'GET') {
-    e.respondWith(_swMediaResponse(e.request).catch(() => fetch(e.request)));
+    e.respondWith(_swMediaResponse(e.request));
     return;
   }
 

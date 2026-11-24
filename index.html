@@ -14097,7 +14097,7 @@ function _renderCooldownStretch(){
   if(xf){
     xf.className = 'xfade-wrap';
     xf.style.display = 'block';
-    xf.innerHTML = `<img src="${EX_MEDIA_BASE}${mid}/0.jpg" alt="" class="xf-a" onerror="_cooldownImgError(this)"><img src="${EX_MEDIA_BASE}${mid}/1.jpg" alt="" class="xf-b" onerror="_cooldownImgError(this)">`;
+    xf.innerHTML = `<img src="${_exMediaUrl(mid, '0.jpg')}" alt="" class="xf-a" onerror="_cooldownImgError(this)"><img src="${_exMediaUrl(mid, '1.jpg')}" alt="" class="xf-b" onerror="_cooldownImgError(this)">`;
   }
 }
 // Failed stretch image (often offline): hide the media wrap; the cue line and
@@ -18473,6 +18473,11 @@ let _offlineCached = null;   // Map 'Id/file' → hash8 of what the media cache 
 let _offlineJob = null;      // the running download: { progKey, tier, ctrl, done, total, bytesDone, bytesTotal }
 let _offlineTier = 'images'; // the card's size choice: 'images' (default) | 'full' (adds video loops)
 let _offlineLastMsg = '';    // last outcome line shown on the card (plain text, rendered escaped)
+let _offlineCacheErr = false; // the Cache API exists but refused us (private mode, storage disabled)
+let _offlineSwOk = null;     // does the CONTROLLING service worker serve the media cache? null = not checked
+let _offlineStaleSeen = new Set(); // paths purged this page-load because the app shipped a newer version
+let _offlineOtherSnap = [];  // the "Also on this device" keys exactly as last drawn (Remove buttons index into it)
+const OFFLINE_JOB_KEY = 'maxgainz_offline_job'; // cross-tab heartbeat while a download runs
 
 // Pure: rollout flags from a ?p3= query value. 'all'/'1' → every Phase 3
 // feature, '0'/'off' → none, 'offline,share' → those. null = no ?p3= present.
@@ -18565,6 +18570,15 @@ function _offlineMediaSet(programme, tier, hiitSeries){
   });
   return files;
 }
+// The URL the page requests for a self-hosted media file: versioned with the
+// manifest hash so it equals the offline cache key (sw.js matches it exactly —
+// a stale cached copy can never be served) and busts the HTTP cache on change.
+function _exMediaUrl(id, file){
+  const row = (typeof EX_MEDIA_FILES === 'object' && EX_MEDIA_FILES) ? EX_MEDIA_FILES[id] : null;
+  const slot = OFFLINE_FILE_SLOTS.find(x => x[0] === file);
+  const h = row && slot && row[slot[1]] > 0 ? row[slot[1] + 1] : '';
+  return EX_MEDIA_BASE + id + '/' + file + (h ? '?v=' + h : '');
+}
 function _offlineSetBytes(files){ return files.reduce((a, f) => a + f.size, 0); }
 function _offlineCacheKey(f){ return EX_MEDIA_BASE + f.path + '?v=' + f.hash; }
 // Pure: 'https://x/exercise-media/Id/0.jpg?v=abcd1234' → { path:'Id/0.jpg', hash:'abcd1234' } | null
@@ -18645,19 +18659,60 @@ function _offlineFmtMB(bytes){
 function _offlineHasCacheApi(){ return typeof caches !== 'undefined' && typeof caches.open === 'function'; }
 
 // Read the media cache: delete stale/unknown entries, return Map path → hash.
-async function _offlineReadCache(){
+// Paths purged as stale (the app shipped a newer file) stay marked 'stale' for
+// this page-load so the card says "Update available", not "cleared by the
+// browser". With sweep, files no recorded download needs (an interrupted run,
+// a lost state write) are deleted too — unless a download is running here or
+// in another tab (heartbeat within 2 minutes).
+async function _offlineReadCache(opts){
   if(!_offlineHasCacheApi()) { _offlineCached = null; return null; }
   try {
     const cache = await caches.open(MEDIA_CACHE_NAME);
     const reqs = await cache.keys();
     const urls = reqs.map(r => r.url);
     const stale = new Set(_offlineStaleKeys(urls));
-    for(const u of stale){ try { await cache.delete(u); } catch(e){} }
+    let sweepOk = !!(opts && opts.sweep) && !_offlineJob;
+    if(sweepOk){ try { const hb = JSON.parse(localStorage.getItem(OFFLINE_JOB_KEY) || 'null'); if(hb && typeof hb.t === 'number' && Date.now() - hb.t < 120e3) sweepOk = false; } catch(e){} }
+    const needed = sweepOk ? _offlineNeededPaths(_offlineStateGet()) : null;
     const map = new Map();
-    urls.forEach(u => { if(stale.has(u)) return; const k = _offlineParseKey(u); if(k) map.set(k.path, k.hash); });
+    for(const u of urls){
+      const k = _offlineParseKey(u);
+      const orphan = !!needed && !stale.has(u) && k && !needed.has(k.path);
+      if(stale.has(u) || orphan){
+        if(k && stale.has(u) && EX_MEDIA_FILES[k.path.split('/')[0]]) _offlineStaleSeen.add(k.path);
+        try { await cache.delete(u); } catch(e){}
+        continue;
+      }
+      if(k) map.set(k.path, k.hash);
+    }
+    _offlineStaleSeen.forEach(p => { if(!map.has(p)) map.set(p, 'stale'); });
     _offlineCached = map;
+    _offlineCacheErr = false;
     return map;
-  } catch(e){ _offlineCached = null; return null; }
+  } catch(e){ _offlineCached = null; _offlineCacheErr = true; return null; }
+}
+// Pure: every path some recorded download needs (at its recorded tier).
+function _offlineNeededPaths(state){
+  const need = new Set();
+  Object.keys(state.progs).forEach(k => _offlineSetForKey(k, state.progs[k].tier).forEach(f => need.add(f.path)));
+  return need;
+}
+// Does the worker controlling this page serve the media cache? An older
+// sw.js (update not yet accepted) passes media straight to the network, so the
+// download would be useless offline.
+async function _offlineCheckSw(){
+  try {
+    const sw = typeof navigator !== 'undefined' ? navigator.serviceWorker : null;
+    if(!sw || !sw.controller || typeof MessageChannel === 'undefined'){ _offlineSwOk = false; return false; }
+    const ok = await new Promise(resolve => {
+      const ch = new MessageChannel();
+      const t = setTimeout(() => resolve(false), 1500);
+      ch.port1.onmessage = ev => { clearTimeout(t); resolve(!!(ev.data && ev.data.media === MEDIA_CACHE_NAME)); };
+      sw.controller.postMessage({ type:'MEDIA_CAPS' }, [ch.port2]);
+    });
+    _offlineSwOk = ok;
+    return ok;
+  } catch(e){ _offlineSwOk = false; return false; }
 }
 async function _offlineDeletePaths(paths){
   if(!_offlineHasCacheApi() || !paths.length) return;
@@ -18694,72 +18749,84 @@ async function offlineDownload(){
   if(_offlineJob) return;
   const key = _offlineProgKey();
   if(!key){ _offlineLastMsg = 'Start a Path first — the download follows your programme.'; _offlineRenderCard(); return; }
-  if(!_offlineHasCacheApi()){ _offlineLastMsg = 'This browser cannot keep files for offline use.'; _offlineRenderCard(); return; }
+  if(!_offlineHasCacheApi() || _offlineCacheErr){ _offlineLastMsg = 'This browser cannot keep files for offline use.'; _offlineRenderCard(); return; }
+  if(_offlineSwOk === false){ _offlineLastMsg = 'Update the app first — then the download will work offline.'; _offlineRenderCard(); return; }
   if(typeof navigator !== 'undefined' && navigator.onLine === false){ _offlineLastMsg = 'You are offline — connect to download.'; _offlineRenderCard(); return; }
   const tier = _offlineTier === 'full' ? 'full' : 'images';
-  const files = _offlineSetForKey(key, tier);
-  const cached = (await _offlineReadCache()) || new Map();
-  const todo = files.filter(f => cached.get(f.path) !== f.hash);
-  const need = _offlineSetBytes(todo);
-  let est = null;
-  try { if(navigator.storage && navigator.storage.estimate) est = await navigator.storage.estimate(); } catch(e){ est = null; }
-  const sp = _offlineSpaceCheck(need, est);
-  if(!sp.ok){
-    _offlineMetric('dl_nospace');
-    _offlineLastMsg = 'Not enough storage: needs ' + _offlineFmtMB(need) + ', about ' + _offlineFmtMB(Math.max(0, sp.free)) + ' free.' + (tier === 'full' ? ' Try Images only.' : '');
-    _offlineRenderCard();
-    return;
-  }
-  try { if(navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch(e){}
+  // Claimed synchronously, before the first await: a second tap (or Remove /
+  // Add video) during the space check can't start a parallel run.
   const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-  const job = _offlineJob = { progKey:key, tier, ctrl, done:0, total:todo.length, bytesDone:0, bytesTotal:need, failed:0 };
+  const job = _offlineJob = { progKey:key, tier, ctrl, done:0, total:0, bytesDone:0, bytesTotal:0, failed:0, starting:true };
+  const beat = () => { try { localStorage.setItem(OFFLINE_JOB_KEY, JSON.stringify({ t: Date.now() })); } catch(e){} };
+  beat();
   _offlineLastMsg = '';
   _offlineRenderCard();
+  let quota = false, cancelled = false, ran = false;
   const added = [];
-  let quota = false, cancelled = false;
   try {
-    // (Stale copies were already purged by _offlineReadCache above — sw.js
-    // would otherwise answer these requests with the old file.)
-    const cache = await caches.open(MEDIA_CACHE_NAME);
-    let next = 0;
-    const worker = async () => {
-      while(next < todo.length && !quota && !(ctrl && ctrl.signal.aborted)){
-        const f = todo[next++];
-        let ok = false;
-        for(let attempt = 0; attempt < 2 && !ok; attempt++){
-          try { await _offlineFetchOne(cache, f, ctrl ? ctrl.signal : undefined); ok = true; added.push(f.path); }
-          catch(e){
-            if(_offlineIsQuota(e)){ quota = true; if(ctrl) ctrl.abort(); return; }
-            if(ctrl && ctrl.signal.aborted) return;
+    const files = _offlineSetForKey(key, tier);
+    // (Stale copies are purged here first — sw.js matches versioned keys
+    // exactly, so they could never be served anyway.)
+    const cached = (await _offlineReadCache()) || new Map();
+    const todo = files.filter(f => cached.get(f.path) !== f.hash);
+    const need = _offlineSetBytes(todo);
+    let est = null;
+    try { if(navigator.storage && navigator.storage.estimate) est = await navigator.storage.estimate(); } catch(e){ est = null; }
+    const sp = _offlineSpaceCheck(need, est);
+    if(!sp.ok){
+      _offlineMetric('dl_nospace');
+      _offlineLastMsg = 'Not enough storage: needs ' + _offlineFmtMB(need) + ', about ' + _offlineFmtMB(Math.max(0, sp.free)) + ' free.' + (tier === 'full' ? ' Try Images only.' : '');
+      return;
+    }
+    try { if(navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch(e){}
+    job.starting = false; job.total = todo.length; job.bytesTotal = need;
+    _offlineRenderCard();
+    ran = true;
+    try {
+      const cache = await caches.open(MEDIA_CACHE_NAME);
+      let next = 0;
+      const worker = async () => {
+        while(next < todo.length && !quota && !(ctrl && ctrl.signal.aborted)){
+          const f = todo[next++];
+          let ok = false;
+          for(let attempt = 0; attempt < 2 && !ok; attempt++){
+            try { await _offlineFetchOne(cache, f, ctrl ? ctrl.signal : undefined); ok = true; added.push(f.path); }
+            catch(e){
+              if(_offlineIsQuota(e)){ quota = true; if(ctrl) ctrl.abort(); return; }
+              if(ctrl && ctrl.signal.aborted) return;
+            }
           }
+          if(!ok) job.failed++;
+          job.done++; job.bytesDone += f.size;
+          beat();
+          _offlineRenderProgress();
         }
-        if(!ok) job.failed++;
-        job.done++; job.bytesDone += f.size;
-        _offlineRenderProgress();
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(OFFLINE_CONCURRENCY, todo.length) }, worker));
-    cancelled = !quota && !!(ctrl && ctrl.signal.aborted);
-  } catch(e){ if(_offlineIsQuota(e)) quota = true; else job.failed = Math.max(job.failed, 1); }
-  if(quota || cancelled){
-    // Roll back what THIS run added, except files another download still needs.
-    const st = _offlineStateGet();
-    const keep = new Set();
-    Object.keys(st.progs).forEach(k => _offlineSetForKey(k, st.progs[k].tier).forEach(f => keep.add(f.path)));
-    try { await _offlineDeletePaths(added.filter(p => !keep.has(p))); } catch(e){}
-    _offlineMetric(quota ? 'dl_quota' : 'dl_cancel');
-    _offlineLastMsg = quota ? 'Storage is full — nothing was kept. Free some space or choose Images only.' : 'Download cancelled — nothing was kept.';
-  } else {
-    const st = _offlineStateGet();
-    st.progs[key] = { tier: (st.progs[key] && st.progs[key].tier === 'full') ? 'full' : tier, at: Date.now() };
-    _offlineStatePut(st);
-    _offlineMetric(job.failed ? 'dl_partial' : 'dl_ok');
-    _offlineLastMsg = job.failed ? job.failed + ' file' + (job.failed === 1 ? '' : 's') + ' could not be downloaded. Retry when the connection is better.' : '';
+      };
+      await Promise.all(Array.from({ length: Math.min(OFFLINE_CONCURRENCY, todo.length) }, worker));
+      cancelled = !quota && !!(ctrl && ctrl.signal.aborted);
+    } catch(e){ if(_offlineIsQuota(e)) quota = true; else job.failed = Math.max(job.failed, 1); }
+    if(quota || cancelled){
+      // Roll back what THIS run added, except files a recorded download needs
+      // (the state is never changed before a run succeeds, so an "Add video"
+      // that fails keeps exactly the images it had).
+      const keep = _offlineNeededPaths(_offlineStateGet());
+      try { await _offlineDeletePaths(added.filter(p => !keep.has(p))); } catch(e){}
+      _offlineMetric(quota ? 'dl_quota' : 'dl_cancel');
+      _offlineLastMsg = quota ? 'Storage is full — nothing was kept. Free some space or choose Images only.' : 'Download cancelled — nothing was kept.';
+    } else {
+      const st = _offlineStateGet();
+      st.progs[key] = { tier: (st.progs[key] && st.progs[key].tier === 'full') ? 'full' : tier, at: Date.now() };
+      _offlineStatePut(st);
+      _offlineMetric(job.failed ? 'dl_partial' : 'dl_ok');
+      _offlineLastMsg = job.failed ? job.failed + ' file' + (job.failed === 1 ? '' : 's') + ' could not be downloaded. Retry when the connection is better.' : '';
+    }
+  } finally {
+    _offlineJob = null;
+    try { localStorage.removeItem(OFFLINE_JOB_KEY); } catch(e){}
+    await _offlineReadCache();
+    _offlineRenderCard();
   }
-  _offlineJob = null;
-  await _offlineReadCache();
-  _offlineRenderCard();
-  if(!quota && !cancelled && !job.failed && typeof showToast === 'function') showToast('✓ Available offline', { duration: 2500 });
+  if(ran && !quota && !cancelled && !job.failed && typeof showToast === 'function') showToast('✓ Available offline', { duration: 2500 });
 }
 function offlineCancel(){ if(_offlineJob && _offlineJob.ctrl) _offlineJob.ctrl.abort(); }
 function offlineSetTier(t){ if(_offlineJob) return; _offlineTier = t === 'full' ? 'full' : 'images'; _offlineRenderCard(); }
@@ -18778,7 +18845,7 @@ async function _offlineRemoveKey(key){
 }
 function offlineRemoveActive(){ const k = _offlineProgKey(); if(k) _offlineRemoveKey(k); }
 // Index-based so no programme name ever reaches an inline handler.
-function offlineRemoveOther(i){ const k = _offlineOtherKeys()[i]; if(k) _offlineRemoveKey(k); }
+function offlineRemoveOther(i){ const k = _offlineOtherSnap[i]; if(k && _offlineStateGet().progs[k]) _offlineRemoveKey(k); }
 function _offlineOtherKeys(){ const a = _offlineProgKey(); return Object.keys(_offlineStateGet().progs).filter(k => k !== a).sort(); }
 function _offlineKeyName(k){
   if(k.indexOf('HIIT:') === 0){ const s = (typeof HIIT_SERIES === 'object' && HIIT_SERIES) ? HIIT_SERIES[k.slice(5)] : null; return s ? s.name : 'HIIT'; }
@@ -18794,7 +18861,7 @@ function _offlineCardInner(){
   const key = _offlineProgKey();
   const title = `<div id="offlineCardTitle" style="font-size:11px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;">📶 OFFLINE MEDIA</div>`;
   if(!key) return title + `<div style="font-size:13px;color:var(--text2);">This programme has no exercise demos to download.</div>`;
-  if(!_offlineHasCacheApi()) return title + `<div style="font-size:13px;color:var(--text2);">This browser can't keep demos for offline use. Form cues still work offline.</div>`;
+  if(!_offlineHasCacheApi() || _offlineCacheErr) return title + `<div style="font-size:13px;color:var(--text2);">This browser can't keep demos for offline use (private browsing or storage turned off). Form cues still work offline.</div>`;
   const st = _offlineStateGet();
   const mine = st.progs[key];
   const tierNow = _offlineJob ? _offlineJob.tier : (mine ? mine.tier : _offlineTier);
@@ -18804,7 +18871,13 @@ function _offlineCardInner(){
   const name = esc(_offlineKeyName(key));
   let status, actions = '';
   const btn = 'padding:10px 14px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;';
-  if(_offlineJob){
+  const btnUpd = `<button type="button" class="btn-p" onclick="offlineApplyUpdate()" style="${btn}">Update the app</button>`;
+  if(_offlineSwOk === false && !_offlineJob){
+    status = `<div style="font-size:13px;margin-bottom:10px;"><span style="color:var(--orange);font-weight:800;">Finish setting up offline mode</span> · ${mine ? 'The demos are saved, but this' : 'This'} version of the app can't use them yet. Update the app (it reloads), then come back here.</div>`;
+    actions = btnUpd;
+  } else if(_offlineJob && _offlineJob.starting){
+    status = `<div role="status" style="font-size:13px;margin-bottom:10px;">Checking space for <strong>${name}</strong>…</div>`;
+  } else if(_offlineJob){
     const j = _offlineJob;
     const pct = j.bytesTotal ? Math.round(j.bytesDone / j.bytesTotal * 100) : 0;
     status = `<div style="font-size:13px;margin-bottom:8px;">Downloading demos for <strong>${name}</strong>…</div>
@@ -18827,11 +18900,14 @@ function _offlineCardInner(){
       <div role="radiogroup" aria-label="Download size" style="display:flex;gap:8px;margin-bottom:10px;">${opt('images', 'Images only', _offlineSetBytes(imgs))}${opt('full', 'Images + video', _offlineSetBytes(full))}</div>`;
     actions = `<button type="button" class="btn-p" onclick="offlineDownload()" style="${btn}width:100%;">Download for offline (${_offlineFmtMB(_offlineSetBytes(_offlineTier === 'full' ? full : imgs))})</button>`;
   }
-  const others = _offlineOtherKeys().map((k, i) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;color:var(--text2);margin-top:8px;"><span>Also on this device: ${esc(_offlineKeyName(k))}</span><button type="button" onclick="offlineRemoveOther(${i})" style="${btn}padding:6px 10px;font-size:12px;background:transparent;border:0.5px solid var(--border);color:var(--text);">Remove</button></div>`).join('');
+  _offlineOtherSnap = _offlineOtherKeys();
+  const others = _offlineOtherSnap.map((k, i) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;color:var(--text2);margin-top:8px;"><span>Also on this device: ${esc(_offlineKeyName(k))}</span><button type="button" onclick="offlineRemoveOther(${i})" style="${btn}padding:6px 10px;font-size:12px;background:transparent;border:0.5px solid var(--border);color:var(--text);">Remove</button></div>`).join('');
   const msg = _offlineLastMsg ? `<div role="status" style="font-size:12px;color:var(--orange);margin-top:8px;">${esc(_offlineLastMsg)}</div>` : '';
   return title + `<div style="background:var(--surface2);border-radius:14px;padding:14px;">${status}<div style="display:flex;gap:8px;flex-wrap:wrap;">${actions}</div>${msg}${others}<div id="offlineStorage" style="font-size:11px;color:var(--text2);margin-top:10px;"></div></div>`;
 }
-function offlineAddVideo(){ _offlineTier = 'full'; const st = _offlineStateGet(), k = _offlineProgKey(); if(k && st.progs[k]){ st.progs[k].tier = 'full'; _offlineStatePut(st); } offlineDownload(); }
+// The saved tier only becomes 'full' once the video download has succeeded.
+function offlineAddVideo(){ if(_offlineJob) return; _offlineTier = 'full'; offlineDownload(); }
+function offlineApplyUpdate(){ if(typeof _swWaitingWorker !== 'undefined' && _swWaitingWorker && typeof acceptSWUpdate === 'function') acceptSWUpdate(); else location.reload(); }
 function _offlineProgText(j){ return j.done + ' of ' + j.total + ' files · ' + _offlineFmtMB(j.bytesDone) + ' of ' + _offlineFmtMB(j.bytesTotal); }
 // Progress ticks update the bar in place (no re-render, so focus on Cancel stays put).
 function _offlineRenderProgress(){
@@ -18864,7 +18940,7 @@ async function _offlineRenderStorage(){
 }
 async function _offlineRefreshCard(){
   if(!_p3FlagOn('offline')) return;
-  await _offlineReadCache();
+  await Promise.all([_offlineReadCache(), _offlineCheckSw()]);
   _offlineRenderCard();
 }
 
@@ -18948,11 +19024,15 @@ function _offlineHealthHtml(){
 if(typeof window !== 'undefined' && window.addEventListener){
   window.addEventListener('offline', () => { _offlineNoteConnectivity(); });
   window.addEventListener('online', () => { if(_p3FlagOn('offline') && document.getElementById('offlineCard')) _offlineRenderCard(); });
+  // Another tab downloaded or removed something: redraw from the real cache.
+  window.addEventListener('storage', e => { if(e.key === OFFLINE_STATE_KEY && document.getElementById('offlineCard')) _offlineRefreshCard(); });
 }
 if(typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', () => {
   _p3ApplyFlagQuery();
-  // Clean stale media entries and learn what is cached (feeds the form-guide renderer).
-  if(_p3FlagOn('offline') || Object.keys(_offlineStateGet().progs).length) _offlineReadCache();
+  // Whenever a media cache exists — flag on or not, state lost or not — purge
+  // stale versions and orphaned files, and learn what is cached (feeds the
+  // form-guide renderer). caches.has() never creates the cache.
+  try { if(_offlineHasCacheApi() && caches.has) caches.has(MEDIA_CACHE_NAME).then(h => { if(h) _offlineReadCache({ sweep:true }); }).catch(() => {}); } catch(e){}
 });
 
 const EX_VIDEO_MAP = {
@@ -19178,7 +19258,7 @@ function _exFallbackBlockHtml(name){
   if(typeof EX_MEDIA_LOOPS !== 'undefined' && EX_MEDIA_LOOPS.has(id) && _exLoopUsable(id)){
     return `
     <div class="fg-media" style="position:relative;border-radius:12px;overflow:hidden;margin-bottom:14px;background:#000;">
-      <video src="${EX_MEDIA_BASE}${id}/loop.mp4" poster="${EX_MEDIA_BASE}${id}/0.jpg" muted loop autoplay playsinline webkit-playsinline preload="metadata"
+      <video src="${_exMediaUrl(id, 'loop.mp4')}" poster="${_exMediaUrl(id, '0.jpg')}" muted loop autoplay playsinline webkit-playsinline preload="metadata"
         data-mid="${id}" onerror="_fgLoopFail(this)" style="width:100%;aspect-ratio:16/9;display:block;object-fit:cover;"></video>
       <div style="position:absolute;bottom:0;left:0;right:0;padding:3px 8px;font-size:9px;color:rgba(255,255,255,0.75);background:rgba(0,0,0,0.45);text-align:right;">Video: Goulart · CC BY-SA 4.0 · wger.de</div>
     </div>`;
@@ -19190,8 +19270,8 @@ function _exFramesHtml(id, name){
   const safe = String(name).replace(/"/g,'');
   return `
     <div class="xfade-wrap fg-media" style="margin-bottom:14px;">
-      <img src="${EX_MEDIA_BASE}${id}/0.jpg" alt="${safe} start position" class="xf-a" onerror="_fgMediaFail(this)">
-      <img src="${EX_MEDIA_BASE}${id}/1.jpg" alt="${safe} end position" class="xf-b" onerror="_fgMediaFail(this)">
+      <img src="${_exMediaUrl(id, '0.jpg')}" alt="${safe} start position" class="xf-a" onerror="_fgMediaFail(this)">
+      <img src="${_exMediaUrl(id, '1.jpg')}" alt="${safe} end position" class="xf-b" onerror="_fgMediaFail(this)">
     </div>`;
 }
 // Offline and the offline download is known NOT to hold this loop → skip
@@ -19199,13 +19279,16 @@ function _exFramesHtml(id, name){
 function _exLoopUsable(id){
   const off = typeof navigator !== 'undefined' && navigator.onLine === false;
   if(!off || !(typeof _offlineCached !== 'undefined' && _offlineCached instanceof Map)) return true;
-  return _offlineCached.has(id + '/loop.mp4');
+  const row = EX_MEDIA_FILES[id];
+  return !!row && _offlineCached.get(id + '/loop.mp4') === row[5];
 }
 // A loop that fails to load falls back to the frames (then the text cues),
 // rather than straight to text: offline order is loop → frames → text.
 function _fgLoopFail(el){
   try{
     if(!el || el.isConnected === false || !el.getAttribute('src')) return;
+    const fm = document.getElementById('formGuideMod');
+    if(!fm || !fm.classList.contains('open')) return;
     const id = el.getAttribute('data-mid');
     const wrap = el.closest ? el.closest('.fg-media') : null;
     if(!wrap || !id || !EX_MEDIA_FILES[id]) { _fgMediaFail(el); return; }
@@ -28424,6 +28507,8 @@ async function deleteUserAccount(){
 
     showToast('✅ Account deleted — all your data has been removed', { duration:4500 });
     saveAuthState(null, null);
+    // The offline demo download goes too (its record is in localStorage).
+    try { if(typeof caches !== 'undefined') await caches.delete(MEDIA_CACHE_NAME); } catch(e){}
     localStorage.clear();
     location.reload();
   }catch(e){

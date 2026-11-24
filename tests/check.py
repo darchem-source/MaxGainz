@@ -3706,9 +3706,9 @@ OFFLINE_FNS = ['_p3FlagsFromQuery', '_p3FlagOn', '_offlineProgrammeNames', '_off
                '_offlineMediaSet', '_offlineSetBytes', '_offlineCacheKey', '_offlineParseKey',
                '_offlineStaleKeys', '_offlineStatus', '_offlineSpaceCheck', '_offlineStateLoad',
                '_offlineStateGet', '_offlineStatePut', '_offlineProgKey', '_offlineSetForKey',
-               '_offlinePathsToRemove', '_offlineFmtMB', '_offlineHasCacheApi', '_offlineReadCache',
+               '_offlinePathsToRemove', '_offlineNeededPaths', '_exMediaUrl', '_offlineFmtMB', '_offlineHasCacheApi', '_offlineReadCache',
                '_offlineDeletePaths', '_offlineSha8', '_offlineIsQuota', '_offlineFetchOne',
-               'offlineDownload', 'offlineCancel', '_offlineRemoveKey', '_offlineMetric', '_offlineIsOffline',
+               'offlineDownload', 'offlineAddVideo', 'offlineCancel', '_offlineRemoveKey', '_offlineMetric', '_offlineIsOffline',
                '_offlineNoteSessionStart', '_offlineNoteSessionDone', '_offlineNoteConnectivity',
                '_exVideoEntry', '_exFallbackBlockHtml', '_exFramesHtml', '_exLoopUsable',
                '_exVideoBlockHtml', '_exVideoBlockHtmlNoV2', '_offlineCardInner', '_offlineKeyName', '_offlineOtherKeys', 'isCoreCircuit', 'isLibraryProgramme',
@@ -3716,7 +3716,7 @@ OFFLINE_FNS = ['_p3FlagsFromQuery', '_p3FlagOn', '_offlineProgrammeNames', '_off
 OFFLINE_CONSTS_OBJ = ['ULF_VARIANTS', 'ULF', 'PPL', 'EX_ROTATION_POOLS', 'EX_VIDEO_MAP', 'STRETCH_MEDIA_MAP',
                       'HIIT_SERIES', 'EX_MEDIA_FILES', 'P3_FLAG_KEYS', 'EX_V2_ID_MAP', 'EX_GIF_MAP']
 OFFLINE_CONSTS_ARR = ['LIBRARY_PROGRAMMES', 'CORE_EXERCISES', 'HIIT', 'OFFLINE_FILE_SLOTS']
-OFFLINE_CONSTS_LINE = ['MEDIA_CACHE_NAME', 'OFFLINE_STATE_KEY', 'OFFLINE_METRICS_KEY', 'OFFLINE_SESS_KEY',
+OFFLINE_CONSTS_LINE = ['OFFLINE_JOB_KEY', 'MEDIA_CACHE_NAME', 'OFFLINE_STATE_KEY', 'OFFLINE_METRICS_KEY', 'OFFLINE_SESS_KEY',
                        'OFFLINE_HEADROOM', 'OFFLINE_CONCURRENCY', 'EX_MEDIA_BASE', 'EDB_GIF_BASE', 'AI_KEEP_DAYS']
 
 OFFLINE_STUBS = r"""
@@ -3739,6 +3739,7 @@ function _exGifId(n){ return EX_GIF_MAP[n] || null; }
 var userPath = { programme: 'ULF' };
 var sessStartTime = null;
 var _offlineCached = null, _offlineJob = null, _offlineTier = 'images', _offlineLastMsg = '';
+var _offlineCacheErr = false, _offlineSwOk = null, _offlineStaleSeen = new Set(), _offlineOtherSnap = [];
 function _progDisplayName(k){ return k; }
 // ── Cache API stub (absolute keys, like the browser) ──
 var CFG = { quotaAt: null, puts: 0, corrupt: {}, short: {}, fail404: {}, abortAfter: null, fetched: [] };
@@ -3763,7 +3764,7 @@ function fetch(u, o){
   var p = String(u).replace(EX_MEDIA_BASE, ''); var id = p.split('/')[0], f = p.split('/')[1];
   // Like the real page, this request passes through sw.js, which answers from
   // the media cache whenever ANY version of the file is there.
-  var mc = CS[MEDIA_CACHE_NAME]; if(mc){ var hit = null; mc.m.forEach(function(v, k){ if(!hit && k.split('?')[0] === ABS(u)) hit = v; }); if(hit) return Promise.resolve(hit); }
+  var mc = CS[MEDIA_CACHE_NAME]; if(mc && mc.m.has(ABS(u))) return Promise.resolve(mc.m.get(ABS(u)));
   if(CFG.fail404[p]) return Promise.resolve(new Response(null, { status: 404 }));
   var row = EX_MEDIA_FILES[id]; if(!row) return Promise.resolve(new Response(null, { status: 404 }));
   var i = f === '0.jpg' ? 0 : f === '1.jpg' ? 2 : 4; var n = row[i] - (CFG.short[p] ? 1 : 0);
@@ -3856,9 +3857,12 @@ ok('flag off by default', _p3FlagOn('offline') === false);
 var loopId = Array.from(EX_MEDIA_LOOPS)[0]; var loopName = Object.keys(EX_VIDEO_MAP).filter(function(n){ return EX_VIDEO_MAP[n].split('|')[0] === loopId; })[0];
 navigator.onLine = true; _offlineCached = null;
 var h1 = _exFallbackBlockHtml(loopName); ok('online: loop video first', /<video/.test(h1) && /_fgLoopFail\(this\)/.test(h1));
+ok('media URLs carry the manifest version (= cache key)', h1.indexOf(_exMediaUrl(loopId, 'loop.mp4')) !== -1 && /loop\.mp4\?v=[0-9a-f]{8}"/.test(h1) && /0\.jpg\?v=[0-9a-f]{8}"/.test(h1)
+  && _exMediaUrl(loopId, 'loop.mp4') === _offlineCacheKey({ path: loopId + '/loop.mp4', hash: EX_MEDIA_FILES[loopId][5] }));
 navigator.onLine = false; _offlineCached = new Map();
 var h2 = _exFallbackBlockHtml(loopName); ok('offline, loop not downloaded: frames, no video', !/<video/.test(h2) && (h2.match(/<img/g) || []).length === 2);
-_offlineCached.set(loopId + '/loop.mp4', 'x'); ok('offline, loop downloaded: video', /<video/.test(_exFallbackBlockHtml(loopName)));
+_offlineCached.set(loopId + '/loop.mp4', 'stale'); ok('offline, only a stale loop: frames', !/<video/.test(_exFallbackBlockHtml(loopName)));
+_offlineCached.set(loopId + '/loop.mp4', EX_MEDIA_FILES[loopId][5]); ok('offline, loop downloaded: video', /<video/.test(_exFallbackBlockHtml(loopName)));
 var any = Object.keys(EX_V2_ID_MAP)[0]; var h3 = _exVideoBlockHtml(any);
 ok('offline: no ExerciseDB V2/GIF layer rendered', !/fgV2Wrap|fgGifWrap|exercisedb/i.test(h3));
 navigator.onLine = true; _offlineCached = null;
@@ -3869,6 +3873,12 @@ var card = _offlineCardInner(); _progDisplayName = _pdn; delete LS[OFFLINE_STATE
 ok('card escapes names', card.indexOf('<img src=x') === -1 && card.indexOf('&lt;img') !== -1);
 ok('card offers both sizes', /Images only/.test(card) && /Images \+ video/.test(card) && /role="radiogroup"/.test(card));
 ok('other downloads removable by index only', /offlineRemoveOther\(0\)/.test(card));
+_offlineSwOk = false; LS[OFFLINE_STATE_KEY] = JSON.stringify({ v:1, progs: { 'ULF': { tier:'images' } } }); _offlineCached = new Map(_offlineSetForKey('ULF','images').map(function(f){ return [f.path, f.hash]; }));
+var c2 = _offlineCardInner(); ok('old service worker: no "Available offline" claim, update offered', !/Available offline/.test(c2) && /offlineApplyUpdate\(\)/.test(c2) && !/offlineDownload\(\)/.test(c2));
+_offlineSwOk = true; ok('current worker + full set: Available offline', /Available offline/.test(_offlineCardInner()));
+_offlineCached.set(_offlineSetForKey('ULF','images')[0].path, 'stale'); ok('a newer app version: "Update available", not "cleared"', /Update available/.test(_offlineCardInner()));
+_offlineCacheErr = true; ok('Cache API refused: says so, no endless "Checking"', /can't keep demos/.test(_offlineCardInner()) && !/Checking/.test(_offlineCardInner()));
+_offlineCacheErr = false; _offlineSwOk = null; _offlineCached = null; delete LS[OFFLINE_STATE_KEY];
 JSON.stringify(fails);
 """
 
@@ -3954,6 +3964,47 @@ OFFLINE_ASYNC = {
    await _offlineRemoveKey('library:starting-strength');
    if(mediaPaths().length) return 'remove left files';
    return true;""",
+ 'failed "Add video" keeps the saved images state and removes its videos': r"""
+   useDigest(); userPath = { programme:'library:greyskull' }; await offlineDownload();
+   var imgs = mediaPaths();
+   var loops = _offlineSetForKey('library:greyskull', 'full').filter(function(f){ return /loop/.test(f.path); }).length;
+   if(!loops) return 'fixture: greyskull has no loops';
+   CFG.puts = 0; CFG.quotaAt = loops;
+   await offlineAddVideo(); for(var i = 0; i < 50 && _offlineJob; i++) await Promise.resolve();
+   if(_offlineStateGet().progs['library:greyskull'].tier !== 'images') return 'state switched to full before success';
+   if(!eqA(mediaPaths(), imgs)) return 'videos left behind ' + (mediaPaths().length - imgs.length);
+   if(_offlineStatus(_offlineSetForKey('library:greyskull', 'images'), _offlineCached).state !== 'ready') return 'images no longer ready';
+   CFG.quotaAt = null; navigator.onLine = false; await offlineAddVideo(); navigator.onLine = true;
+   if(_offlineStateGet().progs['library:greyskull'].tier !== 'images') return 'offline Add video changed state';
+   return true;""",
+ 'double tap starts one download, Remove waits': r"""
+   useDigest(); userPath = { programme:'library:sl5x5' };
+   var p1 = offlineDownload(); var p2 = offlineDownload(); await _offlineRemoveKey('library:sl5x5');
+   await p1; await p2;
+   var n = _offlineSetForKey('library:sl5x5', 'images').length;
+   if(CFG.fetched.length !== n) return 'fetched ' + CFG.fetched.length + ' for ' + n + ' files';
+   if(_offlineJob !== null) return 'job left set';
+   if(_offlineStatus(_offlineSetForKey('library:sl5x5', 'images'), _offlineCached).state !== 'ready') return 'not ready';
+   return true;""",
+ 'orphans from an interrupted run are swept, but not while a download runs elsewhere': r"""
+   var c = await caches.open(MEDIA_CACHE_NAME); var f = _offlineSetForKey('PPL', 'images')[0];
+   await c.put(_offlineCacheKey(f), new Response(new ArrayBuffer(1)));
+   LS[OFFLINE_JOB_KEY] = JSON.stringify({ t: Date.now() }); await _offlineReadCache({ sweep:true });
+   if(mediaPaths().length !== 1) return 'swept during another tab download';
+   delete LS[OFFLINE_JOB_KEY]; await _offlineReadCache({ sweep:true });
+   if(mediaPaths().length !== 0) return 'orphan kept';
+   useDigest(); userPath = { programme:'library:sl5x5' }; await offlineDownload(); var n = mediaPaths().length;
+   await _offlineReadCache({ sweep:true }); if(mediaPaths().length !== n) return 'swept a recorded download';
+   return true;""",
+ 'an app update shows "Update available" for the changed files': r"""
+   useDigest(); userPath = { programme:'library:sl5x5' }; LS[OFFLINE_STATE_KEY] = JSON.stringify({ v:1, progs: { 'library:sl5x5': { tier:'images' } } });
+   var set = _offlineSetForKey('library:sl5x5', 'images'); var c = await caches.open(MEDIA_CACHE_NAME);
+   for(var i = 0; i < set.length; i++) await c.put(i === 0 ? EX_MEDIA_BASE + set[i].path + '?v=00000000' : _offlineCacheKey(set[i]), new Response(new ArrayBuffer(1)));
+   await _offlineReadCache({ sweep:true });
+   var st = _offlineStatus(set, _offlineCached);
+   if(st.state !== 'update' || st.missing !== 1) return 'state ' + st.state + ' missing ' + st.missing;
+   if(mediaKeys().some(function(u){ return /v=00000000/.test(u); })) return 'old version kept';
+   return true;""",
  'offline session metrics: started offline and completed counted once': r"""
    navigator.onLine = false; sessStartTime = 111; _offlineNoteSessionStart();
    _offlineNoteSessionDone(111); _offlineNoteSessionDone(111);
@@ -3990,13 +4041,17 @@ SW_SCENARIOS = {
    var mc = await caches.open(MEDIA_CACHE);
    var body = new ArrayBuffer(100); var v = new Uint8Array(body); for(var i = 0; i < 100; i++) v[i] = i;
    await mc.put('https://app.test/exercise-media/X/loop.mp4?v=abcdef12', new Response(body, { status: 200, headers: { 'Content-Type': 'video/mp4' } }));
-   var e1 = fire('https://app.test/exercise-media/X/loop.mp4'); var r1 = await e1.p;
+   var e0 = fire('https://app.test/exercise-media/X/loop.mp4?v=00000000'); await e0.p;
+   if(FETCHED.length !== 1) return 'another version of the file was served from the cache';
+   var e00 = fire('https://app.test/exercise-media/X/loop.mp4'); await e00.p;
+   if(FETCHED.length !== 2) return 'unversioned request served from the cache'; FETCHED.length = 0;
+   var e1 = fire('https://app.test/exercise-media/X/loop.mp4?v=abcdef12'); var r1 = await e1.p;
    if(!r1 || r1._b !== body || FETCHED.length) return 'full hit not served from cache';
-   var e2 = fire('https://app.test/exercise-media/X/loop.mp4', { range: 'bytes=10-19' }); var r2 = await e2.p;
+   var e2 = fire('https://app.test/exercise-media/X/loop.mp4?v=abcdef12', { range: 'bytes=10-19' }); var r2 = await e2.p;
    if(r2.status !== 206 || r2.headers.get('Content-Range') !== 'bytes 10-19/100' || new Uint8Array(r2._b)[0] !== 10 || r2._b.byteLength !== 10) return 'range wrong ' + r2.status + ' ' + r2.headers.get('Content-Range');
-   var e3 = fire('https://app.test/exercise-media/X/loop.mp4', { range: 'bytes=-5' }); var r3 = await e3.p;
+   var e3 = fire('https://app.test/exercise-media/X/loop.mp4?v=abcdef12', { range: 'bytes=-5' }); var r3 = await e3.p;
    if(r3.headers.get('Content-Range') !== 'bytes 95-99/100') return 'suffix range wrong';
-   var e4 = fire('https://app.test/exercise-media/X/loop.mp4', { range: 'bytes=200-' }); var r4 = await e4.p;
+   var e4 = fire('https://app.test/exercise-media/X/loop.mp4?v=abcdef12', { range: 'bytes=200-' }); var r4 = await e4.p;
    if(r4.status !== 416) return 'unsatisfiable range should be 416';
    PUTS.length = 0; var e5 = fire('https://app.test/exercise-media/Y/0.jpg'); await e5.p;
    if(FETCHED.length !== 1 || PUTS.length) return 'miss must go to network without caching ' + JSON.stringify(PUTS);
@@ -4005,6 +4060,9 @@ SW_SCENARIOS = {
    var e8 = fire('https://evil.test/exercise-media/X/loop.mp4'); if(e8.p) return 'cross-origin exercise-media intercepted';
    var e9 = fire('https://lxudaetjuefylgjddonm.supabase.co/rest/v1/sessions'); if(e9.p) return 'supabase intercepted';
    return true;""",
+ 'answers MEDIA_CAPS with its media cache': r"""
+   var got = null; L.message({ data: { type:'MEDIA_CAPS' }, ports: [{ postMessage: function(m){ got = m; } }] });
+   return got && got.media === MEDIA_CACHE ? true : 'no reply ' + JSON.stringify(got);""",
  'activate deletes only stale app caches, never the download': r"""
    ['maxgainz-v1', 'maxgainz-v2', MEDIA_CACHE, 'maxgainz-media-v0', 'some-other-app', 'maxgainz-v2-backup'].forEach(function(n){ C[n] = mk(n); });
    var w = null; L.activate({ waitUntil: function(p){ w = p; } }); await w;
@@ -4106,6 +4164,9 @@ def gate_offline_media(html, js, sw=None, root=None):
     lo = extract_decl(js, 'authLogout') or ''
     if 'OFFLINE_METRICS_KEY' not in lo or 'OFFLINE_SESS_KEY' not in lo: problems.append('sign-out keeps offline metrics')
     if '_offlineHealthHtml()' not in (extract_decl(js, 'openDataHealth') or ''): problems.append('Data health lacks offline rows')
+    dua = extract_decl(js, 'deleteUserAccount') or ''
+    if 'caches.delete(MEDIA_CACHE_NAME)' not in dua: problems.append('account deletion leaves the media cache')
+    if re.search(r'\$\{EX_MEDIA_BASE\}\$\{', js): problems.append('an unversioned self-hosted media URL is still rendered')
     for p in problems: print('  ✗ ' + p)
     if problems: ok_all = False
     else: print('  ✓ flag-gated Plan card (escaped), every session start + finish, form-guide level, Data health, sign-out scrub wired')
