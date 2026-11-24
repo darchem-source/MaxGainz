@@ -3910,6 +3910,12 @@ function _isClientIdSchemaError(detail){
   const t = String(detail.text);
   return /client_id/i.test(t) || /PGRST204|42703|42P10/.test(t) || /no unique or exclusion constraint/i.test(t);
 }
+// Pure: content fingerprint — two rows are duplicates only if key AND this match
+// (backdated activities on the same day share a key but are different sessions).
+function _sessFingerprint(s){
+  return [Math.round((s && s.durationMin) || 0), Math.round((s && s.volume) || 0), (s && s.exercises) || 0,
+    (s && s.activityType) || '', (s && s.intensity) || '', (s && s.manualActivity) ? 1 : 0].join('|');
+}
 function _emptyPending(userId){
   return { userId: userId || null, profile: false, weights: {}, deletes: [], deletedKeys: [] };
 }
@@ -3949,7 +3955,8 @@ function _unsyncedSessionCount(){
 // Pure counter over a pending record (+ number of sessions lacking a cloud_id).
 function _countPending(p, unsyncedSessions){
   if(!p) return unsyncedSessions || 0;
-  return (p.profile ? 1 : 0) + Object.keys(p.weights || {}).length + (p.deletes || []).length + (unsyncedSessions || 0);
+  return (p.profile ? 1 : 0) + Object.keys(p.weights || {}).length + (p.deletes || []).length
+    + (p.deletedKeys || []).length + (unsyncedSessions || 0);
 }
 function _pendingCount(){ return _countPending(_P(), _unsyncedSessionCount()); }
 
@@ -4175,14 +4182,26 @@ function _buildStash(sessions, pending){
       .map(s => { const o = Object.assign({}, s, { date: s.date instanceof Date ? s.date.toISOString() : s.date }); delete o._needsUpload; return o; }),
     weights: Object.assign({}, p.weights || {}),
     deletes: Array.isArray(p.deletes) ? p.deletes.slice() : [],
-    deletedKeys: Array.isArray(p.deletedKeys) ? p.deletedKeys.slice() : []
+    deletedKeys: Array.isArray(p.deletedKeys) ? p.deletedKeys.slice() : [],
+    profile: !!p.profile
   };
 }
 function _stashUnsynced(){
   const uid = getCurrentUserId();
   if(!uid) return 0;
   const st = _buildStash(completedSessions, _P());
-  const n = st.sessions.length + Object.keys(st.weights).length + st.deletes.length;
+  if(st.profile){
+    // Unconfirmed profile changes: keep the append-style data (body weight,
+    // measurements, notes, custom workouts) — restored and merged on sign-in.
+    try {
+      st.profileData = JSON.parse(JSON.stringify({
+        bodyWeightLog, measurementsLog, dailyNotes,
+        customWorkouts: Array.isArray(customWorkouts) ? customWorkouts : [],
+        customHIITs: JSON.parse(localStorage.getItem('maxgainz_custom_hiits') || '[]')
+      }));
+    } catch(e) { st.profileData = null; st.profile = false; }
+  }
+  const n = st.sessions.length + Object.keys(st.weights).length + st.deletes.length + st.deletedKeys.length + (st.profile ? 1 : 0);
   if(!n) return 0;
   const all = lsGet(STASH_KEY, {}) || {};
   all[uid] = st;
@@ -4209,6 +4228,24 @@ function _restoreStash(){
   });
   (st.deletes || []).forEach(id => { if(!p.deletes.includes(id)){ p.deletes.push(id); n++; } });
   (st.deletedKeys || []).forEach(k => { if(!p.deletedKeys.includes(k)) p.deletedKeys.push(k); });
+  if(st.profile && st.profileData){
+    // Put the kept entries back and mark the profile pending: cloudLoadAll()
+    // applies the cloud blob, then merges these local-only entries back in.
+    const d = st.profileData;
+    if(Array.isArray(d.bodyWeightLog)) bodyWeightLog = d.bodyWeightLog;
+    if(Array.isArray(d.measurementsLog)) measurementsLog = d.measurementsLog;
+    if(d.dailyNotes && typeof d.dailyNotes === 'object') dailyNotes = d.dailyNotes;
+    if(Array.isArray(d.customWorkouts)){
+      const cw = (typeof _sanitiseCustomWorkouts === 'function') ? _sanitiseCustomWorkouts(d.customWorkouts) : d.customWorkouts;
+      customWorkouts.length = 0; cw.forEach(w => customWorkouts.push(w));
+      localStorage.setItem('maxgainz_custom', JSON.stringify(customWorkouts));
+    }
+    if(Array.isArray(d.customHIITs)){
+      const ch = (typeof _sanitiseCustomHIITs === 'function') ? _sanitiseCustomHIITs(d.customHIITs) : d.customHIITs;
+      localStorage.setItem('maxgainz_custom_hiits', JSON.stringify(ch));
+    }
+    p.profile = true; _profileRev++; n++;
+  }
   _savePending();
   saveLocalCache(); // stamps this account, so cloudLoadAll() merges + uploads them
   delete all[uid];
@@ -4219,6 +4256,9 @@ function _restoreStash(){
 // "Sign in again" for an expired session — the app's data stays put.
 function reauthenticate(){
   _reauthMode = true;
+  const lb = document.getElementById('loginSubmitBtn'); if(lb){ lb.textContent = 'Sign In'; lb.disabled = false; }
+  const ae = document.getElementById('authError'); if(ae) ae.style.display = 'none';
+  const rf = document.getElementById('authResendForm'); if(rf) rf.style.display = 'none';
   document.querySelector('.app').classList.add('hidden');
   document.getElementById('authMod').classList.add('show');
   document.getElementById('authForm').style.display = 'none';
@@ -4231,9 +4271,10 @@ function reauthenticate(){
   if(cancel) cancel.style.display = 'block';
 }
 function cancelReauth(){
-  _reauthMode = false;
   const cancel = document.getElementById('authReauthCancel');
   if(cancel) cancel.style.display = 'none';
+  if(!_reauthMode || !isAuthenticated()){ _reauthMode = false; return; } // only ever returns to a signed-in app
+  _reauthMode = false;
   document.getElementById('authMod').classList.remove('show');
   document.querySelector('.app').classList.remove('hidden');
 }
@@ -4325,11 +4366,14 @@ async function cloudDeleteSession(s) {
     // landed with the response lost. Remember the key so either outcome is undone.
     const k = _sessionKey(s);
     if (!p.deletedKeys.includes(k)) { p.deletedKeys.push(k); _savePending(); }
+    // Settled by the next cloudLoadAll() (or by the in-flight upload itself),
+    // so make sure a reload actually happens.
+    if (!_sessUploading.has(k)) { _cloudLoadedThisPage = false; _scheduleRetry(); }
     _recomputeSyncStatus();
     return null;
   }
   // The session's own row plus any duplicate rows of it seen on the last load.
-  const ids = [s.cloud_id].concat((_cloudIdsByKey[_sessionKey(s)] || []).filter(x => x !== s.cloud_id));
+  const ids = [s.cloud_id].concat((_cloudIdsByKey[_sessionKey(s) + '#' + _sessFingerprint(s)] || []).filter(x => x !== s.cloud_id));
   ids.forEach(id => { if (!p.deletes.includes(id)) p.deletes.push(id); });
   _savePending();
   let res = [];
@@ -4482,6 +4526,9 @@ async function cloudLoadAll() {
   // then upload that blank state over the real cloud profile).
   _cloudLoadInFlight = true;
   setSyncStatus('syncing');
+  // cloud_ids this device knew before fetching: only these can be judged
+  // "deleted on another device" (an upload may land while we page).
+  const _preFetchIds = new Set(completedSessions.filter(s => s && s.cloud_id).map(s => s.cloud_id));
   let sessRows = null, weightRows = null;
   try {
     [sessRows, weightRows] = await Promise.all([
@@ -4558,7 +4605,7 @@ async function cloudLoadAll() {
     // letting the merge re-upload it. Only sessions without a cloud_id are
     // genuinely local-only.
     const _cloudIds = new Set(sessRows.map(r => r.id));
-    const _localSnapshot = _sameUser ? completedSessions.filter(s => s && (!s.cloud_id || _cloudIds.has(s.cloud_id))) : [];
+    const _localSnapshot = _sameUser ? completedSessions.filter(s => s && (!s.cloud_id || _cloudIds.has(s.cloud_id) || !_preFetchIds.has(s.cloud_id))) : [];
 
     const cloudArr = sessRows.map(r => ({
       cloud_id: r.id,
@@ -4591,7 +4638,7 @@ async function cloudLoadAll() {
     // Older builds could insert the same session twice; the merge shows one, so
     // remember every row id per key — deleting the session deletes all of them.
     _cloudIdsByKey = {};
-    cloudArr.forEach(c => { const k = _sessionKey(c); (_cloudIdsByKey[k] = _cloudIdsByKey[k] || []).push(c.cloud_id); });
+    cloudArr.forEach(c => { const k = _sessionKey(c) + '#' + _sessFingerprint(c); (_cloudIdsByKey[k] = _cloudIdsByKey[k] || []).push(c.cloud_id); });
 
     const merged = _mergeSessions(_localSnapshot, cloudArr).map(s => _validateSession(s) || s);
     completedSessions.length = 0;
@@ -5323,7 +5370,14 @@ function applyImportPayload(payload){
   completedSessions.length = 0;
   // Same validator the cloud merge uses: drops undated/non-object rows and
   // coerces numeric fields, so a hand-edited backup can't poison the history.
-  (payload.sessions || []).map(s => _validateSession(s)).filter(Boolean).forEach(s => completedSessions.push(s));
+  // Imported cloud_ids may point at deleted rows or another account's rows, so
+  // imported sessions are local-only: the next cloudLoadAll() adopts any that
+  // already exist in this account (same _sessionKey) and uploads the rest.
+  // client_id is kept, so re-importing into the same account stays idempotent.
+  (payload.sessions || []).map(s => _validateSession(s)).filter(Boolean).forEach(s => {
+    delete s.cloud_id; delete s._needsUpload;
+    completedSessions.push(s);
+  });
   _normalizeSessionWeights(completedSessions); // repair amended-weight sessions from imported data
 
   Object.keys(customWeights).forEach(k => delete customWeights[k]);
@@ -24294,6 +24348,12 @@ async function authSignup(){
     }
 
     // Go straight in — no confirmation required
+    // Signing up from the "Sign in again" screen: a NEW account must never
+    // inherit the previous account's in-memory data (stash that for it instead).
+    if(currentUser && currentUser.id && currentUser.id !== data.user.id) authLogout({ keepUnsynced: true });
+    _reauthMode = false;
+    const _rcS = document.getElementById('authReauthCancel'); if(_rcS) _rcS.style.display = 'none';
+    _lastSyncError = null;
     const user = {id: data.user.id, email: data.user.email, name: name};
     saveAuthState(user, token, refreshToken);
 
@@ -24383,7 +24443,8 @@ async function authLogin(){
     const pendingName = localStorage.getItem('maxgainz_pending_name');
     const pendingEmail = localStorage.getItem('maxgainz_pending_email');
     const savedAuth = localStorage.getItem('maxgainz_auth');
-    const savedName = savedAuth ? JSON.parse(savedAuth)?.user?.name : null;
+    let _savedUser = null; try { _savedUser = savedAuth ? JSON.parse(savedAuth)?.user : null; } catch(e) {}
+    const savedName = (_savedUser && _savedUser.id === data.user.id) ? _savedUser.name : null; // never another account's name
     // Use pending name if email matches, otherwise use saved name or derive from email
     const userName = (pendingEmail === data.user.email && pendingName)
       ? pendingName
@@ -24395,9 +24456,11 @@ async function authLogin(){
 
     // In-place re-login (expired session) by a DIFFERENT account: scrub the
     // previous account's local state first, exactly like a sign-out would.
-    if(currentUser && currentUser.id && currentUser.id !== data.user.id) authLogout();
+    // Its unsynced work is stashed for it (restored when it signs back in).
+    if(currentUser && currentUser.id && currentUser.id !== data.user.id) authLogout({ keepUnsynced: true });
     _reauthMode = false;
     const _rc = document.getElementById('authReauthCancel'); if(_rc) _rc.style.display = 'none';
+    if(loginBtn){ loginBtn.textContent = 'Sign In'; loginBtn.disabled = false; }
     _lastSyncError = null;
     saveAuthState({id: data.user.id, email: data.user.email, name: userName}, data.access_token, data.refresh_token);
     // Unsynced work this account chose to keep at its last sign-out.
@@ -24449,6 +24512,7 @@ function authLogout(opts){
   // Unsynced work the user chose to keep goes to a per-account stash first.
   if(opts && opts.keepUnsynced) _stashUnsynced();
   _reauthMode = false;
+  const _rcBtn = document.getElementById('authReauthCancel'); if(_rcBtn) _rcBtn.style.display = 'none';
   _dashDisabled = true; clearTimeout(_dashTimer); _dashTimer = null; // no summary push once sign-out has started
   // ── Wipe all user data from localStorage ──
   localStorage.removeItem(STORAGE_KEY);

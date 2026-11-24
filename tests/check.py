@@ -933,7 +933,7 @@ SYNC_FUNCS = ['_emptyPending', '_normalisePending', '_P', '_savePending', '_unsy
               '_countPending', '_pendingCount', '_isHydrated', '_markSynced', '_lastSyncedAt',
               '_setProfileSeen', '_profileSeenAt', '_mergeLocalProfileExtras',
               '_newClientId', '_isClientIdSchemaError', '_fetchAllSessionRows',
-              '_buildStash', '_stashUnsynced', '_restoreStash',
+              '_buildStash', '_stashUnsynced', '_restoreStash', '_sessFingerprint',
               '_syncLabel', '_recomputeSyncStatus', '_scheduleRetry', '_uploadSession', 'flushPending',
               'cloudSaveSession', 'cloudDeleteSession', 'cloudSaveWeight', 'cloudSaveProfile',
               'cloudLoadAll', '_mergeSessions', '_validateSession', '_sessionKey',
@@ -1191,6 +1191,52 @@ SYNC_SCENARIOS = {
       const r = _restoreStash();
       return r === 0 && completedSessions.length === 0 && !!JSON.parse(localStorage.getItem(STASH_KEY)).userA;
     ''',
+    'an upload landing mid-load is not mistaken for a remote delete': r'''
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: 'userA' }));
+      const s = { date: new Date('2026-11-13T10:00:00Z'), day: 'Arms' };
+      completedSessions.push(s);
+      __net = (p, o) => { if (/^sessions/.test(p) && !o.method) { s.cloud_id = 'late1'; return []; } return []; }; // POST lands after the GET snapshot
+      const ok = await cloudLoadAll();
+      return ok && completedSessions.length === 1 && completedSessions[0].cloud_id === 'late1';
+    ''',
+    'deleting a never-confirmed session stays pending until a reload settles it': r'''
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: 'userA' }));
+      __net = () => []; await cloudLoadAll();
+      const s = { date: new Date('2026-11-14T10:00:00Z'), day: 'Core', client_id: 'cid-x' };
+      await cloudDeleteSession(s);                               // e.g. its POST landed but the reply was lost
+      const pendingNow = _pendingCount(), flag = _cloudLoadedThisPage, label = last();
+      __net = (p, o) => /^sessions/.test(p) && !o.method ? [{ id: 'ghost', date: '2026-11-14T10:00:00Z', day: 'Core' }] : [];
+      await cloudLoadAll();
+      if (_syncInFlight) await _syncInFlight;
+      const del = __calls.filter(c => c.method === 'DELETE').map(c => c.path).join('|');
+      return pendingNow === 1 && flag === false && label !== 'synced' && /id=eq\.ghost/.test(del) && _pendingCount() === 0;
+    ''',
+    'same-day backdated activities are not deleted as duplicates': r'''
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: 'userA' }));
+      __net = (p, o) => /^sessions/.test(p) && !o.method
+        ? [{ id: 'run1', date: '2026-11-09T12:00:00Z', day: 'Run', duration_min: 30, manual_activity: true, activity_type: 'run' },
+           { id: 'run2', date: '2026-11-09T12:00:00Z', day: 'Run', duration_min: 45, manual_activity: true, activity_type: 'run' }] : [];
+      await cloudLoadAll();
+      await cloudDeleteSession(completedSessions[0]);
+      return __calls.filter(c => c.method === 'DELETE').length === 1;
+    ''',
+    'kept profile changes (body weight logged offline) survive sign-out and re-sign-in': r'''
+      localStorage.setItem(HYDRATED_KEY, 'userA');
+      _setProfileSeen('2026-11-20T10:00:00.000Z');
+      bodyWeightLog = [{ date: '2026-11-24', weight: 80.5 }];
+      __net = () => null; await cloudSaveProfile();              // offline → pending
+      const n = _stashUnsynced();
+      bodyWeightLog = []; _pending = null; localStorage.removeItem(PENDING_KEY);   // authLogout wipe
+      localStorage.removeItem(HYDRATED_KEY); localStorage.removeItem(STORAGE_KEY);
+      const r = _restoreStash();
+      const blob = JSON.stringify({ userProfile: { firstName: 'Cloud' }, bodyWeightLog: [{ date: '2026-11-01', weight: 82 }] });
+      __net = (p, o) => o.method === 'POST' ? [] : (/^sessions/.test(p) ? [] : [{ exercise_name: '__profile__', notes: blob, updated_at: '2026-11-20T10:00:00.000Z' }]);
+      await cloudLoadAll();
+      if (_syncInFlight) await _syncInFlight;
+      const up = __calls.filter(c => c.method === 'POST' && /custom_weights/.test(c.path)).pop();
+      const sent = up ? JSON.parse(JSON.parse(up.body).notes) : {};
+      return n === 1 && r === 1 && (sent.bodyWeightLog || []).some(e => e.date === '2026-11-24') && _P().profile === false;
+    ''',
     'offline session uploads after load; synced only once confirmed': r'''
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: 'userA' }));
       completedSessions.push({ date: new Date('2026-11-03T10:00:00Z'), day: 'Pull' });
@@ -1282,10 +1328,19 @@ def gate_sync(js):
     if 'confirmSignOut()' not in ucs:
         problems.append('the Sign Out button bypasses confirmSignOut() (unsynced work could be discarded silently)')
     li = extract_async_decl(js, 'authLogin') or ''
-    if not re.search(r'currentUser\.id\s*!==\s*data\.user\.id\)\s*authLogout\(\)', li):
-        problems.append('authLogin() re-login by a DIFFERENT account does not scrub the previous account first')
+    scrub = r'currentUser\.id\s*!==\s*data\.user\.id\)\s*authLogout\(\{\s*keepUnsynced:\s*true\s*\}\)'
+    if not re.search(scrub, li):
+        problems.append('authLogin() re-login by a DIFFERENT account does not scrub (and stash) the previous account first')
+    su = extract_async_decl(js, 'authSignup') or ''
+    if not re.search(scrub, su) or su.find('authLogout(') > su.find('saveAuthState('):
+        problems.append('authSignup() from the re-login screen does not scrub the previous account before saving the new one')
+    if re.search(r"const savedName = savedAuth \?", li):
+        problems.append("authLogin() takes the display name of whichever account was saved before (another account's name)")
     if li.find('_restoreStash()') < 0 or li.find('_restoreStash()') < li.find('saveAuthState('):
         problems.append('authLogin() does not restore the stash after the new auth state is saved')
+    ia = extract_async_decl(js, 'applyImportPayload') or ''
+    if not re.search(r'delete s\.cloud_id', ia):
+        problems.append("applyImportPayload() keeps backup cloud_ids — imported sessions look 'deleted elsewhere' and vanish on the next load")
     dma = extract_async_decl(js, 'deleteManualActivity') or ''
     if 'cloudDeleteSession' not in dma:
         problems.append('deleteManualActivity() never deletes the cloud copy (activity resurrects on next load)')
