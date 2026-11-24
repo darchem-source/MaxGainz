@@ -58,6 +58,31 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 .tab-content { flex: 1; overflow-y: auto; padding-top: env(safe-area-inset-top, 0px); padding-bottom: calc(90px + env(safe-area-inset-bottom, 0px)); padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); min-height: 0; }
 .tab-content::-webkit-scrollbar { display: none; }
 .nav { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 420px; background: rgba(10,10,15,0.97); backdrop-filter: blur(20px); border-top: 0.5px solid var(--border); display: flex; padding: 8px 0 20px; z-index: var(--z-app); }
+/* ── Phase 1: simplified navigation (html.nav-v2) ── */
+#navV2 { display:none; }
+html.nav-v2 .nav:not(#navV2) { display:none !important; }
+html.nav-v2 #navV2 { display:flex; }
+html.nav-v2 #nav-profile-btn { display:none !important; }
+html.nav-v2 .v1-only { display:none !important; }
+.nav-v2-list { display:flex; width:100%; }
+.nav-item2 { flex:1; display:flex; flex-direction:column; align-items:center; gap:3px; cursor:pointer; padding:4px; background:none; border:none; color:var(--text2); font-family:inherit; min-height:44px; }
+.nav-item2.active, .nav-item2[aria-selected="true"] { color:var(--accent); }
+.nav-item2.active .nav-label { color:var(--accent); font-weight:700; }
+/* Session = temporary full-screen mode under V2 */
+html.nav-v2.in-session #navV2 { display:none; }
+html.nav-v2.in-session .tab-content { padding-bottom:calc(16px + env(safe-area-inset-bottom, 0px)); }
+html.nav-v2.in-session { --sess-bar-bottom: 0px; }
+.sess-min-btn { display:none; background:var(--surface2); border:0.5px solid var(--border); border-radius:20px; color:var(--text); font-family:inherit; font-size:12px; font-weight:700; padding:6px 12px; cursor:pointer; }
+html.nav-v2 .sess-min-btn { display:inline-flex; align-items:center; }
+.resume-pill { display:block; width:calc(100% - 32px); margin:10px 16px 0; padding:12px 16px; border-radius:14px; border:1px solid var(--accent); background:rgba(200,255,0,0.1); color:var(--accent); font-family:inherit; font-size:14px; font-weight:800; cursor:pointer; min-height:48px; text-align:left; }
+.resume-pill[hidden] { display:none; }
+.plan-links { display:none; margin:8px 16px 24px; }
+html.nav-v2 .plan-links { display:block; }
+#progAchCard:empty { display:none; }
+.ach-card { margin:0 16px 12px; padding:14px; border-radius:16px; background:var(--surface); border:1px solid var(--border); }
+.ach-row { display:flex; align-items:center; gap:12px; }
+.ach-bar { height:6px; border-radius:3px; background:var(--surface3); margin:10px 0 6px; overflow:hidden; }
+.ach-bar > span { display:block; height:100%; border-radius:3px; }
 .nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; padding: 4px; }
 .nav-label { font-size: 10px; font-weight: 500; color: var(--text2); }
 .nav-item.active .nav-label { color: var(--accent); }
@@ -560,6 +585,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
 
     <!-- TODAY -->
     <div class="screen active" id="s-today">
+      <button type="button" id="resumeSessBtn" class="resume-pill" onclick="resumeSession()" hidden>▶ Resume your workout</button>
       <div class="page-header">
         <div class="page-title" id="todayGreeting">Good morning, <span class="ac">Max</span></div>
         <div style="font-size:13px;color:var(--text2);margin-top:2px;" id="todayMeta"></div>
@@ -598,12 +624,19 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
     <!-- PATH TAB -->
     <div class="screen" id="s-path">
       <div id="pathTabContent"></div>
+      <!-- Simplified nav: Plan is the one place to change the programme. -->
+      <div id="planMoreLinks" class="plan-links">
+        <div class="more-lbl">Change your programme</div>
+        <button type="button" class="st-secondary" onclick="openStartTodayFromProfile()">⚡ Recommend a plan for me</button>
+        <button type="button" class="st-secondary" onclick="openPlanLibrary()">📚 Browse all programmes &amp; one-off workouts</button>
+      </div>
     </div>
 
     <!-- ACTIVE SESSION -->
     <div class="screen" id="s-active">
       <!-- Session header — scrolls with content (badge + wake lock visible at session start) -->
       <div class="sess-header">
+        <button type="button" class="sess-min-btn" onclick="minimiseSession()" aria-label="Back to Today (your workout keeps running)">← Today</button>
         <div class="day-badge" id="sessBadge">UPPER DAY</div>
         <button type="button" onclick="toggleWakeLock()" id="wakeLockBtn" aria-pressed="false" aria-label="Keep screen on" style="font-family:inherit;font-size:11px;font-weight:700;padding:6px 12px;border-radius:20px;background:var(--surface2);border:0.5px solid var(--border);color:var(--text2);cursor:pointer;white-space:nowrap;">🔒 Auto-lock</button>
       </div>
@@ -845,6 +878,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
     <!-- PROGRESS -->
     <div class="screen" id="s-progress">
       <div class="page-header"><div class="page-title">Progress <span class="ac">Tracker</span></div></div>
+      <div id="progAchCard"></div>
 
       <!-- Sub-tab nav: groups 11 sections into 4 logical buckets so the
            tab is no longer one long scroll of equally-weighted analytics. -->
@@ -1273,9 +1307,9 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
           </div>
           <button onclick="openDataHealth()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🩺 Data health check</button>
           <!-- Path -->
-          <button onclick="openStartTodayFromProfile()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">⚡ Recommend a plan for me</button>
+          <button class="v1-only" onclick="openStartTodayFromProfile()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">⚡ Recommend a plan for me</button>
           <button onclick="openDetailedSetup()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🎚 Fine-tune starting weights</button>
-          <button onclick="openPathWizard()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🎯 Change My Path</button>
+          <button class="v1-only" onclick="openPathWizard()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🎯 Change My Path</button>
           <!-- Reminders -->
           <button id="notifEnableBtn" onclick="requestNotificationPermission()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;margin-bottom:2px;">🔔 Allow reminder alerts</button>
           <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">If a muscle group goes 7+ days untrained, you'll see a reminder when you open or return to Max Gainz. Nothing is sent while the app is closed.</div>
@@ -1286,6 +1320,8 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
           <button id="periodizeBtn" onclick="togglePeriodize()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">🗓 Periodize training: Off</button>
           <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">A rolling 4-week rhythm (build → push → recover) that eases off borderline jumps on recovery weeks.</div>
           <!-- Exercise rotation -->
+          <button id="navV2Btn" onclick="toggleNavV2()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;" aria-pressed="false">🧭 Simplified navigation: Off</button>
+          <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Today · Plan · Progress · Profile, with the workout as a full-screen mode. Switch back any time.</div>
           <button id="rotateExBtn" onclick="toggleRotateExercises()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">🔄 Exercise variety: On</button>
           <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Accessory exercises rotate through fresh variations each time you repeat a workout day. Main lifts never change.</div>
           <!-- Feedback -->
@@ -1340,6 +1376,16 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
       <svg width="22" height="22" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" fill="currentColor"/></svg>
       <div class="nav-label">Gainz</div>
     </div>
+  </nav>
+  <!-- Phase 1 simplified navigation (behind the maxgainz_nav_v2 flag; the
+       original nav above stays in the DOM because many callers use its ids). -->
+  <nav class="nav" id="navV2" aria-label="Main">
+   <div class="nav-v2-list" role="tablist" aria-label="Main sections" onkeydown="_navKey(event)">
+    <button type="button" role="tab" class="nav-item2 active" id="nav2-today" data-tab="today" aria-selected="true" aria-controls="s-today" tabindex="0" onclick="goTab2(this.dataset.tab)"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" fill="currentColor"/></svg><span class="nav-label">Today</span></button>
+    <button type="button" role="tab" class="nav-item2" id="nav2-plan" data-tab="path" aria-selected="false" aria-controls="s-path" tabindex="-1" onclick="goTab2(this.dataset.tab)"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2" stroke="currentColor" stroke-width="2" fill="none"/><path d="M3 9h18M8 2v4M16 2v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span class="nav-label">Plan</span></button>
+    <button type="button" role="tab" class="nav-item2" id="nav2-progress" data-tab="progress" aria-selected="false" aria-controls="s-progress" tabindex="-1" onclick="goTab2(this.dataset.tab)"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l4-5 4 2 4-7 4 3" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg><span class="nav-label">Progress</span></button>
+    <button type="button" role="tab" class="nav-item2" id="nav2-profile" data-tab="profile" aria-selected="false" aria-controls="s-profile" tabindex="-1" onclick="goTab2(this.dataset.tab)"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4" fill="currentColor"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7" fill="currentColor"/></svg><span class="nav-label">Profile</span></button>
+   </div>
   </nav>
 </div>
 
@@ -5767,7 +5813,8 @@ function goTab(tab,el){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('s-'+tab).classList.add('active');
-  el.classList.add('active');
+  if(el) el.classList.add('active');
+  _syncNavV2(tab);
 
   // Reset the actual scroll container to the top on every tab switch.
   // All screens share one .tab-content scroller, so scrollTop persists when
@@ -5781,11 +5828,7 @@ function goTab(tab,el){
 
   // Hide profile button during active session, show otherwise
   const profileBtn = document.getElementById('nav-profile-btn');
-  if(tab === 'active'){
-    profileBtn.style.display = 'none';
-  } else {
-    profileBtn.style.display = 'flex';
-  }
+  if(profileBtn) profileBtn.style.display = (tab === 'active') ? 'none' : 'flex';   // V2 hides it via CSS
 
   if(tab==='progress')renderProgress();
   if(tab==='workout'){renderProgrammeFeed();}
@@ -5793,6 +5836,127 @@ function goTab(tab,el){
   if(tab==='profile')renderProfile();
   if(tab==='path')renderPathTab();
 }
+
+
+// ── Phase 1: simplified navigation (Today · Plan · Progress · Profile) ─────
+// Behind a reversible, device-local flag (maxgainz_nav_v2: '1' on, anything
+// else off). The original six-item nav and every screen stay in the DOM.
+const NAV_V2_KEY = 'maxgainz_nav_v2';
+const NAV_V2_TAB_FOR = { today:'today', path:'path', workout:'path', progress:'progress', game:'progress', profile:'profile', active:null };
+
+// Pure: is the flag on for this stored value?
+function _navV2On(raw){ return raw === '1'; }
+// Pure: which V2 tab lights up for a screen (null = none: full-screen session).
+function _navV2TabFor(tab){ return Object.prototype.hasOwnProperty.call(NAV_V2_TAB_FOR, tab) ? NAV_V2_TAB_FOR[tab] : 'today'; }
+// Pure: roving-tab index after a key (Left/Right wrap, Home/End), or -1.
+function _navKeyIndex(key, idx, n){
+  if(key === 'ArrowRight') return (idx + 1) % n;
+  if(key === 'ArrowLeft') return (idx - 1 + n) % n;
+  if(key === 'Home') return 0;
+  if(key === 'End') return n - 1;
+  return -1;
+}
+
+function isNavV2(){ return document.documentElement.classList.contains('nav-v2'); }
+function _sessionRunning(){ const n = document.getElementById('nav-active'); return !!n && n.style.display !== 'none' && n.style.display !== ''; }
+
+function _syncNavV2(tab){
+  const v2 = isNavV2();
+  const on = _navV2TabFor(tab);
+  document.querySelectorAll('#navV2 [role="tab"]').forEach(b => {
+    const sel = b.dataset.tab === on;
+    b.classList.toggle('active', sel);
+    b.setAttribute('aria-selected', String(sel));
+    b.setAttribute('tabindex', sel || (!on && b.dataset.tab === 'today') ? '0' : '-1');
+  });
+  document.documentElement.classList.toggle('in-session', v2 && tab === 'active');
+  const pill = document.getElementById('resumeSessBtn');
+  if(pill) pill.hidden = !(v2 && tab === 'today' && _sessionRunning());
+  if(v2 && tab === 'progress') renderProgressAchievements();
+  if(typeof _applyNavH === 'function') _applyNavH();   // banners follow whichever nav is showing
+}
+
+// Tab click: route through goTab with the matching original nav element.
+function goTab2(tab){
+  const v1 = { today:'nav-today', path:'nav-path', progress:'nav-progress', profile:'nav-profile-btn' }[tab];
+  if(!v1) return;
+  goTab(tab, document.getElementById(v1));
+}
+
+function _navKey(e){
+  const tabs = [...document.querySelectorAll('#navV2 [role="tab"]')];
+  const idx = tabs.indexOf(document.activeElement);
+  if(idx < 0) return;
+  const next = _navKeyIndex(e.key, idx, tabs.length);
+  if(next < 0) return;
+  e.preventDefault();
+  tabs[next].focus();
+  goTab2(tabs[next].dataset.tab);   // automatic activation
+}
+
+// The control that triggered a screen switch disappears with its screen —
+// hand keyboard/screen-reader focus to the lit tab (or the session's own exit).
+function _focusAfterSwitch(tab){
+  const t = tab === 'active' ? document.querySelector('.sess-min-btn')
+    : document.querySelector('#navV2 [role="tab"][aria-selected="true"]');
+  if(t && t.offsetParent !== null) t.focus({ preventScroll: true });
+}
+function minimiseSession(){ goTab('today', document.getElementById('nav-today')); _focusAfterSwitch('today'); }
+function resumeSession(){ if(_sessionRunning()){ goTab('active', document.getElementById('nav-active')); _focusAfterSwitch('active'); } }
+function openPlanLibrary(){ goTab('workout', document.getElementById('nav-workout')); _focusAfterSwitch('workout'); }
+
+function applyNavMode(){
+  let raw = null;
+  try { raw = localStorage.getItem(NAV_V2_KEY); } catch(e){}
+  const on = _navV2On(raw);
+  document.documentElement.classList.toggle('nav-v2', on);
+  // Screens are tab panels only while the V2 tablist exists.
+  ['today','path','progress','profile'].forEach(k => {
+    const s = document.getElementById('s-' + k);
+    if(!s) return;
+    if(on){ s.setAttribute('role', 'tabpanel'); s.setAttribute('aria-labelledby', 'nav2-' + (k === 'path' ? 'plan' : k)); }
+    else { s.removeAttribute('role'); s.removeAttribute('aria-labelledby'); }
+  });
+  const btn = document.getElementById('navV2Btn');
+  if(btn){ btn.textContent = '🧭 Simplified navigation: ' + (on ? 'On' : 'Off'); btn.setAttribute('aria-pressed', String(on)); }
+  const cur = document.querySelector('.screen.active');
+  _syncNavV2(cur ? cur.id.replace(/^s-/, '') : 'today');
+}
+
+function toggleNavV2(){
+  const on = !isNavV2();
+  try { localStorage.setItem(NAV_V2_KEY, on ? '1' : '0'); } catch(e){}
+  applyNavMode();
+  showToast(on ? '🧭 Simplified navigation on — Today · Plan · Progress · Profile' : '🧭 Classic navigation restored');
+}
+
+// Gainz as an achievements layer inside Progress (V2): rank, XP, next rank,
+// and a link to the full ladder/achievements screen.
+function renderProgressAchievements(){
+  const el = document.getElementById('progAchCard');
+  if(!el) return;
+  if(!isNavV2()){ el.innerHTML = ''; return; }
+  let xp = 0, rank = null, next = null;
+  try { xp = getTotalXP(); rank = getRank(xp); next = RANKS[RANKS.indexOf(rank) + 1]; } catch(e){ el.innerHTML = ''; return; }
+  if(!isFinite(xp) || !rank){ el.innerHTML = ''; return; }
+  const pct = next ? Math.min(100, Math.round(((xp - rank.min) / (next.min - rank.min)) * 100)) : 100;
+  el.innerHTML = `<div class="ach-card">
+      <div class="ach-row">
+        <div style="font-size:30px;" aria-hidden="true">${esc(rank.emoji)}</div>
+        <div style="flex:1;min-width:0;">
+          <div class="more-lbl" style="margin-bottom:2px;">Achievements</div>
+          <div style="font-size:16px;font-weight:900;color:${/^#[0-9a-fA-F]{3,8}$/.test(rank.color) ? rank.color : 'var(--text)'};">${esc(rank.name)} · ${esc(xp.toLocaleString())} XP</div>
+        </div>
+      </div>
+      <div class="ach-bar" role="progressbar" aria-label="Progress to next rank" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span style="width:${pct}%;background:${/^#[0-9a-fA-F]{3,8}$/.test(rank.color) ? rank.color : 'var(--accent)'};"></span></div>
+      <div style="font-size:12px;color:var(--text2);">${next ? esc(pct + '% to ' + next.emoji + ' ' + next.name) : 'Top rank reached'}</div>
+      <button type="button" class="st-secondary" style="margin-top:10px;" onclick="openAchievements()">🏆 View ranks &amp; achievements</button>
+    </div>`;
+}
+function openAchievements(){ goTab('game', document.getElementById('nav-game')); _focusAfterSwitch('game'); }
+
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', applyNavMode);
+else applyNavMode();
 
 function renderTodayToggle(){
   const wrap=document.getElementById('todayToggleWrap');
@@ -15999,6 +16163,8 @@ function _stSaveProfile(rec){
   Object.entries(w).forEach(([ex, wt]) => { if(customWeights[ex] === undefined) customWeights[ex] = wt; });
   applyCustomWeights();
   localStorage.setItem('maxgainz_onboarded', '1');
+  // New users start on the simplified navigation (never overrides a choice).
+  if(!_st.fromProfile){ try { if(localStorage.getItem(NAV_V2_KEY) === null){ localStorage.setItem(NAV_V2_KEY, '1'); applyNavMode(); } } catch(e){} }
   saveLocalCache();
   cloudSaveProfile();   // persists answers + onboarded even if no plan is confirmed afterwards
 }
@@ -26272,17 +26438,18 @@ async function cloudSaveDashboardSummary(opts){
 // padding, font scaling), so the offline / sync / update banners use the
 // measured height (--nav-h) instead of a fixed 68px guess, which let the nav
 // clip the bottom of the banner text on some iPhones.
+// Measures whichever nav is visible (classic or simplified); with no nav on
+// screen (a full-screen session) banners sit on the safe-area edge instead.
+function _applyNavH(){
+  const shown = [...document.querySelectorAll('.nav')].find(n => n.getBoundingClientRect().height > 0);
+  document.documentElement.style.setProperty('--nav-h',
+    shown ? Math.ceil(shown.getBoundingClientRect().height) + 'px' : 'env(safe-area-inset-bottom, 0px)');
+}
 (function(){
-  const nav = document.querySelector('.nav');
-  if(!nav) return;
-  const apply = () => {
-    const h = nav.getBoundingClientRect().height;
-    if(h > 0) document.documentElement.style.setProperty('--nav-h', Math.ceil(h) + 'px');
-  };
-  apply();
-  if(typeof ResizeObserver === 'function') new ResizeObserver(apply).observe(nav);
-  window.addEventListener('resize', apply);
-  window.addEventListener('orientationchange', () => setTimeout(apply, 250));
+  _applyNavH();
+  if(typeof ResizeObserver === 'function'){ const ro = new ResizeObserver(_applyNavH); document.querySelectorAll('.nav').forEach(n => ro.observe(n)); }
+  window.addEventListener('resize', _applyNavH);
+  window.addEventListener('orientationchange', () => setTimeout(_applyNavH, 250));
 })();
 
 // ── OFFLINE / ONLINE DETECTION ──
