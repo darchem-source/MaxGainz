@@ -5873,6 +5873,7 @@ function _syncNavV2(tab){
   const pill = document.getElementById('resumeSessBtn');
   if(pill) pill.hidden = !(v2 && tab === 'today' && _sessionRunning());
   if(v2 && tab === 'progress') renderProgressAchievements();
+  if(typeof _applyNavH === 'function') _applyNavH();   // banners follow whichever nav is showing
 }
 
 // Tab click: route through goTab with the matching original nav element.
@@ -5893,9 +5894,16 @@ function _navKey(e){
   goTab2(tabs[next].dataset.tab);   // automatic activation
 }
 
-function minimiseSession(){ goTab('today', document.getElementById('nav-today')); }
-function resumeSession(){ if(_sessionRunning()) goTab('active', document.getElementById('nav-active')); }
-function openPlanLibrary(){ goTab('workout', document.getElementById('nav-workout')); }
+// The control that triggered a screen switch disappears with its screen —
+// hand keyboard/screen-reader focus to the lit tab (or the session's own exit).
+function _focusAfterSwitch(tab){
+  const t = tab === 'active' ? document.querySelector('.sess-min-btn')
+    : document.querySelector('#navV2 [role="tab"][aria-selected="true"]');
+  if(t && t.offsetParent !== null) t.focus({ preventScroll: true });
+}
+function minimiseSession(){ goTab('today', document.getElementById('nav-today')); _focusAfterSwitch('today'); }
+function resumeSession(){ if(_sessionRunning()){ goTab('active', document.getElementById('nav-active')); _focusAfterSwitch('active'); } }
+function openPlanLibrary(){ goTab('workout', document.getElementById('nav-workout')); _focusAfterSwitch('workout'); }
 
 function applyNavMode(){
   let raw = null;
@@ -5930,6 +5938,7 @@ function renderProgressAchievements(){
   if(!isNavV2()){ el.innerHTML = ''; return; }
   let xp = 0, rank = null, next = null;
   try { xp = getTotalXP(); rank = getRank(xp); next = RANKS[RANKS.indexOf(rank) + 1]; } catch(e){ el.innerHTML = ''; return; }
+  if(!isFinite(xp) || !rank){ el.innerHTML = ''; return; }
   const pct = next ? Math.min(100, Math.round(((xp - rank.min) / (next.min - rank.min)) * 100)) : 100;
   el.innerHTML = `<div class="ach-card">
       <div class="ach-row">
@@ -5944,7 +5953,7 @@ function renderProgressAchievements(){
       <button type="button" class="st-secondary" style="margin-top:10px;" onclick="openAchievements()">🏆 View ranks &amp; achievements</button>
     </div>`;
 }
-function openAchievements(){ goTab('game', document.getElementById('nav-game')); }
+function openAchievements(){ goTab('game', document.getElementById('nav-game')); _focusAfterSwitch('game'); }
 
 if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', applyNavMode);
 else applyNavMode();
@@ -26429,17 +26438,18 @@ async function cloudSaveDashboardSummary(opts){
 // padding, font scaling), so the offline / sync / update banners use the
 // measured height (--nav-h) instead of a fixed 68px guess, which let the nav
 // clip the bottom of the banner text on some iPhones.
+// Measures whichever nav is visible (classic or simplified); with no nav on
+// screen (a full-screen session) banners sit on the safe-area edge instead.
+function _applyNavH(){
+  const shown = [...document.querySelectorAll('.nav')].find(n => n.getBoundingClientRect().height > 0);
+  document.documentElement.style.setProperty('--nav-h',
+    shown ? Math.ceil(shown.getBoundingClientRect().height) + 'px' : 'env(safe-area-inset-bottom, 0px)');
+}
 (function(){
-  const nav = document.querySelector('.nav');
-  if(!nav) return;
-  const apply = () => {
-    const h = nav.getBoundingClientRect().height;
-    if(h > 0) document.documentElement.style.setProperty('--nav-h', Math.ceil(h) + 'px');
-  };
-  apply();
-  if(typeof ResizeObserver === 'function') new ResizeObserver(apply).observe(nav);
-  window.addEventListener('resize', apply);
-  window.addEventListener('orientationchange', () => setTimeout(apply, 250));
+  _applyNavH();
+  if(typeof ResizeObserver === 'function'){ const ro = new ResizeObserver(_applyNavH); document.querySelectorAll('.nav').forEach(n => ro.observe(n)); }
+  window.addEventListener('resize', _applyNavH);
+  window.addEventListener('orientationchange', () => setTimeout(_applyNavH, 250));
 })();
 
 // ── OFFLINE / ONLINE DETECTION ──
