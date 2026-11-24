@@ -6347,9 +6347,16 @@ var _activeSessionOwner = null; // uid that owned the running workout at sign-ou
 function _settleActiveSessionOwner(){
   const owner = _activeSessionOwner;
   _activeSessionOwner = null;
-  if(owner && owner !== getCurrentUserId() && _activeSessionInfo()){
+  if(owner && owner !== getCurrentUserId() && (_activeSessionInfo() || _sessionTabShown())){
     try { _teardownActiveSession(); } catch(e) {}
   }
+}
+
+// Is the Session tab showing (a workout started and not yet closed — including a
+// Finish that failed partway)?
+function _sessionTabShown(){
+  const nav = document.getElementById('nav-active');
+  return !!nav && nav.style.display !== '' && nav.style.display !== 'none';
 }
 
 // Is a workout running? (It lives only in memory until Finish saves it.)
@@ -24559,7 +24566,7 @@ function authLogout(opts){
   // An unfinished workout lives only in memory. Keep it so the SAME account can
   // resume it after signing back in, but remember whose it is: if a different
   // account signs in, _settleActiveSessionOwner() ends it (unsaved).
-  if(typeof _activeSessionInfo === 'function' && _activeSessionInfo()) _activeSessionOwner = getCurrentUserId();
+  if(typeof _sessionTabShown === 'function' && _sessionTabShown()) _activeSessionOwner = getCurrentUserId();
   _reauthMode = false;
   const _rcBtn = document.getElementById('authReauthCancel'); if(_rcBtn) _rcBtn.style.display = 'none';
   _dashDisabled = true; clearTimeout(_dashTimer); _dashTimer = null; // no summary push once sign-out has started
