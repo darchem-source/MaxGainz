@@ -588,6 +588,16 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
 .coach-done{font-size:13px;font-weight:700;color:var(--green);margin:0 0 8px;}
 .coach-why{margin:10px 0 0;padding-left:18px;font-size:12px;color:var(--text2);line-height:1.5;}
 .coach-applied:not([hidden]){display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 0;padding:6px 6px 6px 12px;border-radius:10px;background:rgba(200,255,0,0.08);border:0.5px solid rgba(200,255,0,0.35);font-size:12px;color:var(--text);}
+.btn-nl{flex:0 0 64px;min-height:56px;border-radius:12px;background:var(--surface2);color:var(--text);border:0.5px solid var(--border);font-size:18px;line-height:1.1;cursor:pointer;font-family:inherit;}
+.btn-nl small{display:block;font-size:11px;font-weight:700;color:var(--text2);}
+.nl-row{display:flex;gap:8px;align-items:stretch;}
+.nl-input{flex:1;min-width:0;min-height:48px;background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:0 12px;color:var(--text);font-size:16px;font-family:inherit;}
+.nl-result{margin-top:14px;}
+.nl-ex{font-size:15px;font-weight:800;margin:0 0 6px;color:var(--text);}
+.nl-sets{list-style:none;margin:0 0 8px;padding:0;}
+.nl-sets li{padding:8px 10px;background:var(--surface2);border-radius:10px;margin-bottom:6px;font-size:14px;font-weight:700;color:var(--text);}
+.nl-note{font-size:12px;color:var(--text2);margin:0 0 6px;line-height:1.4;}
+.nl-q{font-size:14px;color:var(--text);margin:0 0 10px;line-height:1.45;}
 </style>
 </head>
 <body>
@@ -815,6 +825,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
         <div class="act-row">
           <button type="button" class="btn-repeat" id="repeatSetBtn" onclick="repeatPrevSet()" style="display:none;"></button>
+          <button type="button" class="btn-nl" id="nlLogBtn" onclick="openNlLog()" aria-label="Type a set" title="Type a set" hidden><span aria-hidden="true">⌨︎</span><small aria-hidden="true">Type</small></button>
           <button class="btn-next" id="nextBtn" onclick="advance()">Log set ✓</button>
         </div>
       </div>
@@ -1742,6 +1753,21 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
       <input type="number" class="rep-custom-inp" id="repCustom" placeholder="Custom #" min="1" max="100" inputmode="numeric" onkeydown="if(event.key==='Enter')confirmReps()">
       <button class="btn-p" id="repLogBtn" style="padding:12px 20px;" onclick="confirmReps()">Log ✓</button>
     </div>
+  </div>
+</div>
+
+<!-- Phase 2: type a set (preview before anything is saved) -->
+<div class="modal-ov" id="nlMod" data-return-fallback="nextBtn" onclick="if(event.target===this)nlCancel()">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h2 id="nlTitle" style="font-size:19px;font-weight:800;margin:0 0 4px;">Type a set</h2>
+    <p id="nlHint" style="font-size:12px;color:var(--text2);margin:0 0 12px;line-height:1.4;">For example “bench 80 for 8, 8, 7 RPE 9”, “3x8 at 60”, or just “12” for the current exercise. Nothing is saved until you check it.</p>
+    <div class="nl-row">
+      <label for="nlInput" class="sr-only">What did you lift?</label>
+      <input id="nlInput" class="nl-input" type="text" maxlength="140" autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="go" aria-describedby="nlHint" onkeydown="if(event.key==='Enter'){event.preventDefault();nlRead();}">
+      <button type="button" class="btn-p" style="padding:12px 18px;" onclick="nlRead()">Check</button>
+    </div>
+    <div id="nlResult" class="nl-result" role="status" aria-live="polite"></div>
   </div>
 </div>
 
@@ -6835,6 +6861,374 @@ function _renderCoachApplied(){
   el.hidden = false;
 }
 
+// ── Phase 2 slice 3: type a set in plain language ──────────────────────────
+// "bench 80 for 8, 8, 7, RPE nine" → a PREVIEW of the parsed sets; nothing is
+// saved until Save. A local grammar handles the common shapes (pure,
+// gate-tested); only text it can't read goes to the AI (with consent), and
+// the AI's answer goes through the same preview. Unknown exercise, unclear
+// unit or too many sets → a question, never a guess. Pain → fixed message.
+// Rollout flag: maxgainz_nl_log (with maxgainz_ai_v1).
+const NL_NUM_WORDS = { zero:0, one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10, eleven:11, twelve:12, thirteen:13, fourteen:14, fifteen:15, sixteen:16, seventeen:17, eighteen:18, nineteen:19, twenty:20, thirty:30, forty:40, fifty:50, sixty:60, seventy:70, eighty:80, ninety:90, hundred:100, dozen:12 };
+const NL_FILLER = ['i', 'did', 'just', 'log', 'logged', 'for', 'at', 'set', 'sets', 'of', 'on', 'the', 'my', 'a', 'an', 'and', 'then', 'reps', 'rep', 'with', 'got', 'x', 'last', 'first', 'next'];
+const NL_ABBR = { db:'dumbbell', bb:'barbell', ohp:'overhead press', rdl:'romanian deadlift', dl:'deadlift', bp:'bench press', pullup:'pull up', pullups:'pull up', chinup:'chin up', chinups:'chin up', lats:'lat', tri:'tricep', tris:'tricep', bi:'bicep', bis:'bicep' };
+const NL_LB_TO_KG = 0.45359237;
+
+// Pure: lower-case, Unicode digits → ASCII, number words → digits (except
+// "one arm/leg"), separators spaced. Exercise words are kept as words.
+function _nlNormalize(text){
+  const T = { twenty:20, thirty:30, forty:40, fifty:50, sixty:60, seventy:70, eighty:80, ninety:90 };
+  let s = String(text == null ? '' : text).normalize('NFKC').toLowerCase()
+    .replace(/[×*]/g, ' x ').replace(/[–—]/g, '-').replace(/@/g, ' @ ').replace(/[;:]/g, ' , ');
+  s = s.replace(/\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[-\s]+(one|two|three|four|five|six|seven|eight|nine)\b/g, (a, t, u) => String(T[t] + NL_NUM_WORDS[u]));
+  s = s.replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|dozen)\b(?![-\s]*(arm|leg|hand|handed|legged|armed)\b)/g, w => String(NL_NUM_WORDS[w]));
+  s = s.replace(/(\d)\s*x\s*(?=\d)/g, '$1 x ').replace(/(\d)(kgs?|kilos?|lbs?)\b/g, '$1 $2').replace(/,/g, ' , ').replace(/\bat\b/g, ' @ ');
+  return s.replace(/\s+/g, ' ').trim();
+}
+// Pure: which session exercise the words name. {idx} | {many:[idx]} | {none:true}.
+function _nlMatchExercise(words, exercises){
+  const want = [];
+  (words || []).forEach(w => {
+    if(NL_FILLER.indexOf(w) !== -1) return;
+    String(NL_ABBR[w] || w).split(' ').forEach(x => { if(x.length >= 2) want.push(x); });
+  });
+  if(!want.length) return { idx:null };
+  const toks = n => String(n || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const hit1 = (w, t) => t.indexOf(w) === 0 || (t.length >= 4 && w.indexOf(t) === 0);
+  const hit = (w, t) => hit1(w, t) || (w.length >= 3 && /s$/.test(w) && hit1(w.slice(0, -1), t));
+  const matches = (exercises || []).filter(e => [e.name].concat(e.aliases || []).some(n => {
+    const tt = toks(n);
+    return want.every(w => tt.some(t => hit(w, t)));
+  })).map(e => e.idx);
+  if(matches.length === 1) return { idx:matches[0] };
+  if(!matches.length) return { none:true };
+  const exact = (exercises || []).filter(e => matches.indexOf(e.idx) !== -1 && toks(e.name).join(' ') === want.join(' '));
+  if(exact.length === 1) return { idx:exact[0].idx };
+  return { many:matches };
+}
+// Pure: the numbers part → {w, wGiven, bwPlus, reps[], rpe, unit} or null.
+function _nlReadNumbers(rest){
+  let r = ' ' + rest + ' ';
+  let unit = null, rpe = null, bw = false;
+  if(/\s(lbs?|pounds?)\s/.test(r)) unit = 'lb';
+  if(/\s(kgs?|kilos?|kilograms?)\s/.test(r)) unit = unit ? 'both' : 'kg';
+  r = r.replace(/\s(lbs?|pounds?|kgs?|kilos?|kilograms?)(?=\s)/g, ' ');
+  const rm = r.match(/\s@?\s*rpe\s*,?\s*(\d+(?:\.\d+)?)\s/);
+  if(rm){ rpe = parseFloat(rm[1]); r = r.replace(rm[0], ' '); }
+  if(/\s(bw|bodyweight|body weight)\s/.test(r)){ bw = true; r = r.replace(/\s(bw|bodyweight|body weight)(?=\s)/g, ' '); }
+  r = r.replace(/\s(reps?|and|then|for the|sets? done)(?=\s)/g, ' ').replace(/\s+/g, ' ').replace(/(\s,)+\s*$/, ' ').replace(/^\s*,/, ' ').trim();
+  const num = '(\\+?\\d+(?:\\.\\d+)?)', list = '(\\d+(?:\\s?,?\\s?\\d+)*)';
+  const L = s => s.split(/[\s,]+/).filter(Boolean).map(Number);
+  let m, w = null, reps = null, sets = null, wGiven = false, shapeAB = null;
+  if((m = r.match(new RegExp('^' + num + ' for ' + list + '$')))){ w = m[1]; reps = L(m[2]); }
+  else if((m = r.match(/^(\d+) sets? of (\d+)(?: @ (\+?\d+(?:\.\d+)?))?$/))){ sets = +m[1]; reps = [+m[2]]; w = m[3] || null; }
+  else if((m = r.match(/^(\d+) x (\d+) @ (\+?\d+(?:\.\d+)?)$/))){ sets = +m[1]; reps = [+m[2]]; w = m[3]; }
+  else if((m = r.match(new RegExp('^' + num + ' x (\\d+)(?: x (\\d+))?$')))){ w = m[1]; reps = [+m[2]]; sets = m[3] ? +m[3] : null; if(!m[3] && !/^\+/.test(m[1])) shapeAB = [parseFloat(m[1]), +m[2]]; }
+  else if((m = r.match(new RegExp('^' + list + ' @ ' + num + '$')))){ reps = L(m[1]); w = m[2]; }
+  else if((m = r.match(new RegExp('^' + list + '$')))){
+    reps = L(m[1]);
+    // "80 8" is ambiguous (weight + reps? two sets?) — only commas or small numbers count as a rep list.
+    if(reps.some(x => x > 30)) return null;   // "bench 100", "62,5", "80, 8": not reps — let AI/a question handle it
+  }
+  else if(bw && (m = r.match(new RegExp('^' + num + ' ' + list + '$'))) && /^\+/.test(m[1])){ w = m[1]; reps = L(m[2]); }
+  else return null;
+  if(w !== null){ wGiven = true; }
+  const bwPlus = w !== null && /^\+/.test(String(w));
+  w = w === null ? null : parseFloat(w);
+  if(sets !== null){ if(sets < 1 || sets > 10) return { bad:'sets' }; reps = Array(sets).fill(reps[0]); }
+  return { w, wGiven, bwPlus, bw: bw || bwPlus, reps, rpe, unit, shapeAB };
+}
+// Pure: the whole parse. ctx = {exercises:[{idx,name,aliases,bw,sets,done,weight,steps}], curIdx, lastRepeat:{w,r}|null}
+// opts = {forceIdx, forceUnit:'kg'|'lb', countMode:'trim'|'add'}.
+function _nlParse(text, ctx, opts){
+  const o = opts || {}, C = ctx || {};
+  const raw = String(text == null ? '' : text).trim();
+  if(!raw) return { status:'empty' };
+  if(raw.length > 140) return { status:'clarify', kind:'length', question:'That\'s a lot — log one exercise at a time.' };
+  if(_aiMentionsPain(raw)) return { status:'pain' };
+  const s = _nlNormalize(raw);
+  const toks = s.split(' ');
+  let cut = toks.findIndex(t => /^\+?\d/.test(t) || ['bw', 'bodyweight', 'same', 'again', 'repeat'].indexOf(t) !== -1 || t === 'body');
+  if(cut < 0) return { status:'unparsed' };          // no numbers at all: not a set the grammar can read
+  const exs = C.exercises || [];
+  let idx;
+  if(typeof o.forceIdx === 'number') idx = o.forceIdx;
+  else {
+    const m = _nlMatchExercise(toks.slice(0, cut), exs);
+    if(m.none) return { status:'clarify', kind:'exercise', question:'Which exercise was that?', choices: exs.map(e => e.idx) };
+    if(m.many) return { status:'clarify', kind:'exercise', question:'Which one did you mean?', choices: m.many };
+    idx = m.idx === null ? C.curIdx : m.idx;
+  }
+  const ex = exs.find(e => e.idx === idx);
+  if(!ex) return { status:'clarify', kind:'exercise', question:'Which exercise was that?', choices: exs.map(e => e.idx) };
+  const rest = toks.slice(cut).join(' ').replace(/^,\s*/, '');
+  if(/^(same( again)?|again|repeat)( please)?$/.test(rest)){
+    if(!C.lastRepeat || idx !== C.curIdx) return { status:'clarify', kind:'repeat', question:'Nothing to repeat yet for that exercise — type the weight and reps.' };
+    return _nlBuild(ex, [{ w:C.lastRepeat.w, r:C.lastRepeat.r, rpe:null }], { notes:['Same as your previous set.'] }, o);
+  }
+  if(!rest) return { status:'unparsed' };
+  const n = _nlReadNumbers(rest);
+  if(!n) return { status:'unparsed' };
+  if(n.bad) return { status:'clarify', kind:'range', question:'Up to 10 sets at a time, please.' };
+  if(n.unit === 'both' && !o.forceUnit) return { status:'clarify', kind:'unit', question:'Was that kg or lb?' };
+  // "3x8" / "5x5": sets × reps, or weight × reps? Ask unless the numbers make it obvious.
+  if(n.shapeAB && !o.shape && n.shapeAB[0] >= 1 && n.shapeAB[0] <= 10 && n.shapeAB[1] <= 30 && (ex.bw || !(Number(ex.weight) > 0) || n.shapeAB[0] < Number(ex.weight) * 0.4))
+    return { status:'clarify', kind:'shape', question:'Did you mean ' + n.shapeAB[0] + ' sets of ' + n.shapeAB[1] + ', or ' + n.shapeAB[0] + ' kg × ' + n.shapeAB[1] + '?', a:n.shapeAB[0], b:n.shapeAB[1] };
+  if(n.shapeAB && o.shape === 'sets'){ n.reps = Array(Math.min(10, n.shapeAB[0])).fill(n.shapeAB[1]); n.w = null; n.wGiven = false; }
+  if(!n.reps || !n.reps.length || n.reps.some(r => !(Number.isInteger(r) && r >= 1 && r <= 100))) return { status:'clarify', kind:'range', question:'Reps should be whole numbers from 1 to 100.' };
+  if(n.reps.length > 10) return { status:'clarify', kind:'range', question:'Up to 10 sets at a time, please.' };
+  if(n.rpe !== null && !(n.rpe >= 1 && n.rpe <= 10 && Math.round(n.rpe * 2) === n.rpe * 2)) return { status:'clarify', kind:'range', question:'RPE goes from 1 to 10 in half steps.' };
+  const notes = [];
+  let unit = o.forceUnit || n.unit || 'kg';
+  let w;
+  if(ex.bw){
+    w = n.wGiven ? n.w : (Number(ex.weight) || 0);
+    if(!n.wGiven && w > 0) notes.push('Using today\'s BW +' + w + ' kg.');
+    if(n.wGiven && !n.bwPlus && !n.bw && n.w > 0) return { status:'clarify', kind:'bw', question:ex.name + ' is bodyweight — type “+' + n.w + ' for …” for added weight.' };
+  } else if(n.wGiven){
+    w = n.w;
+    if(n.bwPlus) return { status:'unparsed' };
+    if(!(w > 0)) return { status:'clarify', kind:'range', question:'0 kg? Type the weight you lifted.' };
+    if(!n.unit && !o.forceUnit && !o.shape && Number(ex.weight) > 0 && w < Number(ex.weight) * 0.4)
+      return { status:'clarify', kind:'low', question:'Is ' + w + ' kg right? Today\'s weight is ' + ex.weight + ' kg.' };
+  } else {
+    w = Number(ex.weight) || 0;
+    unit = 'kg';
+    notes.push('Weight not given — using today\'s ' + w + ' kg.');
+  }
+  // Unit sanity: a kg number far above last time is probably lb (ask, don't guess).
+  if(!ex.bw && n.wGiven && !n.unit && !o.forceUnit && Number(ex.weight) > 0 && w > Number(ex.weight) * 1.8)
+    return { status:'clarify', kind:'unit', question:'Is ' + w + ' kg right? Today\'s weight is ' + ex.weight + ' kg.', unitW:w };
+  if(unit === 'lb' && w > 0){
+    const kg = Math.round(w * NL_LB_TO_KG * 10) / 10;
+    const snapped = (Array.isArray(ex.steps) && ex.steps.length) ? snapToSteps(kg, ex.steps) : kg;
+    notes.push(w + ' lb = ' + kg + ' kg' + (snapped !== kg ? ', rounded to ' + snapped + ' kg' : '') + '.');
+    w = snapped;
+  }
+  if(!(w >= 0 && w <= 500)) return { status:'clarify', kind:'range', question:'That weight looks off — please check it.' };
+  // D4: one RPE for several sets applies to the LAST set (shown; editable by retyping).
+  const sets = n.reps.map((r, i) => ({ w, r, rpe: (n.rpe !== null && i === n.reps.length - 1) ? n.rpe : null }));
+  if(n.rpe !== null && sets.length > 1) notes.push('RPE ' + n.rpe + ' is put on the last set.');
+  return _nlBuild(ex, sets, { notes }, o);
+}
+// Pure: assign open set slots; too many sets → a question unless opts.countMode says.
+function _nlBuild(ex, sets, extra, opts){
+  const o = opts || {};
+  const done = Array.isArray(ex.done) ? ex.done : [];
+  const open = [];
+  for(let i = 0; i < (Number(ex.sets) || 0); i++) if(done.indexOf(i) === -1) open.push(i);
+  let addSets = 0, list = sets.slice();
+  if(ex.superset && list.length > 1) return { status:'clarify', kind:'superset', question: ex.name + ' is in a superset — log one set at a time so each round moves on correctly.' };
+  if(list.length > open.length){
+    const room = Math.max(0, 10 - (Number(ex.sets) || 0));
+    if(o.countMode === 'trim') list = list.slice(0, open.length);
+    else if(o.countMode === 'add' && list.length - open.length <= room) addSets = list.length - open.length;
+    else return { status:'clarify', kind:'count', question: ex.name + ' has ' + open.length + ' set' + (open.length === 1 ? '' : 's') + ' left and you typed ' + list.length + '.', left: open.length, extra: list.length - open.length, canAdd: list.length - open.length <= room };
+  }
+  if(!list.length) return { status:'clarify', kind:'count', question: ex.name + ' is already done.', left:0, extra:0, canAdd:false };
+  const slots = open.slice();
+  for(let k = 0; k < addSets; k++) slots.push((Number(ex.sets) || 0) + k);
+  return { status:'ok', exIdx: ex.idx, exName: ex.name, addSets, sets: list.map((x, i) => ({ setIdx: slots[i], w:x.w, r:x.r, rpe:x.rpe })), notes: (extra && extra.notes) || [] };
+}
+// Pure: replace every user-made exercise name (case-insensitive) with its
+// "Exercise N" placeholder before text goes to the AI. pairs = [{ph, real}].
+function _nlMaskNames(text, pairs){
+  let s = String(text == null ? '' : text);
+  (pairs || []).filter(x => x && /^Exercise \d+$/.test(x.ph) && x.real).sort((a, b) => b.real.length - a.real.length).forEach(x => {
+    s = s.replace(new RegExp(x.real.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), x.ph);
+  });
+  return s;
+}
+// Pure: an AI answer (validated by _aiCheckOutput) → the same preview shape.
+function _nlFromAi(out, ctx, idMap, opts){
+  if(!out || !Array.isArray(out.sets)) return { status:'unparsed' };
+  if(!out.sets.length) return { status:'clarify', kind:'ai', question: String(out.clarify || 'Could you rephrase that?') };
+  const ids = out.sets.map(s => s.ex).filter((v, i, a) => a.indexOf(v) === i);
+  if(ids.length !== 1) return { status:'clarify', kind:'ai', question:'Please log one exercise at a time.' };
+  const idx = idMap[ids[0]];
+  const ex = ((ctx && ctx.exercises) || []).find(e => e.idx === idx);
+  if(!ex) return { status:'unparsed' };
+  const notes = ['Read by AI — check it before saving.'];
+  const sets = out.sets.map(s => {
+    let w = s.weight === null ? (Number(ex.weight) || 0) : s.weight;
+    if(s.unit === 'lb' && w > 0){ const kg = Math.round(w * NL_LB_TO_KG * 10) / 10; w = (Array.isArray(ex.steps) && ex.steps.length) ? snapToSteps(kg, ex.steps) : kg; }
+    return { w, r: s.reps, rpe: s.rpe };
+  });
+  if(out.sets.some(s => s.weight === null)) notes.push('Weight not given — using today\'s ' + (Number(ex.weight) || 0) + ' kg.');
+  if(out.sets.some(s => s.unit === 'lb')) notes.push('Converted from lb.');
+  const b = _nlBuild(ex, sets, { notes }, opts || {});
+  return b.status === 'ok' ? Object.assign(b, { source:'ai' }) : b;
+}
+
+// ── glue (session state + dialog) ──
+var _nlState = null;
+let _nlKnownNames = null;
+// Names from the app's own catalogue/programmes may be sent; anything the user
+// typed themselves goes as "Exercise N".
+function _nlIsCatalogueName(name){
+  if(!_nlKnownNames){
+    _nlKnownNames = new Set();
+    try {
+      (EXDB || []).forEach(e => e && e.name && _nlKnownNames.add(e.name));
+      [ULF, PPL, ULF_VARIANTS].forEach(t => Object.keys(t || {}).forEach(k => {
+        const v = t[k]; (Array.isArray(v) ? v : Object.values(v || {})).forEach(x => (Array.isArray(x) ? x : [x]).forEach(e => e && e.name && _nlKnownNames.add(e.name)));
+      }));
+      (LIBRARY_PROGRAMMES || []).forEach(p => (p.schedule || []).forEach(d => (d.exercises || []).forEach(e => e && e.name && _nlKnownNames.add(e.name))));
+    } catch(e){}
+  }
+  return _nlKnownNames.has(name);
+}
+function _nlLoggable(e){ return !!e && !e.duration && !isCoreCircuit(e) && !isTimedExercise(e); }
+function _nlCtx(){
+  const exercises = [];
+  (sessExs || []).forEach((e, i) => {
+    if(!_nlLoggable(e)) return;
+    exercises.push({ idx:i, name:e.name, aliases:_exerciseLookupNames(e.name).slice(1), bw:!!e.bw, sets:e.sets, superset:!!supersets[i],
+      done:(setsDone[i] || []).slice(), weight:e.weight, steps:getWeightSteps(e, equipOverride[i]) });
+  });
+  const rc = _repeatCandidate();
+  return { exercises, curIdx, lastRepeat: rc ? { w:rc.w, r:rc.r } : null };
+}
+function _nlUpdBtn(){
+  const b = document.getElementById('nlLogBtn');
+  if(!b) return;
+  b.hidden = !(_aiFlagOn('nl') && !hiitState && Array.isArray(sessExs) && sessExs.length && _nlLoggable(sessExs[curIdx]));
+}
+function openNlLog(){
+  if(!_aiFlagOn('nl')) return;
+  _nlState = { text:'', parse:null, opts:{}, auditId:null, idMap:null, baseSets:null };
+  const inp = document.getElementById('nlInput');
+  if(inp) inp.value = '';
+  _nlRender();
+  document.getElementById('nlMod').classList.add('open');
+  setTimeout(() => { const i = document.getElementById('nlInput'); if(i) i.focus(); }, 60);
+}
+async function nlRead(){
+  if(!_nlState) return;
+  const inp = document.getElementById('nlInput');
+  const text = inp ? String(inp.value || '').slice(0, 140) : '';
+  if(_nlState.parse && _nlState.parse.status === 'reading' && text === _nlState.text) return;   // already asking
+  if(_nlState.parse && _nlState.text && text !== _nlState.text){ _aiMetricBump('nl_edited'); if(_nlState.auditId) _aiAuditEvent(_nlState.auditId, 'edited'); }
+  _nlState.text = text; _nlState.opts = {}; _nlState.auditId = null; _nlState.idMap = null; _nlState.aiOut = null;
+  const ctx = _nlCtx();
+  let p = _nlParse(text, ctx, {});
+  if(p.status === 'unparsed'){
+    _nlState.parse = { status:'reading' }; _nlRender();
+    const idMap = {}, list = ctx.exercises.slice(0, 20).map((e, k) => {
+      const id = 'E' + (k + 1); idMap[id] = e.idx;
+      return { id, name: _nlIsCatalogueName(e.name) && /^[A-Za-z0-9 ()'&+.,\/–-]{1,60}$/.test(e.name) ? e.name : 'Exercise ' + (k + 1) };
+    });
+    // Names the user made up are swapped for their placeholder in the text too.
+    const sendText = _nlMaskNames(text, list.map(x => ({ ph: x.name, real: sessExs[idMap[x.id]] && sessExs[idMap[x.id]].name })));
+    const r = await _aiCall('nl', { text: sendText.slice(0, 140), exercises:list, unit:'kg' }, 'nl');
+    if(!_nlState || _nlState.text !== text) return;            // user moved on
+    _nlState.auditId = r.auditId || null; _nlState.idMap = idMap;
+    _nlState.aiOut = r.ok ? r.out : null;
+    p = r.ok ? _nlFromAi(r.out, _nlCtx(), idMap, {}) : { status:'unparsed', aiReason:r.reason };
+    _aiMetricBump(p.status === 'ok' ? 'nl_ai_ok' : p.status === 'clarify' ? 'nl_clarify' : 'nl_unparsed');
+  } else {
+    _aiMetricBump(p.status === 'ok' ? 'nl_local_ok' : p.status === 'pain' ? 'nl_pain' : p.status === 'clarify' ? 'nl_clarify' : 'nl_unparsed');
+  }
+  _nlState.parse = p;
+  _nlState.baseSets = p.status === 'ok' && sessExs[p.exIdx] ? sessExs[p.exIdx].sets : null;
+  _nlRender();
+}
+function _nlReparse(opts){
+  if(!_nlState) return;
+  _nlState.opts = Object.assign({}, _nlState.opts, opts);
+  const p = _nlState.aiOut ? _nlFromAi(_nlState.aiOut, _nlCtx(), _nlState.idMap, _nlState.opts) : _nlParse(_nlState.text, _nlCtx(), _nlState.opts);
+  _nlState.parse = p;
+  _nlState.baseSets = p.status === 'ok' && sessExs[p.exIdx] ? sessExs[p.exIdx].sets : null;
+  _nlRender();
+  const f = document.querySelector('#nlResult button'); if(f) f.focus();   // keep keyboard focus in the dialog
+}
+function nlChoose(k){
+  const p = _nlState && _nlState.parse;
+  if(!p || !Array.isArray(p.choices) || typeof p.choices[k] !== 'number') return;
+  _nlReparse({ forceIdx: p.choices[k] });
+}
+function nlUnit(u){ if(u === 'kg' || u === 'lb') _nlReparse({ forceUnit:u }); }
+function nlCount(mode){ if(mode === 'trim' || mode === 'add') _nlReparse({ countMode:mode }); }
+function nlShape(s){ if(s === 'sets' || s === 'weight') _nlReparse({ shape:s }); }
+function nlEdit(){ const i = document.getElementById('nlInput'); if(i){ i.focus(); i.select(); } }
+function nlCancel(){
+  if(_nlState && _nlState.parse && _nlState.parse.status === 'ok'){ _aiMetricBump('nl_cancelled'); if(_nlState.auditId) _aiAuditEvent(_nlState.auditId, 'cancelled'); }
+  _nlState = null;
+  closeDialog('nlMod');
+}
+// The ONLY place a typed set is saved — after the preview, on Save.
+function nlSave(){
+  const p = _nlState && _nlState.parse;
+  if(!p || p.status !== 'ok') return;
+  const ex = sessExs[p.exIdx];
+  const stale = !ex || ex.name !== p.exName || ex.sets !== _nlState.baseSets
+    || p.sets.some(s => (setsDone[p.exIdx] || []).indexOf(s.setIdx) !== -1);
+  if(stale){ _nlState.parse = { status:'clarify', kind:'stale', question:'Something changed in your session — check it again.' }; _nlRender(); return; }
+  if(curIdx !== p.exIdx){ curIdx = p.exIdx; updateSessUI(); }
+  const ei = p.exIdx;
+  for(let k = 0; k < p.addSets; k++) addSett();
+  p.sets.forEach(s => {
+    if(curIdx !== ei){ curIdx = ei; updateSessUI(); }   // markSet can route to a superset partner
+    if(!repsLogged[curIdx]) repsLogged[curIdx] = {};
+    if(!setWeights[curIdx]) setWeights[curIdx] = {};
+    if(!rpeLogged[curIdx]) rpeLogged[curIdx] = {};
+    repsLogged[curIdx][s.setIdx] = s.r;
+    setWeights[curIdx][s.setIdx] = ex.bw ? s.w : (s.w || ex.weight || 0);
+    if(s.rpe != null) rpeLogged[curIdx][s.setIdx] = s.rpe; else delete rpeLogged[curIdx][s.setIdx];
+    _checkSetPR(curIdx, setWeights[curIdx][s.setIdx]);
+    const restIsRunning = (restSec > 0) || (typeof restStartTime !== 'undefined' && restStartTime !== null);
+    if(restIsRunning) stopRest();
+    window._restStoppedManually = false;
+    markSet(s.setIdx);
+  });
+  _aiMetricBump('nl_confirmed');
+  if(_nlState.auditId) _aiAuditEvent(_nlState.auditId, 'confirmed');
+  const n = p.sets.length;
+  _nlState = null;
+  closeDialog('nlMod');
+  showToast('✅ Logged ' + n + ' set' + (n === 1 ? '' : 's') + ' — tap a set to change it');
+}
+function _nlSetLine(s, bw){
+  const w = bw ? (s.w > 0 ? 'BW +' + s.w + ' kg' : 'Bodyweight') : s.w + ' kg';
+  return 'Set ' + (s.setIdx + 1) + ' · ' + w + ' × ' + s.r + (s.rpe != null ? ' · RPE ' + s.rpe : '');
+}
+function _nlRender(){
+  const el = document.getElementById('nlResult');
+  if(!el) return;
+  const p = _nlState && _nlState.parse;
+  el.removeAttribute('aria-busy');
+  if(!p){ el.innerHTML = ''; return; }
+  const btn = (label, fn, primary) => `<button type="button" class="coach-btn${primary ? ' coach-primary' : ''}" onclick="${fn}">${esc(label)}</button>`;
+  if(p.status === 'reading'){ el.setAttribute('aria-busy', 'true'); el.innerHTML = '<p class="nl-note">Reading…</p>'; return; }
+  if(p.status === 'empty'){ el.innerHTML = '<p class="nl-note">Type what you lifted first.</p>'; return; }
+  if(p.status === 'pain'){
+    el.innerHTML = `<p class="nl-q">${esc(COACH_PAIN_TEXT)}</p><p class="nl-note">Nothing was saved. To log the numbers, type them without the note.</p>
+      <div class="coach-actions">${btn('Edit', 'nlEdit()')}${btn('Close', 'nlCancel()')}</div>`;
+    return;
+  }
+  if(p.status === 'unparsed'){
+    const why = p.aiReason === 'off' ? ' (AI reading is off in Profile.)' : p.aiReason === 'offline' ? ' (You\'re offline.)' : '';
+    el.innerHTML = `<p class="nl-q">I couldn't read that${esc(why)}. Try “80 x 8”, “bench 80 for 8, 8, 7” or “3x8 at 60”.</p>
+      <div class="coach-actions">${btn('Edit', 'nlEdit()')}${btn('Cancel', 'nlCancel()')}</div>`;
+    return;
+  }
+  if(p.status === 'clarify'){
+    let choices = '';
+    if(p.kind === 'exercise' && Array.isArray(p.choices)) choices = p.choices.map((ix, k) => sessExs[ix] ? btn(sessExs[ix].name, 'nlChoose(' + k + ')') : '').join('');
+    else if(p.kind === 'unit') choices = btn('kg', "nlUnit('kg')") + btn('lb', "nlUnit('lb')");
+    else if(p.kind === 'shape') choices = btn(p.a + ' sets of ' + p.b, "nlShape('sets')") + btn(p.a + ' kg × ' + p.b, "nlShape('weight')");
+    else if(p.kind === 'count' && p.left > 0) choices = btn('Log the first ' + p.left, "nlCount('trim')") + (p.canAdd ? btn('Add ' + p.extra + ' set' + (p.extra === 1 ? '' : 's'), "nlCount('add')") : '');
+    el.innerHTML = `<p class="nl-q">${esc(p.question)}</p><div class="coach-actions">${choices}${btn('Edit', 'nlEdit()')}${btn('Cancel', 'nlCancel()')}</div>`;
+    return;
+  }
+  const ex = sessExs[p.exIdx];
+  const rows = p.sets.map(s => `<li>${esc(_nlSetLine(s, ex && ex.bw))}</li>`).join('');
+  const notes = (p.notes || []).concat(p.addSets ? ['Adds ' + p.addSets + ' set' + (p.addSets === 1 ? '' : 's') + ' to ' + p.exName + '.'] : [])
+    .map(n => `<p class="nl-note">${esc(n)}</p>`).join('');
+  el.innerHTML = `<p class="nl-ex">${esc(p.exName)}${p.exIdx !== curIdx ? ' <span class="nl-note">(switches to this exercise)</span>' : ''}</p>
+    <ul class="nl-sets">${rows}</ul>${notes}
+    <div class="coach-actions">${btn('Save ' + p.sets.length + ' set' + (p.sets.length === 1 ? '' : 's'), 'nlSave()', true)}${btn('Edit', 'nlEdit()')}${btn('Cancel', 'nlCancel()')}</div>`;
+}
+
 // ── Phase 1: simplified navigation (Today · Plan · Progress · Profile) ─────
 // Behind a reversible, device-local flag (maxgainz_nav_v2: '1' on, anything
 // else off). The original six-item nav and every screen stay in the DOM.
@@ -10839,6 +11233,7 @@ function _repeatCandidate(){
 }
 
 function _updRepeatBtn(){
+  if(typeof _nlUpdBtn === 'function') _nlUpdBtn();
   const b = document.getElementById('repeatSetBtn');
   const ex = sessExs[curIdx];
   if(!b) return;
@@ -26942,6 +27337,7 @@ function authLogout(opts){
   localStorage.removeItem(AI_CACHE_KEY);
   localStorage.removeItem(AI_CONSENT_SYNC_KEY);
   localStorage.removeItem(COACH_ACCEPT_KEY);
+  _nlState = null;
   // Pending-sync queue + sync markers belong to this account: drop them so the
   // next account can never upload (or be shown) the previous one's changes.
   _pending = null; clearTimeout(_syncRetryTimer); _syncRetryTimer = null; _syncBackoff = 0;
