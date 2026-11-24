@@ -2357,36 +2357,112 @@ def gate_start_today(html, js):
     return ok_all
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gate 13 — Phase 1 simplified navigation (flagged, reversible)
+# ─────────────────────────────────────────────────────────────────────────────
+NAV_ASSERTIONS = r"""
+var fails = [];
+function eq(label, got, want){ if(JSON.stringify(got)!==JSON.stringify(want)) fails.push(label+' — got '+JSON.stringify(got)+', want '+JSON.stringify(want)); }
+eq('flag off when never set', _navV2On(null), false);
+eq('flag off for "0"', _navV2On('0'), false);
+eq('flag on only for "1"', _navV2On('1'), true);
+eq('screens map to the 4 tabs', ['today','path','workout','progress','game','profile'].map(_navV2TabFor), ['today','path','path','progress','progress','profile']);
+eq('session lights no tab (full-screen mode)', _navV2TabFor('active'), null);
+eq('unknown screen falls back to Today', _navV2TabFor('nope'), 'today');
+eq('Right wraps', _navKeyIndex('ArrowRight', 3, 4), 0);
+eq('Left wraps', _navKeyIndex('ArrowLeft', 0, 4), 3);
+eq('Home/End', [_navKeyIndex('Home', 2, 4), _navKeyIndex('End', 0, 4)], [0, 3]);
+eq('other keys ignored', _navKeyIndex('Tab', 1, 4), -1);
+JSON.stringify(fails);
+"""
+
+def gate_nav_v2(html, js):
+    ok_all = True
+    pieces = [extract_const_line(js, 'NAV_V2_TAB_FOR')]
+    for fn in ['_navV2On', '_navV2TabFor', '_navKeyIndex']:
+        pieces.append(extract_decl(js, fn))
+    if not all(pieces):
+        print('  ✗ could not extract the nav helpers'); return False
+    out, _ = run_jxa('\n'.join(pieces) + '\n' + NAV_ASSERTIONS)
+    try:
+        fails = json.loads(out)
+    except Exception:
+        fails = ['nav runner errored: ' + out[:300]]
+    for f in fails: print('  ✗ ' + f)
+    if fails: ok_all = False
+    else: print('  ✓ flag defaults off; screens map to Today/Plan/Progress/Profile; session is full-screen; arrow keys wrap')
+
+    lint = []
+    m = re.search(r'<nav class="nav" id="navV2"[\s\S]*?</nav>', html)
+    nav = m.group(0) if m else ''
+    if not nav: lint.append('#navV2 markup missing')
+    if 'role="tablist"' not in nav or '_navKey(event)' not in nav:
+        lint.append('#navV2 is not a keyboard tablist')
+    tabs = re.findall(r'<button[^>]*role="tab"[^>]*>', nav)
+    if len(tabs) != 4: lint.append(f'#navV2 has {len(tabs)} tabs, want 4 (Today, Plan, Progress, Profile)')
+    for tg in tabs:
+        for attr in ['aria-selected=', 'aria-controls="s-', 'tabindex=', 'onclick="goTab2(this.dataset.tab)"']:
+            if attr not in tg: lint.append(f'tab lacks {attr}: {tg[:70]}')
+    for old in ['nav-today', 'nav-path', 'nav-active', 'nav-workout', 'nav-progress', 'nav-game', 'nav-profile-btn']:
+        if f'id="{old}"' not in html: lint.append(f'original nav element #{old} was removed (callers depend on it)')
+    gt = extract_decl(js, 'goTab') or ''
+    if 'if(el) el.classList.add' not in gt: lint.append('goTab still throws when called without a nav element')
+    if '_syncNavV2(tab)' not in gt: lint.append('goTab does not keep the simplified nav in sync')
+    sy = extract_decl(js, '_syncNavV2') or ''
+    for need in ["setAttribute('aria-selected'", "'in-session'", 'resumeSessBtn']:
+        if need not in sy: lint.append(f'_syncNavV2 does not handle {need}')
+    css = html
+    for rule in [r'html\.nav-v2 \.nav:not\(#navV2\)\s*\{\s*display:none', r'html\.nav-v2\.in-session #navV2\s*\{\s*display:none',
+                 r'html\.nav-v2 \.v1-only\s*\{\s*display:none', r'html\.nav-v2 #nav-profile-btn\s*\{\s*display:none']:
+        if not re.search(rule, css): lint.append(f'missing CSS rule /{rule}/')
+    if len(re.findall(r'class="v1-only" onclick="(?:openPathWizard|openStartTodayFromProfile)\(\)"', html)) != 2:
+        lint.append('Profile still offers programme changes under the simplified nav (Plan should be the one place)')
+    if 'id="navV2Btn"' not in html or 'toggleNavV2' not in (extract_decl(js, 'toggleNavV2') and 'toggleNavV2' or ''):
+        lint.append('no reversible toggle for the simplified nav in Profile')
+    sv = extract_decl(js, '_stSaveProfile') or ''
+    if 'getItem(NAV_V2_KEY) === null' not in sv:
+        lint.append('Start today may override an existing navigation choice')
+    if lint:
+        for f in lint: print('  ✗ ' + f)
+        ok_all = False
+    else:
+        print('  ✓ 4-tab tablist with roles/state/keys; old nav kept; Plan owns programme changes; session full-screen; reversible')
+    return ok_all
+
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/12] parse')
+    print('[1/13] parse')
     p = gate_parse(js)
-    print('[2/12] invariants')
+    print('[2/13] invariants')
     inv = gate_invariants(js)
-    print('[3/12] video map')
+    print('[3/13] video map')
     vm = gate_videomap(js)
-    print('[4/12] inline handler wiring')
+    print('[4/13] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/12] auth log hygiene')
+    print('[5/13] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/12] sign-out scrub')
+    print('[6/13] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/12] safe rendering of user text')
+    print('[7/13] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/12] sync honesty')
+    print('[8/13] sync honesty')
     sy = gate_sync(js)
-    print('[9/12] media fallback + reminder copy')
+    print('[9/13] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/12] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/13] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/12] core-journey accessibility (session + dialogs)')
+    print('[11/13] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/12] Start today (first-use flow) + shortened Path wizard')
+    print('[12/13] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
+    print('[13/13] simplified navigation (flagged)')
+    nv = gate_nav_v2(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 
