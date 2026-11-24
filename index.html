@@ -5743,16 +5743,9 @@ function applyCustomWeights() {
       });
     });
   }
-  // ULF's rotating day variants — getULFDay() reads THESE, not ULF, so saved
-  // starting weights never reached a ULF session before (Phase 1 fix). The
-  // table is declared further down the script: the first boot call below runs
-  // while it's still in its temporal dead zone, hence the try; it is re-applied
-  // right after the table is defined.
-  try {
-    Object.values(ULF_VARIANTS).forEach(vs => vs.forEach(dayExs => dayExs.forEach(ex => {
-      if(customWeights[ex.name] !== undefined) ex.weight = customWeights[ex.name];
-    })));
-  } catch(e){}
+  // ULF_VARIANTS (what getULFDay actually reads) is deliberately NOT mutated
+  // here: getULFDay overlays customWeights on its copies at read time, so a
+  // signed-out account's weights can never linger in the shared table.
 }
 applyCustomWeights();
 
@@ -14900,13 +14893,15 @@ const ULF_VARIANTS={
     [{name:'Squat',sets:4,reps:'3–5',weight:80,muscles:['legs','glutes'],type:'Primary'},{name:'Bench Press',sets:4,reps:'5–8',weight:75,muscles:['chest','triceps'],type:'Main Assistance'},{name:'Chin-Ups',sets:3,reps:'5–8',weight:0,muscles:['back','biceps'],bw:true,type:'Compound'},{name:'Barbell Row',sets:3,reps:'8–10',weight:60,muscles:['back'],type:'Compound'},{name:'Overhead Press',sets:4,reps:'8–10',weight:40,muscles:['shoulders'],type:'Compound'},{name:'Lunges',sets:3,reps:'10–12',weight:20,muscles:['legs','glutes'],type:'Assistance'},{name:'Cable Row',sets:3,reps:'12–15',weight:10,muscles:['back'],type:'Accessory'},{name:'Leg Curls',sets:3,reps:'10–15',weight:60,muscles:['legs'],type:'Accessory'},{name:'Abdominal Work',sets:3,reps:'10–15',weight:0,muscles:['core'],bw:true,type:'Accessory',coreCircuit:true}],
   ],
 };
-applyCustomWeights(); // the variants exist now — give them saved starting weights too
 
 function getULFDay(dayName){
   const variants=ULF_VARIANTS[dayName];
   if(!variants) return (ULF[dayName]||[]).map(e=>({...e}));
   const count=completedSessions.filter(s=>!s.manualActivity&&s.day===dayName).length;
-  return variants[count%variants.length].map(e=>({...e}));
+  // Saved starting weights apply to the variants at READ time (Phase 1): they
+  // never reached ULF sessions before, and mutating the shared table would
+  // leak one account's weights into the next account on the same device.
+  return variants[count%variants.length].map(e=>(customWeights[e.name]!==undefined ? {...e, weight:customWeights[e.name]} : {...e}));
 }
 
 let _currentLiftColor = '#c8ff00';
@@ -15730,6 +15725,8 @@ function recommendProgramme(ans, catalogue){
   let best = null;
   (catalogue || []).forEach((p, order) => {
     if(!p || !fits(p.equip)) return;
+    // PPL's 3-day minimum is structural (push, pull, legs) — never offer it on fewer days.
+    if(p.key === 'PPL' && userDays < Math.min.apply(null, p.daysOptions || [3])) return;
     const g = String(p.goal || '').toLowerCase();
     const lv = LV[String(p.level || '').toLowerCase()];
     let s = -2 * Math.abs((lv == null ? 1 : lv) - userLv);
@@ -15814,11 +15811,11 @@ function _stDraftPath(rec){
 // calculator's neutral defaults; Fine-tune in Profile refines them).
 function _stWeights(){
   const prev = { experienceLevel:_ob.experienceLevel, hadPriorTraining:_ob.hadPriorTraining, trainingGoal:_ob.trainingGoal,
-    bodyWeight:_ob.bodyWeight, injuryHistory:_ob.injuryHistory, previousLifts:_ob.previousLifts };
+    bodyWeight:_ob.bodyWeight, bodyWeightUnit:_ob.bodyWeightUnit, injuryHistory:_ob.injuryHistory, previousLifts:_ob.previousLifts };
   _ob.experienceLevel = _st.experience || 'beginner';
   _ob.hadPriorTraining = !!_st.experience && _st.experience !== 'beginner';
   _ob.trainingGoal = { strength:'strength', muscle:'muscle', fitness:'endurance', health:'general' }[_st.goal] || 'general';
-  _ob.bodyWeight = null; _ob.injuryHistory = []; _ob.previousLifts = {};
+  _ob.bodyWeight = null; _ob.bodyWeightUnit = 'kg'; _ob.injuryHistory = []; _ob.previousLifts = {};
   let res;
   try { res = _obCalcWeights(); } finally { Object.assign(_ob, prev); }
   // Never below the empty bar (20 kg) on a barbell lift — the calculator's
@@ -15866,10 +15863,10 @@ function _stHead(n, title, why){
     + `<h2 id="stTitle" class="st-h" tabindex="-1">${esc(title)}</h2>`
     + `<p class="st-why"><strong>How this changes your plan:</strong> ${esc(why)}</p>`;
 }
-function _stNav(canNext, skipLabel){
+function _stNav(canNext, skipLabel, describedBy){
   return `<div class="st-nav">`
     + `<button type="button" class="st-back" onclick="stBack()">← Back</button>`
-    + `<button type="button" class="btn-p st-next" onclick="stNext()"${canNext ? '' : ' disabled aria-disabled="true"'}>Continue →</button>`
+    + `<button type="button" class="btn-p st-next" onclick="stNext()"${canNext ? '' : ' disabled aria-disabled="true"'}${describedBy ? ' aria-describedby="' + esc(describedBy) + '"' : ''}>Continue →</button>`
     + `</div>`
     + (skipLabel ? `<button type="button" class="st-skip" onclick="stSkip()">${esc(skipLabel)}</button>` : '');
 }
@@ -15897,8 +15894,8 @@ function renderStartTodayStep(step, focusField, focusVal){
     const sel = ST_EQUIP.find(o => o.v === _st.equipment);
     html = _stHead(2, 'Where will you train?', sel ? sel.effect : 'We only suggest programmes you can actually do with your kit.')
       + `<div class="st-opts" role="group" aria-labelledby="stTitle">${ST_EQUIP.map(o => _stOpt('equipment', o, _st.equipment === o.v)).join('')}</div>`
-      + (!_st.equipment ? `<p class="st-need" id="stNeed">Pick one to continue — this one matters for what we can suggest.</p>` : '')
-      + _stNav(!!_st.equipment, '');
+      + (!_st.equipment ? `<p class="st-need" id="stNeed" role="status">Pick one to continue — this one matters for what we can suggest.</p>` : '')
+      + _stNav(!!_st.equipment, '', _st.equipment ? '' : 'stNeed');
   } else if(step === 3){
     html = _stHead(3, 'How often can you train?', `We'll schedule ${_st.days} day${_st.days === 1 ? '' : 's'} a week, always including today so you can start now. Session length steers us away from long splits if you're short on time.`)
       + `<div class="more-lbl" id="stDaysLbl">Days per week</div>`
@@ -15978,6 +15975,10 @@ function stSkipAll(){
   if(!_st.fromProfile){
     localStorage.setItem('maxgainz_onboarded', '1');
     localStorage.setItem('maxgainz_path_skipped', '1');
+    // Sync the flags (cloudSaveProfile sends onboarded/pathSkipped) so the
+    // flow doesn't come back after sign-out or on another device.
+    saveLocalCache();
+    cloudSaveProfile();
   }
   _stClose();
 }
@@ -15998,6 +15999,8 @@ function _stSaveProfile(rec){
   Object.entries(w).forEach(([ex, wt]) => { if(customWeights[ex] === undefined) customWeights[ex] = wt; });
   applyCustomWeights();
   localStorage.setItem('maxgainz_onboarded', '1');
+  saveLocalCache();
+  cloudSaveProfile();   // persists answers + onboarded even if no plan is confirmed afterwards
 }
 
 function stStart(now){
@@ -16019,19 +16022,38 @@ function stStart(now){
 function stChooseOther(){
   const pv = _stPreview();
   _stSaveProfile(pv ? pv.rec : null);
-  _stClose();
   _pathWizardAutoOpened = false;
+  // Open the wizard BEFORE closing this sheet so focus moves dialog → dialog.
   openPathWizard();
   if(pv){
     _pathWizard.programme = pv.rec.key; _pathWizard.variant = pv.rec.variant;
     _pathWizard.daysPerWeek = pv.rec.daysPerWeek; _pathWizard.coreDays = [...pv.draft.coreSchedule.preferredDays];
+    // A previous plan's HIIT series / add-ons must not ride along onto a new programme.
+    _pathWizard.addOns = [];
+    if(pv.rec.key !== 'HIIT') _pathWizard.hiitSeries = null;
     renderPathStep1();
   }
+  _stClose();
+  setTimeout(() => {
+    // The pre-selected card; ULF/PPL/library picks live inside the Strength tile.
+    const sel = document.querySelector('#pathStep1 [aria-pressed="true"]') || document.querySelector('#pathStep1 [aria-haspopup="dialog"]');
+    if(sel) sel.focus({ preventScroll: true });
+  }, 80);
 }
 
 // Enter/Space on a role="button" card (block content can't live in a <button>).
 function _cardKey(e, el){
-  if(e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar'){ e.preventDefault(); el.click(); }
+  if(e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar'){
+    e.preventDefault();
+    const sig = el.getAttribute('onclick'), scope = el.closest('.modal') || document;
+    el.click();
+    // The click handler re-renders the step via innerHTML, detaching `el`;
+    // re-focus its replacement (same handler) so keyboard users keep their place.
+    if(!el.isConnected && sig){
+      const again = [...scope.querySelectorAll('[onclick]')].find(n => n.getAttribute('onclick') === sig);
+      if(again) again.focus({ preventScroll: true });
+    }
+  }
 }
 
 // Profile → the original detailed setup (body weight, injuries, best lifts).

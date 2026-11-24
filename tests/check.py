@@ -2178,7 +2178,7 @@ GOALS.forEach(function(g){ EQ.forEach(function(e){ DAYS.forEach(function(d){ MIN
   if(!r){ noRec.push(tag); return; }
   var p = byKey[r.key];
   if(!p || !fitsKit[e][p.equip]) badKit.push(tag + ' → ' + r.key);
-  if(r.key !== 'PPL' && r.daysPerWeek > d) badDays.push(tag + ' → ' + r.daysPerWeek + ' days');
+  if(r.daysPerWeek > d) badDays.push(tag + ' → ' + r.key + ' ' + r.daysPerWeek + ' days');
   if(r.key === 'PPL' && !((r.variant === '6day' && r.daysPerWeek === 6) || (r.variant === '3day' && r.daysPerWeek === 3))) badPPL.push(tag);
   if(m && m <= 45 && e === 'gym' && p && p.daysOptions[0] >= 5 && x !== 'advanced') badShort.push(tag + ' → ' + r.key);
   if(!r.reason || r.reason.length < 20) noReason.push(tag);
@@ -2327,8 +2327,23 @@ def gate_start_today(html, js):
     if '...(userProfile.onboarding' not in oc:
         lint.append('_obComplete (detailed setup) drops the Start-today answers')
     acw = extract_decl(js, 'applyCustomWeights') or ''
-    if 'ULF_VARIANTS' not in acw or not re.search(r'const ULF_VARIANTS=\{[\s\S]*?\n\};\napplyCustomWeights\(\);', js):
-        lint.append('saved starting weights do not reach ULF_VARIANTS (getULFDay reads those)')
+    gud = extract_decl(js, 'getULFDay') or ''
+    if 'customWeights[e.name]' not in gud:
+        lint.append('saved starting weights do not reach ULF sessions (getULFDay must overlay customWeights)')
+    if re.search(r'ULF_VARIANTS\)\.forEach|ULF_VARIANTS\[[^\]]+\]\.forEach', acw) or re.search(r'const ULF_VARIANTS=\{[\s\S]*?\n\};\napplyCustomWeights\(\);', js):
+        lint.append('applyCustomWeights mutates the shared ULF_VARIANTS table (leaks one account\'s weights into the next)')
+    for fn in ['stSkipAll', '_stSaveProfile']:
+        if 'cloudSaveProfile()' not in (extract_decl(js, fn) or ''):
+            lint.append(f'{fn}() changes onboarding state without saving it (local + cloud)')
+    stw = extract_decl(js, '_stWeights') or ''
+    if "_ob.bodyWeightUnit = 'kg'" not in stw:
+        lint.append('_stWeights does not neutralise a leftover lbs body-weight unit')
+    sco = extract_decl(js, 'stChooseOther') or ''
+    if '_pathWizard.addOns = []' not in sco or '_pathWizard.hiitSeries = null' not in sco:
+        lint.append('stChooseOther carries the previous plan\'s add-ons / HIIT series onto the new programme')
+    ck = extract_decl(js, '_cardKey') or ''
+    if '.focus(' not in ck:
+        lint.append('_cardKey does not restore focus after the step re-renders')
     for fn in ['renderPathStep1', 'renderPathStep3']:
         src = extract_decl(js, fn) or ''
         for m in re.finditer(r'<div class="path-(?:prog-card|duration-btn)[^>]*>', src):
