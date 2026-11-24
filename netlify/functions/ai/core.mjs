@@ -34,7 +34,7 @@ function _aiIsObj(o, keys){
 function _aiNumbersIn(text){
   const raw = String(text == null ? '' : text);
   const out = [];
-  if(/[¼-¾⅐-⅟⁄∕]/.test(raw)) out.push(NaN);
+  if(/[¼-¾⅐-⅟⁄∕]/.test(raw) || /\b(thousand|million|billion)\b/i.test(raw)) out.push(NaN);
   const s = raw.normalize('NFKC')
     .replace(/\{EX\}/g, ' ')
     .replace(/\b[LE]\d{1,2}\b/g, ' ')
@@ -51,7 +51,12 @@ function _aiNumbersIn(text){
     eleven:11, twelve:12, thirteen:13, fourteen:14, fifteen:15, sixteen:16, seventeen:17, eighteen:18,
     nineteen:19, twenty:20, thirty:30, forty:40, fifty:50, sixty:60, seventy:70, eighty:80, ninety:90,
     hundred:100, dozen:12 };
-  const words = s.toLowerCase().replace(/\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[-\s]+(one|two|three|four|five|six|seven|eight|nine)\b/g,
+  const tensRe = '(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[-\\s]+(?:one|two|three|four|five|six|seven|eight|nine))?|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|one|two|three|four|five|six|seven|eight|nine';
+  const val = w => w.split(/[-\s]+/).reduce((a, x) => a + (W[x] || 0), 0);
+  const words = s.toLowerCase()
+    .replace(new RegExp('\\b(a|one|two|three|four|five|six|seven|eight|nine)\\s+hundred(?:\\s+(?:and\\s+)?(' + tensRe + '))?\\b', 'g'),
+      (all, h, rest) => { out.push((h === 'a' ? 1 : W[h]) * 100 + (rest ? val(rest) : 0)); return ' '; })
+    .replace(/\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[-\s]+(one|two|three|four|five|six|seven|eight|nine)\b/g,
     (all, t, u) => { out.push(W[t] + W[u]); return ' '; });
   const wr = /[a-z]+/g;
   while((m = wr.exec(words)) !== null){ if(Object.prototype.hasOwnProperty.call(W, m[0])) out.push(W[m[0]]); }
@@ -184,7 +189,17 @@ function _aiCheckOutput(task, out, f){
     const derived = f.pbs.map(p => Math.round((p.weight - p.prev) * 100) / 100)
       .concat([Math.max(0, f.planned - f.done), f.daysLeft + 1, Math.abs(f.trend ? f.trend.pct : 0)]);
     if(!_aiGrounded(all, _aiFactNumbers(f).concat(derived)).ok) return { ok:false, reason:'ungrounded' };
-    if(f.smallSample && (!out.mentionsSmallSample || !/\b(early|so far|few|small|limited|only|not enough|still building)\b/i.test(all))) return { ok:false, reason:'small sample' };
+    // Labels: only L1..Ln for the PBs that exist; never exercise ids.
+    const labels = all.match(/\b[LE]\d+\b/g) || [];
+    if(labels.some(l => l[0] === 'E' || +l.slice(1) < 1 || +l.slice(1) > f.pbs.length)) return { ok:false, reason:'label' };
+    // "N PBs / records" must be the real count.
+    const pbClaim = all.match(/\b(\d+|one|two|three|four|five)\s+(?:new\s+)?(?:pbs?|personal\s+(?:bests?|records?)|records?)\b/i);
+    if(pbClaim && _aiNumbersIn(pbClaim[1])[0] !== f.pbs.length) return { ok:false, reason:'pb count' };
+    // A sentence with a percentage must point the same way as the trend.
+    const up = /\b(up|above|higher|more|increas\w*|rose|grew|gain\w*)\b/i, down = /\b(down|below|lower|less|decreas\w*|fell|dropped|lighter)\b/i;
+    const wrongWay = all.split(/[.!?]/).some(s => /%/.test(s) && !!f.trend && ((f.trend.dir === 'down' && up.test(s) && !down.test(s)) || (f.trend.dir === 'up' && down.test(s) && !up.test(s)) || (f.trend.dir === 'steady' && (up.test(s) || down.test(s)))));
+    if(/%/.test(all) && (!f.trend || wrongWay)) return { ok:false, reason:'direction' };
+    if(f.smallSample && (!out.mentionsSmallSample || !/\b(early|so far|few|small sample|limited|not enough|still building)\b|\bonly (?:\d+|one|two|three|four|five) sessions?\b/i.test(all))) return { ok:false, reason:'small sample' };
     return { ok:true, reason:'' };
   }
   return { ok:false, reason:'task' };

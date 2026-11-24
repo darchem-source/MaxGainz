@@ -2649,6 +2649,7 @@ ok('pain detector', _aiMentionsPain('my shoulder HURTS') && _aiMentionsPain('lef
 ok('chest is a muscle group, not a symptom', !_aiMentionsPain('Chest is only 4% of your training'));
 eq('full-width digits are numbers', _aiNumbersIn('\uFF18\uFF15 kg'), [85]);
 eq('hyphenated number words are one number', _aiNumbersIn('eighty-eight'), [88]);
+eq('a hundred and forty / two hundred twenty-five', _aiNumbersIn('a hundred and forty, two hundred twenty-five, one hundred'), [140, 225, 100]);
 ok('vulgar fractions are never grounded', !_aiGrounded('add \u00BD kg', [0.5, 1, 2]).ok);
 eq('a leading minus is kept (ranges are not minus)', _aiNumbersIn('-80 and 6-8 and \u221212%'), [-80, 6, 8, -12]);
 ok('negative number not grounded by its absolute value', !_aiGrounded('-80 kg', [80]).ok);
@@ -2720,6 +2721,11 @@ eq('summary 7 days', _aiMetricsSummary(ms, NOW, 7), {calls:2, fallback_off:1});
 eq('summary 28 days', _aiMetricsSummary(ms, NOW, 28).calls, 7);
 var rows = _aiHealthRows({ai_ok:1, fallback_off:2, cost_micro_usd:300}, {ai_ok:3, fallback_off:2, fallback_timeout:1, cost_micro_usd:900, coach_shown:4, coach_accepted:1}, {coach:true, nl:false, recap:false}, true);
 ok('health rows: outcomes, reasons, cost, no message-count vanity metric', rows.length === 8 && /AI off 2 · slow reply 1/.test(rows[3][1]) && /\$0\.0009/.test(rows[7][1]) && /25% accepted/.test(rows[4][1]));
+var rows2 = _aiHealthRows({}, {coach_shown:4, coach_accepted:2, coach_adjusted:1, coach_undone:1, coach_why:3, nl_local_ok:6, nl_ai_ok:2, nl_clarify:3, nl_unparsed:1, nl_confirmed:6, nl_cancelled:2, nl_edited:1, recap_views:5, recap_ai_shown:4, calls:10, cost_micro_usd:3000}, {coach:true, nl:true, recap:true}, true);
+ok('health rows: acceptance, adjust, undo rates', /4 shown · 50% accepted · 25% adjusted · 50% of accepts undone · 3 Why\? opened/.test(rows2[4][1]));
+ok('health rows: typed-set parse success + confirm/cancel', /8 read \(6 by the app, 2 by AI\) · 3 questions · 1 not understood · 75% saved · 2 cancelled · 1 edited/.test(rows2[5][1]));
+ok('health rows: recap views', /5 briefing days viewed · AI summary on 4/.test(rows2[6][1]));
+ok('health rows: cost per request', /\$0\.0003 per request/.test(rows2[7][1]));
 eq('reason mapping', [_aiReasonFor(429, null), _aiReasonFor(200, {reason:'refusal'}), _aiReasonFor(504, {}), _aiReasonFor(401, {}), _aiReasonFor(503, {reason:'disabled'}), _aiReasonFor(500, null), _aiReasonFor(403, {reason:'consent_off'})], ['cap', 'refusal', 'timeout', 'auth', 'unavailable', 'error', 'off']);
 ok('hash is stable and differs', _aiHash('a') === _aiHash('a') && _aiHash('a') !== _aiHash('b'));
 JSON.stringify(fails);
@@ -3399,6 +3405,9 @@ eq('AI two exercises → ask', sets(_nlFromAi({sets:[{ex:'E1', weight:80, unit:n
 eq('AI clarify passes through', _nlFromAi({sets:[], clarify:'Which exercise?'}, ctx(), MAP).question, 'Which exercise?');
 eq('custom names are masked in the typed text (any case, longest first)', _nlMaskNames('my Zercher Squat 80x8 and zercher squat pause', [{ph:'Exercise 2', real:'Zercher Squat'}, {ph:'Bench Press', real:'Bench Press'}, {ph:'Exercise 3', real:'Zercher Squat Pause'}]), 'my Exercise 2 80x8 and Exercise 3');
 eq('regex characters in a custom name are safe', _nlMaskNames('a+b (x) 5x5', [{ph:'Exercise 1', real:'a+b (x)'}]), 'Exercise 1 5x5');
+eq('AI reading far above today\'s weight → asked (injection-proof sanity)', sets(_nlFromAi({sets:[{ex:'E1', weight:500, unit:null, reps:100, rpe:null}], clarify:null}, ctx(), MAP)), 'clarify:aiweight');
+eq('AI reading far below today\'s weight → asked', sets(_nlFromAi({sets:[{ex:'E1', weight:30, unit:null, reps:8, rpe:null}], clarify:null}, ctx(), MAP)), 'clarify:aiweight');
+eq('…and "Yes — 30 kg" confirms it (no retype loop)', sets(_nlFromAi({sets:[{ex:'E1', weight:30, unit:null, reps:8, rpe:null}], clarify:null}, ctx(), MAP, {confirmWeight:true})), [0, [0,30,8,null]]);
 eq('AI count question answered with trim', sets(_nlFromAi({sets:[1,2,3,4].map(function(){ return {ex:'E1', weight:80, unit:null, reps:8, rpe:null}; }), clarify:null}, ctx(), MAP, {countMode:'trim'})), [0, [0,80,8,null], [1,80,8,null], [2,80,8,null]]);
 eq('AI too many sets → same count question', sets(_nlFromAi({sets:[1,2,3,4].map(function(){ return {ex:'E1', weight:80, unit:null, reps:8, rpe:null}; }), clarify:null}, ctx(), MAP)), 'clarify:count');
 JSON.stringify(fails);
@@ -3482,7 +3491,7 @@ def gate_nl_log(html, js):
     if len(calls) != 1 or "btn('Save ' + p.sets.length" not in rend or "'nlSave()', true)" not in rend:
         lint.append('nlSave() must be reachable only from the preview\'s Save button')
     if "if(!p || p.status !== 'ok') return;" not in (extract_decl(js, 'nlSave') or ''): lint.append('nlSave must refuse anything but a previewed ok parse')
-    allowed = {"'nlEdit()'", "'nlCancel()'", "'nlSave()'", "'nlChoose(' + k + ')'", "\"nlUnit('kg')\"", "\"nlUnit('lb')\"", "\"nlCount('trim')\"", "\"nlCount('add')\"", "\"nlShape('sets')\"", "\"nlShape('weight')\""}
+    allowed = {"'nlEdit()'", "'nlCancel()'", "'nlSave()'", "'nlChoose(' + k + ')'", "\"nlUnit('kg')\"", "\"nlUnit('lb')\"", "\"nlCount('trim')\"", "\"nlCount('add')\"", "\"nlShape('sets')\"", "\"nlShape('weight')\"", "'nlConfirmWeight()'"}
     found = list(re.finditer(r"btn\((?:[^,()]|\([^()]*\))+, ((?:'[^']*'(?: \+ k \+ '[^']*')?)|\"[^\"]*\")", rend))
     for m in found:
         if m.group(1) not in allowed: lint.append(f'_nlRender handler is not a fixed call: {m.group(1)}')
@@ -3513,46 +3522,199 @@ def gate_nl_log(html, js):
     return True
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Gate 18 — Phase 2 weekly AI recap (+ measurement wiring)
+#   a) pure (JXA): recap facts come from the REAL _weeklyBriefing, carry no lift
+#      names, validate; grounding rejects invented numbers; small samples must
+#      be said; names put back escaped
+#   b) glue (JXA, stubbed): flag off → nothing asked, nothing counted; cached
+#      answer reused; at most RECAP_MAX_GENS_PER_DAY requests a day; views counted
+#      once a day; the deterministic briefing is always drawn
+# ─────────────────────────────────────────────────────────────────────────────
+RECAP_PURE = BRIEF_FNS + ['esc', '_recapFacts', '_recapAiHtml']
+RECAP_ASSERTIONS = r"""
+var fails = [];
+function eq(label, got, want){ if(JSON.stringify(got) !== JSON.stringify(want)) fails.push(label + ' — got ' + JSON.stringify(got) + ', want ' + JSON.stringify(want)); }
+function ok(label, cond){ if(!cond) fails.push(label); }
+var NOW = new Date(2026, 10, 24, 18, 0, 0).getTime(), D = 864e5;
+function S(daysAgo, lifts, extra){ var setLog = {}, vol = 0;
+  lifts.forEach(function(l){ setLog[l[0]] = { reps:[5,5,5], weight:l[1], setWeights:[l[1],l[1],l[1]], sets:3 }; vol += l[1]*15; });
+  var s = { date:new Date(NOW - daysAgo*D), setLog:setLog, volume:vol }; if(extra) for(var k in extra) s[k]=extra[k]; return s; }
+var H = [S(10, [['My Secret Lift',60],['Squat',80]]), S(1, [['My Secret Lift',62.5],['Deadlift',100],['Squat',80]])];
+var B = _weeklyBriefing(H, {nowMs:NOW, planned:3, balance:null});
+var F = _recapFacts(B, 2);
+eq('facts validate against the server schema', _aiValidateFacts('recap', F), '');
+eq('facts mirror the briefing', [F.done, F.planned, F.daysLeft, F.smallSample, F.action], [B.done, B.planned, B.daysLeft, true, B.action.text]);
+eq('PBs travel as L1 with numbers only', F.pbs, [{ref:'L1', weight:62.5, prev:60}]);
+ok('no lift name leaves the device', JSON.stringify(F).indexOf('Secret') === -1);
+eq('empty week → no recap', _recapFacts(_weeklyBriefing([], {nowMs:NOW}), 0), null);
+var BIG = []; [29,27,22,20,15,13,9,8].forEach(function(d){ BIG.push(S(d, [['Squat', 80 + (d < 10 ? 20 : 0)]])); });
+var B2 = _weeklyBriefing(BIG, {nowMs:NOW, planned:3});
+ok('trend carries its percentage (additive field)', B2.trend && typeof B2.trend.pct === 'number' && B2.trend.text.indexOf(String(Math.abs(B2.trend.pct))) !== -1);
+eq('trend reaches the facts', _recapFacts(B2, 8).trend, {dir:B2.trend.dir, pct:B2.trend.pct});
+// grounding / honesty on typical answers
+var good = {headline:'1 of 3 sessions so far', body:'L1 went up 2.5 kg to 62.5 kg. It is still early, with only 2 sessions logged. Fit in 2 more sessions by Sunday.', mentionsSmallSample:true};
+eq('a faithful recap passes', _aiCheckOutput('recap', good, F), {ok:true, reason:''});
+eq('an invented number fails', _aiCheckOutput('recap', {headline:'Great week', body:'You lifted 4,000 kg. It is early days with 2 sessions.', mentionsSmallSample:true}, F).reason, 'ungrounded');
+eq('a small sample must be admitted', _aiCheckOutput('recap', {headline:'1 of 3 sessions', body:'L1 went up to 62.5 kg.', mentionsSmallSample:false}, F).reason, 'small sample');
+var F1 = F;   // 1 PB, small sample, no trend
+eq('a label for a PB that does not exist fails', _aiCheckOutput('recap', {headline:'1 of 3', body:'L1 and L3 are flying. Still early, with only 2 sessions.', mentionsSmallSample:true}, F1).reason, 'label');
+eq('exercise ids never appear in a recap', _aiCheckOutput('recap', {headline:'1 of 3', body:'E9 is up. Still early, with only 2 sessions.', mentionsSmallSample:true}, F1).reason, 'label');
+eq('"3 new PBs" with 1 PB fails', _aiCheckOutput('recap', {headline:'3 new PBs', body:'Still early, with only 2 sessions.', mentionsSmallSample:true}, F1).reason, 'pb count');
+eq('a percentage with no trend fails', _aiCheckOutput('recap', {headline:'1 of 3', body:'Volume up 3%. Still early, with only 2 sessions.', mentionsSmallSample:true}, F1).reason, 'direction');
+var FD = Object.assign(JSON.parse(JSON.stringify(F)), {trend:{dir:'down', pct:-15}});
+eq('"up 15%" when volume went down fails', _aiCheckOutput('recap', {headline:'1 of 3', body:'Volume up 15% on last week. Still early, with only 2 sessions.', mentionsSmallSample:true}, FD).reason, 'direction');
+ok('"down 15%" when volume went down passes', _aiCheckOutput('recap', {headline:'1 of 3', body:'Volume was 15% lower than usual. Still early, with only 2 sessions.', mentionsSmallSample:true}, FD).ok);
+eq('the word "only" alone does not admit a small sample', _aiCheckOutput('recap', {headline:'1 of 3', body:'Only L1 moved, to 62.5 kg.', mentionsSmallSample:true}, F1).reason, 'small sample');
+eq('"two thousand" can never be grounded', _aiCheckOutput('recap', {headline:'1 of 3', body:'Two thousand kg moved. Still early, with only 2 sessions.', mentionsSmallSample:true}, F1).reason, 'ungrounded');
+eq('a wild trend percentage is left out of the facts', _recapFacts(Object.assign({}, B2, {trend:{dir:'up', pct:5000, text:''}}), 8).trend, null);
+eq('medical talk fails', _aiCheckOutput('recap', {headline:'1 of 3', body:'Rest that sore knee. Still early, only 2 sessions.', mentionsSmallSample:true}, F).reason, 'medical');
+// names back, escaped
+var html = _recapAiHtml('L1 <b>up</b> & L2', ['<img src=x onerror=1>', 'Squat']);
+ok('L1/L2 become escaped names; model markup escaped', html.indexOf('<img') === -1 && html.indexOf('&lt;b&gt;') !== -1 && html.indexOf('<strong>&lt;img') === 0 && html.indexOf('<strong>Squat</strong>') !== -1);
+eq('a missing name leaves the label', _recapAiHtml('L3', ['A']), 'L3');
+JSON.stringify(fails);
+"""
+RECAP_GLUE_PRELUDE = r"""
+var __ls = {}; var localStorage = { getItem:function(k){ return k in __ls ? __ls[k] : null; }, setItem:function(k, v){ __ls[k] = String(v); }, removeItem:function(k){ delete __ls[k]; } };
+var __open = true, __slot = { innerHTML:'' };
+var document = { getElementById:function(id){ if(id === 's-progress') return { classList:{ contains:function(){ return __open; } } }; if(id === 'recapSlot') return __slot; return null; } };
+var __flag = true, __consent = true, __uid = 'u1', __calls = [], __metrics = [], __events = [], __reply = null;
+function _aiFlagOn(){ return __flag; } function _aiDayKey(){ return __day; } var __day = '2026-11-24';
+function _aiUid(){ return __uid; } function _aiConsented(){ return __consent; } var userPreferences = { ai:{} };
+function _aiHash(s){ return String(s); } function _aiMetricBump(n){ __metrics.push(n); } function _aiAuditEvent(id, e){ __events.push(e); }
+function _aiCall(task, facts){ __calls.push([task, facts]); return __reply ? Promise.resolve(__reply) : new Promise(function(){}); }
+function count(m){ return __metrics.filter(function(x){ return x === m; }).length; }
+var completedSessions = [{}, {}];
+var B = { empty:false, weekStartMs:1, done:1, planned:3, plannedSource:'plan', activities:0, daysLeft:5, trend:null, newPBs:[{name:'Bench', weight:62.5, prev:60}], underTrained:null, balanced:false, smallSample:true, action:{text:'Fit in 2 more sessions by Sunday.'} };
+function cache(){ return JSON.parse(__ls[AI_CACHE_KEY] || '{}').recap; }
+"""
+RECAP_GLUE_ASSERTIONS = r"""
+var fails = []; function ok(label, cond){ if(!cond) fails.push(label); }
+__flag = false; var r0 = _renderRecap(B);
+ok('flag off: no summary, no request, nothing counted', r0 === '' && __calls.length === 0 && __metrics.length === 0);
+__flag = true; __open = false; _renderRecap(B);
+ok('background render (Progress not open): no request, no view counted', __calls.length === 0 && __metrics.length === 0);
+__open = true; __consent = false; _renderRecap(B);
+ok('no consent: view counted, nothing asked, no audit noise', __calls.length === 0 && count('recap_views') === 1 && __events.length === 0);
+__consent = true; __ls = {}; __metrics = []; var r1 = _renderRecap(B);
+ok('open + consent: asks once, shows nothing yet', r1 === '' && __calls.length === 1 && __calls[0][0] === 'recap' && count('recap_views') === 1);
+_renderRecap(B); B.daysLeft = 4; _renderRecap(B);
+ok('same facts (days left ticking down) → no second request', __calls.length === 1);
+var c = cache(); c.text = {headline:'1 of 3', body:'L1 up to 62.5 kg. Still early.'}; c.auditId = 'a_1'; __ls[AI_CACHE_KEY] = JSON.stringify({recap:c, coachDay:{day:'2026-11-24', entries:{k:{key:'k'}}}});
+var r3 = _renderRecap(B); _renderRecap(B);
+ok('cached answer shown with the name put back', r3.indexOf('<strong>Bench</strong>') !== -1 && __calls.length === 1);
+ok('views and AI-shown counted once a day', count('recap_views') === 1 && count('recap_ai_shown') === 1);
+ok('coach entries in the same store survive', JSON.parse(__ls[AI_CACHE_KEY]).coachDay.entries.k.key === 'k');
+B.done = 2; _renderRecap(B); B.done = 3; _renderRecap(B); B.done = 0; _renderRecap(B); B.done = 1; B.planned = 4; _renderRecap(B);
+ok('changed facts re-ask at most RECAP_MAX_GENS_PER_DAY times a day', __calls.length === RECAP_MAX_GENS_PER_DAY);
+__day = '2026-11-25'; B.planned = 5; _renderRecap(B);
+ok('a new day may ask again, and counts a new view', __calls.length === RECAP_MAX_GENS_PER_DAY + 1 && count('recap_views') === 2);
+__uid = 'u2'; var before = __calls.length; var r4 = _renderRecap(B);
+ok('another account never sees this account\'s cached recap', r4 === '' && __calls.length === before + 1);
+JSON.stringify(fails);
+"""
+RECAP_REQUEST_SCENARIOS = {
+  'a validated answer fills the slot once and is counted once': r"""
+    __reply = {ok:true, out:{headline:'1 of 3', body:'L1 up to 62.5 kg. Still early.'}, auditId:'a_7'};
+    _renderRecap(B); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    var c = cache();
+    return (__slot.innerHTML.indexOf('<strong>Bench</strong>') !== -1 && count('recap_ai_shown') === 1 && __events.indexOf('shown') !== -1 && c.text && c.auditId === 'a_7') || [__slot.innerHTML, __metrics, c];""",
+  'an answer arriving after Progress was left is stored, not shown or counted': r"""
+    __reply = {ok:true, out:{headline:'1 of 3', body:'L1 up to 62.5 kg. Still early.'}, auditId:'a_8'};
+    _renderRecap(B); __open = false; await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    return (__slot.innerHTML === '' && count('recap_ai_shown') === 0 && !!cache().text) || [__slot.innerHTML, __metrics];""",
+  'a failed answer shows nothing': r"""
+    __reply = {ok:false, reason:'invalid', auditId:'a_9'};
+    _renderRecap(B); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    return (__slot.innerHTML === '' && count('recap_ai_shown') === 0 && cache().text === null) || [__slot.innerHTML, cache()];""",
+  'an answer for facts that changed meanwhile is dropped': r"""
+    var res; __reply = null; _aiCall = function(){ return new Promise(function(r){ res = r; }); };
+    _renderRecap(B); B.done = 2; __ls[AI_CACHE_KEY] = JSON.stringify({recap:Object.assign(cache(), {key:'other'})});
+    res({ok:true, out:{headline:'x', body:'y'}, auditId:'a_10'}); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    return (__slot.innerHTML === '' && cache().key === 'other' && !cache().text) || cache();""",
+}
+
+def gate_recap(html, js):
+    problems = []
+    pieces = [extract_const_line(js, 'AI_CONSENT_VERSION') or '']
+    for fn in AI_SHARED + RECAP_PURE:
+        src = extract_decl(js, fn)
+        if not src: problems.append(f'function {fn} not found')
+        else: pieces.append(src)
+    if not problems:
+        out, _ = run_jxa('\n'.join(pieces) + '\n' + RECAP_ASSERTIONS)
+        try: problems += json.loads(out)
+        except Exception: problems.append('recap pure runner errored: ' + out[:300])
+        glue = '\n'.join([extract_const_line(js, 'AI_CACHE_KEY'), extract_const_line(js, 'RECAP_MAX_GENS_PER_DAY'), extract_const_line(js, 'AI_CONSENT_VERSION')]
+                         + [extract_async_decl(js, f) or '' for f in AI_SHARED + ['esc', '_recapFacts', '_recapAiHtml', '_recapCacheAll', '_recapCachePut', '_recapHtml', '_renderRecap', '_recapRequest']])
+        out, _ = run_jxa(glue + '\n' + RECAP_GLUE_PRELUDE + RECAP_GLUE_ASSERTIONS)
+        try: problems += json.loads(out)
+        except Exception: problems.append('recap glue runner errored: ' + out[:300])
+        problems += _run_jsc_scenarios(glue + '\n' + RECAP_GLUE_PRELUDE, RECAP_REQUEST_SCENARIOS)
+    lint = []
+    wb = extract_decl(js, '_weeklyBriefing') or ''
+    for d in ['up', 'down', 'steady']:
+        if "{ dir:'" + d + "', pct," not in wb: lint.append(f'briefing trend "{d}" does not carry its percentage')
+    rb = extract_decl(js, 'renderWeeklyBriefing') or ''
+    if not re.search(r'<div id="recapSlot" aria-live="polite">\$\{recap\}</div><div class="brief-card">', rb): lint.append('the recap must sit above an always-drawn deterministic briefing')
+    if 'try {' not in (extract_decl(js, '_renderRecap') or '').split('\n')[1]: lint.append('_renderRecap must never throw into the briefing')
+    rq = extract_async_decl(js, '_recapRequest') or ''
+    if "await _aiCall('recap', facts, 'recap')" not in rq or 'fetch(' in rq: lint.append('recap must go through _aiCall only')
+    rh = extract_decl(js, '_recapHtml') or ''
+    for m in re.finditer(r'\$\{', rh):
+        nxt = rh[m.end():m.end() + 30].lstrip()
+        if not nxt.startswith('_recapAiHtml('): lint.append(f'_recapHtml interpolates without escaping: ${{{nxt[:30]}')
+    problems += lint
+    for f in problems: print('  ✗ ' + f)
+    if problems: return False
+    print('  ✓ recap facts from the real briefing (no names); invented numbers, unadmitted small samples and medical talk rejected; names escaped')
+    print('  ✓ flag-gated, briefing always drawn, cached, ≤ 3 requests a day, views counted once a day; Data health shows outcome rates')
+    return True
+
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/17] parse')
+    print('[1/18] parse')
     p = gate_parse(js)
-    print('[2/17] invariants')
+    print('[2/18] invariants')
     inv = gate_invariants(js)
-    print('[3/17] video map')
+    print('[3/18] video map')
     vm = gate_videomap(js)
-    print('[4/17] inline handler wiring')
+    print('[4/18] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/17] auth log hygiene')
+    print('[5/18] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/17] sign-out scrub')
+    print('[6/18] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/17] safe rendering of user text')
+    print('[7/18] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/17] sync honesty')
+    print('[8/18] sync honesty')
     sy = gate_sync(js)
-    print('[9/17] media fallback + reminder copy')
+    print('[9/18] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/17] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/18] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/17] core-journey accessibility (session + dialogs)')
+    print('[11/18] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/17] Start today (first-use flow) + shortened Path wizard')
+    print('[12/18] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/17] simplified navigation (flagged)')
+    print('[13/18] simplified navigation (flagged)')
     nv = gate_nav_v2(html, js)
-    print('[14/17] Progress weekly briefing')
+    print('[14/18] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/17] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/18] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/17] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/18] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/17] Phase 2 typed sets (preview before save)')
+    print('[17/18] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
+    print('[18/18] Phase 2 weekly AI recap + measurement')
+    rc = gate_recap(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 

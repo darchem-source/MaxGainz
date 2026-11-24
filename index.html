@@ -598,6 +598,10 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
 .nl-sets li{padding:8px 10px;background:var(--surface2);border-radius:10px;margin-bottom:6px;font-size:14px;font-weight:700;color:var(--text);}
 .nl-note{font-size:12px;color:var(--text2);margin:0 0 6px;line-height:1.4;}
 .nl-q{font-size:14px;color:var(--text);margin:0 0 10px;line-height:1.45;}
+.recap-card{background:var(--surface2);border:1px solid rgba(0,212,255,0.35);border-radius:18px;padding:14px 16px;margin:0 16px 12px;}
+.recap-head{font-size:16px;font-weight:800;color:var(--text);margin:0 0 6px;line-height:1.3;}
+.recap-head strong,.recap-card .coach-text strong{color:var(--accent2);}
+.recap-src{font-size:11px;color:var(--text2);margin:8px 0 0;}
 </style>
 </head>
 <body>
@@ -5954,7 +5958,7 @@ function _aiIsObj(o, keys){
 function _aiNumbersIn(text){
   const raw = String(text == null ? '' : text);
   const out = [];
-  if(/[¼-¾⅐-⅟⁄∕]/.test(raw)) out.push(NaN);
+  if(/[¼-¾⅐-⅟⁄∕]/.test(raw) || /\b(thousand|million|billion)\b/i.test(raw)) out.push(NaN);
   const s = raw.normalize('NFKC')
     .replace(/\{EX\}/g, ' ')
     .replace(/\b[LE]\d{1,2}\b/g, ' ')
@@ -5971,7 +5975,12 @@ function _aiNumbersIn(text){
     eleven:11, twelve:12, thirteen:13, fourteen:14, fifteen:15, sixteen:16, seventeen:17, eighteen:18,
     nineteen:19, twenty:20, thirty:30, forty:40, fifty:50, sixty:60, seventy:70, eighty:80, ninety:90,
     hundred:100, dozen:12 };
-  const words = s.toLowerCase().replace(/\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[-\s]+(one|two|three|four|five|six|seven|eight|nine)\b/g,
+  const tensRe = '(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[-\\s]+(?:one|two|three|four|five|six|seven|eight|nine))?|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|one|two|three|four|five|six|seven|eight|nine';
+  const val = w => w.split(/[-\s]+/).reduce((a, x) => a + (W[x] || 0), 0);
+  const words = s.toLowerCase()
+    .replace(new RegExp('\\b(a|one|two|three|four|five|six|seven|eight|nine)\\s+hundred(?:\\s+(?:and\\s+)?(' + tensRe + '))?\\b', 'g'),
+      (all, h, rest) => { out.push((h === 'a' ? 1 : W[h]) * 100 + (rest ? val(rest) : 0)); return ' '; })
+    .replace(/\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[-\s]+(one|two|three|four|five|six|seven|eight|nine)\b/g,
     (all, t, u) => { out.push(W[t] + W[u]); return ' '; });
   const wr = /[a-z]+/g;
   while((m = wr.exec(words)) !== null){ if(Object.prototype.hasOwnProperty.call(W, m[0])) out.push(W[m[0]]); }
@@ -6104,7 +6113,17 @@ function _aiCheckOutput(task, out, f){
     const derived = f.pbs.map(p => Math.round((p.weight - p.prev) * 100) / 100)
       .concat([Math.max(0, f.planned - f.done), f.daysLeft + 1, Math.abs(f.trend ? f.trend.pct : 0)]);
     if(!_aiGrounded(all, _aiFactNumbers(f).concat(derived)).ok) return { ok:false, reason:'ungrounded' };
-    if(f.smallSample && (!out.mentionsSmallSample || !/\b(early|so far|few|small|limited|only|not enough|still building)\b/i.test(all))) return { ok:false, reason:'small sample' };
+    // Labels: only L1..Ln for the PBs that exist; never exercise ids.
+    const labels = all.match(/\b[LE]\d+\b/g) || [];
+    if(labels.some(l => l[0] === 'E' || +l.slice(1) < 1 || +l.slice(1) > f.pbs.length)) return { ok:false, reason:'label' };
+    // "N PBs / records" must be the real count.
+    const pbClaim = all.match(/\b(\d+|one|two|three|four|five)\s+(?:new\s+)?(?:pbs?|personal\s+(?:bests?|records?)|records?)\b/i);
+    if(pbClaim && _aiNumbersIn(pbClaim[1])[0] !== f.pbs.length) return { ok:false, reason:'pb count' };
+    // A sentence with a percentage must point the same way as the trend.
+    const up = /\b(up|above|higher|more|increas\w*|rose|grew|gain\w*)\b/i, down = /\b(down|below|lower|less|decreas\w*|fell|dropped|lighter)\b/i;
+    const wrongWay = all.split(/[.!?]/).some(s => /%/.test(s) && !!f.trend && ((f.trend.dir === 'down' && up.test(s) && !down.test(s)) || (f.trend.dir === 'up' && down.test(s) && !up.test(s)) || (f.trend.dir === 'steady' && (up.test(s) || down.test(s)))));
+    if(/%/.test(all) && (!f.trend || wrongWay)) return { ok:false, reason:'direction' };
+    if(f.smallSample && (!out.mentionsSmallSample || !/\b(early|so far|few|small sample|limited|not enough|still building)\b|\bonly (?:\d+|one|two|three|four|five) sessions?\b/i.test(all))) return { ok:false, reason:'small sample' };
     return { ok:true, reason:'' };
   }
   return { ok:false, reason:'task' };
@@ -6462,15 +6481,17 @@ function _aiHealthRows(t7, t28, flags, consent){
   const rate = (a, b) => b ? Math.round(a / b * 100) + '%' : '–';
   const reasons = Object.keys(t28).filter(k => k.indexOf('fallback_') === 0 && t28[k] > 0)
     .map(k => (AI_REASON_LABELS[k.slice(9)] || k.slice(9)) + ' ' + t28[k]).join(' · ');
+  const shown = g(t28, 'coach_shown');
+  const read = g(t28, 'nl_local_ok') + g(t28, 'nl_ai_ok');
   return [
     ['Rollout', 'coach ' + (flags.coach ? 'on' : 'off') + ' · typed sets ' + (flags.nl ? 'on' : 'off') + ' · recap ' + (flags.recap ? 'on' : 'off')],
     ['AI coaching', consent ? 'On (consented)' : 'Off — nothing is sent'],
     ['AI answers used', g(t7, 'ai_ok') + ' (7 days) · ' + g(t28, 'ai_ok') + ' (28 days)'],
     ['Own text shown instead', fb(t7) + ' (7 days) · ' + fb(t28) + ' (28 days)' + (reasons ? ' — ' + reasons : '')],
-    ['Coach tips', g(t28, 'coach_shown') + ' shown · ' + rate(g(t28, 'coach_accepted'), g(t28, 'coach_shown')) + ' accepted · ' + g(t28, 'coach_adjusted') + ' adjusted · ' + g(t28, 'coach_undone') + ' undone'],
-    ['Typed sets', g(t28, 'nl_confirmed') + ' saved · ' + g(t28, 'nl_cancelled') + ' cancelled · ' + g(t28, 'nl_unparsed') + ' not understood'],
-    ['Weekly recap', g(t28, 'recap_views') + ' views'],
-    ['Cost', usd(g(t7, 'cost_micro_usd')) + ' (7 days) · ' + usd(g(t28, 'cost_micro_usd')) + ' (28 days)']
+    ['Coach tips (28 days)', shown + ' shown · ' + rate(g(t28, 'coach_accepted'), shown) + ' accepted · ' + rate(g(t28, 'coach_adjusted'), shown) + ' adjusted · ' + rate(g(t28, 'coach_undone'), g(t28, 'coach_accepted')) + ' of accepts undone · ' + g(t28, 'coach_why') + ' Why? opened'],
+    ['Typed sets (28 days)', read + ' read (' + g(t28, 'nl_local_ok') + ' by the app, ' + g(t28, 'nl_ai_ok') + ' by AI) · ' + g(t28, 'nl_clarify') + ' questions · ' + g(t28, 'nl_unparsed') + ' not understood · ' + rate(g(t28, 'nl_confirmed'), read) + ' saved · ' + g(t28, 'nl_cancelled') + ' cancelled · ' + g(t28, 'nl_edited') + ' edited'],
+    ['Weekly recap (28 days)', g(t28, 'recap_views') + ' briefing days viewed · AI summary on ' + g(t28, 'recap_ai_shown')],
+    ['Cost', usd(g(t7, 'cost_micro_usd')) + ' (7 days) · ' + usd(g(t28, 'cost_micro_usd')) + ' (28 days)' + (g(t28, 'calls') ? ' · ' + usd(g(t28, 'cost_micro_usd') / g(t28, 'calls')) + ' per request' : '')]
   ];
 }
 function _aiHealthHtml(){
@@ -7053,6 +7074,11 @@ function _nlFromAi(out, ctx, idMap, opts){
     if(s.unit === 'lb' && w > 0){ const kg = Math.round(w * NL_LB_TO_KG * 10) / 10; w = (Array.isArray(ex.steps) && ex.steps.length) ? snapToSteps(kg, ex.steps) : kg; }
     return { w, r: s.reps, rpe: s.rpe };
   });
+  // Same sanity as the app's own reading: far above/below today's weight → ask.
+  const planned = Number(ex.weight) || 0;
+  const odd = sets.map(s => s.w).filter((v, i, a) => a.indexOf(v) === i && (v > planned * 1.8 || (v > 0 && v < planned * 0.4)));
+  if(!ex.bw && planned > 0 && odd.length && !(opts && opts.confirmWeight))
+    return { status:'clarify', kind:'aiweight', question:'Is ' + odd.join(' / ') + ' kg right for ' + ex.name + '? Today\'s weight is ' + planned + ' kg.', w: odd.join(' / ') };
   if(out.sets.some(s => s.weight === null)) notes.push('Weight not given — using today\'s ' + (Number(ex.weight) || 0) + ' kg.');
   if(out.sets.some(s => s.unit === 'lb')) notes.push('Converted from lb.');
   const b = _nlBuild(ex, sets, { notes }, opts || {});
@@ -7149,6 +7175,7 @@ function nlChoose(k){
 function nlUnit(u){ if(u === 'kg' || u === 'lb') _nlReparse({ forceUnit:u }); }
 function nlCount(mode){ if(mode === 'trim' || mode === 'add') _nlReparse({ countMode:mode }); }
 function nlShape(s){ if(s === 'sets' || s === 'weight') _nlReparse({ shape:s }); }
+function nlConfirmWeight(){ _nlReparse({ confirmWeight:true }); }
 function nlEdit(){ const i = document.getElementById('nlInput'); if(i){ i.focus(); i.select(); } }
 function nlCancel(){
   if(_nlState && _nlState.parse && _nlState.parse.status === 'ok'){ _aiMetricBump('nl_cancelled'); if(_nlState.auditId) _aiAuditEvent(_nlState.auditId, 'cancelled'); }
@@ -7215,6 +7242,7 @@ function _nlRender(){
     let choices = '';
     if(p.kind === 'exercise' && Array.isArray(p.choices)) choices = p.choices.map((ix, k) => sessExs[ix] ? btn(sessExs[ix].name, 'nlChoose(' + k + ')') : '').join('');
     else if(p.kind === 'unit') choices = btn('kg', "nlUnit('kg')") + btn('lb', "nlUnit('lb')");
+    else if(p.kind === 'aiweight') choices = btn('Yes — ' + p.w + ' kg', 'nlConfirmWeight()');
     else if(p.kind === 'shape') choices = btn(p.a + ' sets of ' + p.b, "nlShape('sets')") + btn(p.a + ' kg × ' + p.b, "nlShape('weight')");
     else if(p.kind === 'count' && p.left > 0) choices = btn('Log the first ' + p.left, "nlCount('trim')") + (p.canAdd ? btn('Add ' + p.extra + ' set' + (p.extra === 1 ? '' : 's'), "nlCount('add')") : '');
     el.innerHTML = `<p class="nl-q">${esc(p.question)}</p><div class="coach-actions">${choices}${btn('Edit', 'nlEdit()')}${btn('Cancel', 'nlCancel()')}</div>`;
@@ -7227,6 +7255,103 @@ function _nlRender(){
   el.innerHTML = `<p class="nl-ex">${esc(p.exName)}${p.exIdx !== curIdx ? ' <span class="nl-note">(switches to this exercise)</span>' : ''}</p>
     <ul class="nl-sets">${rows}</ul>${notes}
     <div class="coach-actions">${btn('Save ' + p.sets.length + ' set' + (p.sets.length === 1 ? '' : 's'), 'nlSave()', true)}${btn('Edit', 'nlEdit()')}${btn('Cancel', 'nlCancel()')}</div>`;
+}
+
+// ── Phase 2 slice 4: weekly AI recap ──────────────────────────────────────
+// A short plain-language summary written ONLY from the weekly briefing's
+// structured facts (_weeklyBriefing). Every number must exist in the facts
+// (_aiCheckOutput grounding); small samples must say so. Lift names travel as
+// L1–L3 and are put back (escaped) here. The deterministic briefing below is
+// always shown; without AI there is simply no summary. Flag: maxgainz_ai_recap.
+const RECAP_MAX_GENS_PER_DAY = 3;
+// Pure: briefing → recap facts (schema in core.mjs), or null (nothing to recap).
+function _recapFacts(B, sessionsLogged){
+  if(!B || B.empty) return null;
+  const f = {
+    done: B.done, planned: B.planned, plannedSource: B.plannedSource, activities: B.activities, daysLeft: B.daysLeft,
+    trend: B.trend && typeof B.trend.pct === 'number' && Math.abs(B.trend.pct) <= 1000 ? { dir: B.trend.dir, pct: B.trend.pct } : null,
+    pbs: (B.newPBs || []).slice(0, 3).map((p, i) => ({ ref: 'L' + (i + 1), weight: p.weight, prev: p.prev })),
+    under: B.underTrained ? { label: B.underTrained.label, pct: B.underTrained.pct } : null,
+    balanced: !!B.balanced, smallSample: !!B.smallSample,
+    sessionsLogged: Math.max(0, Math.floor(Number(sessionsLogged) || 0)),
+    action: String((B.action && B.action.text) || '').slice(0, 200)
+  };
+  return _aiValidateFacts('recap', f) ? null : f;
+}
+// Pure: AI recap text → safe HTML; L1–L3 become the escaped lift names.
+function _recapAiHtml(text, names){
+  return esc(String(text == null ? '' : text)).replace(/\bL([1-3])\b/g, (m, d) => (names && names[d - 1]) ? '<strong>' + esc(names[d - 1]) + '</strong>' : m);
+}
+function _recapCacheAll(){
+  let o = null;
+  try { o = JSON.parse(localStorage.getItem(AI_CACHE_KEY) || 'null'); } catch(e){ o = null; }
+  return (o && typeof o === 'object') ? o : {};
+}
+function _recapCachePut(entry){
+  const o = _recapCacheAll(); o.recap = entry;
+  try { localStorage.setItem(AI_CACHE_KEY, JSON.stringify(o)); } catch(e){}
+}
+function _recapHtml(entry){
+  const t = entry && entry.text;
+  if(!t) return '';
+  return `<section class="recap-card" aria-labelledby="recapTitle">
+    <div class="coach-head"><h3 class="coach-title" id="recapTitle">Your week in words</h3><span class="coach-tag" title="Written by AI from the numbers below">✨ AI summary</span></div>
+    <p class="recap-head">${_recapAiHtml(t.headline, entry.names)}</p>
+    <p class="coach-text" style="margin:0;">${_recapAiHtml(t.body, entry.names)}</p>
+    <p class="recap-src">From your logged data only — the briefing below has the numbers.</p>
+  </section>`;
+}
+// Called by renderWeeklyBriefing with the briefing it just drew. Returns the
+// summary HTML if one is ready; otherwise asks (at most a few times a day) and
+// fills #recapSlot when a validated answer arrives.
+function _renderRecap(B){
+  try {
+    if(!_aiFlagOn('recap')) return '';
+    const day = _aiDayKey(Date.now()), uid = _aiUid();
+    let c = _recapCacheAll().recap || null;
+    if(c && c.uid !== uid) c = null;                       // another account's entry
+    const gym = (completedSessions || []).filter(s => s && !s.manualActivity).length;
+    const facts = _recapFacts(B, gym);
+    const names = (B.newPBs || []).slice(0, 3).map(p => p.name);
+    // Background renders (boot, sync, saves) never ask, count or show — only an open Progress screen.
+    const scr = document.getElementById('s-progress');
+    const open = !!(scr && scr.classList.contains('active'));
+    const key = facts ? B.weekStartMs + ':' + _aiHash(JSON.stringify(Object.assign({}, facts, { daysLeft: null }))) : null;
+    if(!open) return (c && key && c.key === key && c.text) ? _recapHtml(Object.assign({}, c, { names })) : '';
+    if(!c || c.viewDay !== day){ _aiMetricBump('recap_views'); }
+    const base = { uid, viewDay: day, shownDay: c ? c.shownDay : null, genDay: c ? c.genDay : null, gens: c ? c.gens : 0 };
+    if(!facts){ _recapCachePut(Object.assign({}, c || {}, base, { key: null, text: null })); return ''; }
+    if(c && c.key === key){
+      const e = Object.assign({}, c, base);
+      if(e.text && e.shownDay !== day){ e.shownDay = day; _aiMetricBump('recap_ai_shown'); if(e.auditId) _aiAuditEvent(e.auditId, 'shown'); }
+      _recapCachePut(e);
+      return _recapHtml(Object.assign({}, e, { names }));
+    }
+    // Nothing is asked for someone who hasn't switched AI on (and no audit noise).
+    if(!_aiConsented(typeof userPreferences === 'object' && userPreferences ? userPreferences.ai : null)){
+      _recapCachePut(Object.assign({}, base, { key: null, text: null })); return '';
+    }
+    const gens = (c && c.genDay === day) ? (c.gens || 0) : 0;
+    if(gens >= RECAP_MAX_GENS_PER_DAY){ _recapCachePut(Object.assign({}, c || {}, base, { key: null, text: null })); return ''; }
+    _recapCachePut(Object.assign({}, base, { key, week: B.weekStartMs, text: null, auditId: null, genDay: day, gens: gens + 1 }));
+    _recapRequest(facts, key, names);
+    return '';
+  } catch(e){ return ''; }
+}
+async function _recapRequest(facts, key, names){
+  const r = await _aiCall('recap', facts, 'recap');
+  const c = _recapCacheAll().recap;
+  if(!c || c.key !== key) return;
+  c.auditId = r && r.auditId || null;
+  if(r && r.ok && r.out){ c.text = { headline: r.out.headline, body: r.out.body }; }
+  _recapCachePut(c);
+  const slot = document.getElementById('recapSlot');
+  const scr = document.getElementById('s-progress');
+  if(c.text && slot && scr && scr.classList.contains('active')){
+    slot.innerHTML = _recapHtml(Object.assign({}, c, { names }));
+    const day = _aiDayKey(Date.now());
+    if(c.shownDay !== day){ c.shownDay = day; _recapCachePut(c); _aiMetricBump('recap_ai_shown'); if(c.auditId) _aiAuditEvent(c.auditId, 'shown'); }
+  }
 }
 
 // ── Phase 1: simplified navigation (Today · Plan · Progress · Profile) ─────
@@ -20137,9 +20262,9 @@ function _weeklyBriefing(sessions, opts){
   if(recent > 0 && base.length >= 2){
     const avg = base.reduce((a, b) => a + b, 0) / base.length;
     const pct = Math.round((recent - avg) / avg * 100);
-    trend = pct >= 10 ? { dir:'up', text:`Last week's training volume was ${pct}% above your recent average — you're building.` }
-      : pct <= -10 ? { dir:'down', text:`Last week's volume was ${-pct}% below your recent average. A lighter week is fine; two in a row is worth a look.` }
-      : { dir:'steady', text:`Last week's volume was in line with your recent average — steady and consistent.` };
+    trend = pct >= 10 ? { dir:'up', pct, text:`Last week's training volume was ${pct}% above your recent average — you're building.` }
+      : pct <= -10 ? { dir:'down', pct, text:`Last week's volume was ${-pct}% below your recent average. A lighter week is fine; two in a row is worth a look.` }
+      : { dir:'steady', pct, text:`Last week's volume was in line with your recent average — steady and consistent.` };
   }
   const newPBs = _prsInWindow(gym, ws, now + 1).slice(0, 3);
   const last28 = gym.filter(s => _sessTime(s) > now - 4 * WEEK).length;
@@ -20197,7 +20322,8 @@ function renderWeeklyBriefing(){
     : B.balanced ? 'Training is well spread across push, pull, legs and core.'
     : B.smallSample ? 'Too early to judge balance — a few more sessions needed.'
     : 'Nothing under-trained stands out.';
-  el.innerHTML = `${pathDone}<div class="brief-card">
+  const recap = (typeof _renderRecap === 'function') ? _renderRecap(B) : '';
+  el.innerHTML = `${pathDone}<div id="recapSlot" aria-live="polite">${recap}</div><div class="brief-card">
     <div class="brief-head"><h2 class="brief-title" id="briefTitle">Your week</h2><span class="brief-range">${esc(fmt(ws))} – ${esc(fmt(we))}</span></div>
     <div class="brief-count"><span class="brief-big">${B.done}</span>of ${B.planned} planned session${B.planned === 1 ? '' : 's'}</div>
     <div class="ach-bar" role="progressbar" aria-label="Sessions this week" aria-valuemin="0" aria-valuemax="${B.planned}" aria-valuenow="${Math.min(B.done, B.planned)}"><span style="width:${pct}%;background:var(--accent);"></span></div>
