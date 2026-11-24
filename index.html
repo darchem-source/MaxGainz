@@ -243,9 +243,9 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 .toast.tone-warning { border-color:rgba(255,165,0,0.45); color:#ffb547; }
 .toast.tone-error   { border-color:rgba(255,77,106,0.4); color:#ff4d6a; }
 .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
-#offlineBanner { position:fixed; bottom:calc(68px + env(safe-area-inset-bottom, 0px)); left:50%; transform:translateX(-50%) translateY(20px); width:100%; max-width:420px; z-index:var(--z-banner); background:#1a1a1a; border:1px solid rgba(255,140,66,0.35); border-radius:var(--radius-sm) var(--radius-sm) 0 0; color:#ff8c42; font-size:12px; font-weight:700; text-align:center; padding:var(--space-2) var(--space-4); opacity:0; transition:opacity var(--dur-base) ease, transform var(--dur-base) ease; pointer-events:none; }
+#offlineBanner { position:fixed; bottom:var(--nav-h, calc(68px + env(safe-area-inset-bottom, 0px))); left:50%; transform:translateX(-50%) translateY(20px); width:100%; max-width:420px; z-index:var(--z-banner); background:#1a1a1a; border:1px solid rgba(255,140,66,0.35); border-radius:var(--radius-sm) var(--radius-sm) 0 0; color:#ff8c42; font-size:12px; font-weight:700; text-align:center; padding:var(--space-2) var(--space-4); opacity:0; transition:opacity var(--dur-base) ease, transform var(--dur-base) ease; pointer-events:none; }
 #offlineBanner.show { opacity:1; transform:translateX(-50%) translateY(0); }
-#syncBanner { position:fixed; bottom:calc(68px + env(safe-area-inset-bottom, 0px)); left:50%; transform:translateX(-50%) translateY(20px); width:100%; max-width:420px; z-index:var(--z-banner); background:#1a1a1a; border:1px solid rgba(0,212,255,0.35); border-radius:var(--radius-sm) var(--radius-sm) 0 0; color:var(--accent2); font-size:12px; font-weight:700; text-align:center; padding:var(--space-2) var(--space-4); opacity:0; transition:opacity var(--dur-base) ease, transform var(--dur-base) ease; pointer-events:none; display:flex; align-items:center; justify-content:center; gap:var(--space-2); }
+#syncBanner { position:fixed; bottom:var(--nav-h, calc(68px + env(safe-area-inset-bottom, 0px))); left:50%; transform:translateX(-50%) translateY(20px); width:100%; max-width:420px; z-index:var(--z-banner); background:#1a1a1a; border:1px solid rgba(0,212,255,0.35); border-radius:var(--radius-sm) var(--radius-sm) 0 0; color:var(--accent2); font-size:12px; font-weight:700; text-align:center; padding:var(--space-2) var(--space-4); opacity:0; transition:opacity var(--dur-base) ease, transform var(--dur-base) ease; pointer-events:none; display:flex; align-items:center; justify-content:center; gap:var(--space-2); }
 #syncBanner.show { opacity:1; transform:translateX(-50%) translateY(0); }
 #syncBanner .sync-dot { display:inline-block; width:6px; height:6px; background:var(--accent2); border-radius:50%; animation:syncPulse 1.2s ease-in-out infinite; }
 @keyframes syncPulse { 0%,100% { opacity:0.3; transform:scale(0.85); } 50% { opacity:1; transform:scale(1.1); } }
@@ -253,7 +253,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
 /* "Update available" banner — shown when a new service worker is waiting.
    Tappable: clicking accepts the update and reloads the page. Sits above
    the bottom nav like the offline/sync banners. */
-#updateBanner { position:fixed; bottom:calc(68px + env(safe-area-inset-bottom, 0px)); left:50%; transform:translateX(-50%) translateY(20px); width:100%; max-width:420px; z-index:var(--z-banner); background:#1a1a1a; border:1px solid rgba(200,255,0,0.4); border-radius:var(--radius-sm) var(--radius-sm) 0 0; color:var(--accent); font-size:12px; font-weight:700; padding:var(--space-3) var(--space-4); opacity:0; transition:opacity var(--dur-base) ease, transform var(--dur-base) ease; pointer-events:none; display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); cursor:pointer; }
+#updateBanner { position:fixed; bottom:var(--nav-h, calc(68px + env(safe-area-inset-bottom, 0px))); left:50%; transform:translateX(-50%) translateY(20px); width:100%; max-width:420px; z-index:var(--z-banner); background:#1a1a1a; border:1px solid rgba(200,255,0,0.4); border-radius:var(--radius-sm) var(--radius-sm) 0 0; color:var(--accent); font-size:12px; font-weight:700; padding:var(--space-3) var(--space-4); opacity:0; transition:opacity var(--dur-base) ease, transform var(--dur-base) ease; pointer-events:none; display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); cursor:pointer; }
 #updateBanner.show { opacity:1; transform:translateX(-50%) translateY(0); pointer-events:auto; }
 #updateBanner .update-cta { background:var(--accent); color:#000; border:none; border-radius:var(--radius-sm); padding:6px 12px; font-size:12px; font-weight:800; cursor:pointer; flex-shrink:0; }
 
@@ -25811,6 +25811,24 @@ async function cloudSaveDashboardSummary(opts){
   if(res !== null) _dashLastHash = hash;
   return res;
 }
+
+// ── BOTTOM BANNERS SIT ON THE NAV, NOT UNDER IT ──
+// The nav's real height depends on the device (safe-area inset, landscape
+// padding, font scaling), so the offline / sync / update banners use the
+// measured height (--nav-h) instead of a fixed 68px guess, which let the nav
+// clip the bottom of the banner text on some iPhones.
+(function(){
+  const nav = document.querySelector('.nav');
+  if(!nav) return;
+  const apply = () => {
+    const h = nav.getBoundingClientRect().height;
+    if(h > 0) document.documentElement.style.setProperty('--nav-h', Math.ceil(h) + 'px');
+  };
+  apply();
+  if(typeof ResizeObserver === 'function') new ResizeObserver(apply).observe(nav);
+  window.addEventListener('resize', apply);
+  window.addEventListener('orientationchange', () => setTimeout(apply, 250));
+})();
 
 // ── OFFLINE / ONLINE DETECTION ──
 function updateOnlineStatus(){
