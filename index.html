@@ -357,6 +357,8 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display'
    --sess-bar-bottom is overridden when the nav is hidden. */
 .sess-action-bar { position:sticky; bottom:var(--sess-bar-bottom, calc(-12px - env(safe-area-inset-bottom, 0px))); z-index:40; margin:0 16px; padding:8px 0; background:var(--bg); box-shadow:0 -10px 14px -6px var(--bg); }
 .sess-action-bar .set-feedback { margin:0 0 8px; padding:8px 12px; }
+/* Keep keyboard-focused controls clear of the sticky header and bottom bar (WCAG 2.4.11). */
+.tab-content:has(#s-active.active) { scroll-padding-top:120px; scroll-padding-bottom:240px; }
 .sess-action-bar .rest-bar-wrap { margin-bottom:8px; border:0.5px solid var(--border); }
 .sess-action-bar .act-row { margin-top:0; }
 .sess-action-bar .btn-next { min-height:56px; font-size:16px; }
