@@ -83,6 +83,24 @@ html.nav-v2 .plan-links { display:block; }
 .ach-row { display:flex; align-items:center; gap:12px; }
 .ach-bar { height:6px; border-radius:3px; background:var(--surface3); margin:10px 0 6px; overflow:hidden; }
 .ach-bar > span { display:block; height:100%; border-radius:3px; }
+/* ── Phase 1: Progress weekly briefing ── */
+.brief-card { margin:0 16px 12px; padding:16px; border-radius:18px; background:var(--surface); border:1px solid var(--border); }
+.brief-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-bottom:10px; }
+.brief-title { font-size:18px; font-weight:900; margin:0; }
+.brief-range { font-size:12px; color:var(--text2); }
+.brief-count { font-size:14px; color:var(--text2); }
+.brief-big { font-size:34px; font-weight:900; color:var(--text); margin-right:4px; }
+.brief-sub { font-size:11px; color:var(--text2); }
+.brief-list { list-style:none; padding:0; margin:14px 0 0; }
+.brief-list li { display:flex; gap:10px; padding:9px 0; border-top:0.5px solid var(--border); font-size:13px; line-height:1.45; color:var(--text); }
+.brief-k { flex:0 0 74px; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:0.8px; color:var(--text2); padding-top:2px; }
+.brief-action { margin-top:12px; padding:12px; border-radius:12px; background:rgba(200,255,0,0.08); border:1px solid rgba(200,255,0,0.35); font-size:14px; font-weight:700; color:var(--text); }
+.brief-note { font-size:11px; color:var(--text2); margin:10px 0 0; line-height:1.45; }
+.sess-more-btn.prog-explore-btn { margin:0 16px 12px; width:calc(100% - 32px); }
+.pb-empty-list { display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin-top:10px; }
+.pb-empty-list .dp-chip { min-height:44px; }
+.pb-empty, .prog-empty { margin:0 16px 10px; padding:14px; border-radius:14px; border:1px dashed var(--border); color:var(--text2); font-size:13px; line-height:1.5; text-align:center; }
+button.chip { font-family:inherit; }
 .nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; padding: 4px; }
 .nav-label { font-size: 10px; font-weight: 500; color: var(--text2); }
 .nav-item.active .nav-label { color: var(--accent); }
@@ -879,18 +897,22 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
     <div class="screen" id="s-progress">
       <div class="page-header"><div class="page-title">Progress <span class="ac">Tracker</span></div></div>
       <div id="progAchCard"></div>
+      <!-- Phase 1: the default Progress view is a weekly briefing; detail lives behind Explore data. -->
+      <section id="weekBriefing" aria-labelledby="briefTitle"></section>
+      <button type="button" id="progExploreBtn" class="sess-more-btn prog-explore-btn" aria-expanded="false" aria-controls="progExplore" onclick="toggleProgExplore()"><span>📊 Explore data</span><span class="sess-more-sub">Lift charts, PBs, volume, habits</span><span class="chev" aria-hidden="true">▾</span></button>
+      <div id="progExplore" hidden>
 
       <!-- Sub-tab nav: groups 11 sections into 4 logical buckets so the
            tab is no longer one long scroll of equally-weighted analytics. -->
-      <div id="progSubTabs" style="display:flex;gap:6px;margin:0 16px 12px;overflow-x:auto;padding-bottom:2px;">
-        <div class="chip active" data-tab="week"     onclick="setProgressSubTab('week',this)">⚡ This week</div>
-        <div class="chip"        data-tab="strength" onclick="setProgressSubTab('strength',this)">📈 Strength</div>
-        <div class="chip"        data-tab="volume"   onclick="setProgressSubTab('volume',this)">💪 Volume</div>
-        <div class="chip"        data-tab="habits"   onclick="setProgressSubTab('habits',this)">🔁 Habits</div>
+      <div id="progSubTabs" role="tablist" aria-label="Progress details" onkeydown="_progTabKey(event)" style="display:flex;gap:6px;margin:0 16px 12px;overflow-x:auto;padding-bottom:2px;">
+        <button type="button" role="tab" class="chip active" id="progTab-week"     data-tab="week"     aria-controls="progPane-week"     aria-selected="true"  tabindex="0"  onclick="setProgressSubTab('week',this)">⚡ This week</button>
+        <button type="button" role="tab" class="chip"        id="progTab-strength" data-tab="strength" aria-controls="progPane-strength" aria-selected="false" tabindex="-1" onclick="setProgressSubTab('strength',this)">📈 Strength</button>
+        <button type="button" role="tab" class="chip"        id="progTab-volume"   data-tab="volume"   aria-controls="progPane-volume"   aria-selected="false" tabindex="-1" onclick="setProgressSubTab('volume',this)">💪 Volume</button>
+        <button type="button" role="tab" class="chip"        id="progTab-habits"   data-tab="habits"   aria-controls="progPane-habits"   aria-selected="false" tabindex="-1" onclick="setProgressSubTab('habits',this)">🔁 Habits</button>
       </div>
 
       <!-- ─── THIS WEEK ─── default landing: KPIs + actionable insights ─── -->
-      <div data-prog-tab="week" class="active">
+      <div data-prog-tab="week" class="active" id="progPane-week" role="tabpanel" aria-labelledby="progTab-week">
         <div class="section-label">THIS WEEK</div>
         <div id="weekKpiCard" style="margin:0 16px 4px;display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;"></div>
         <!-- Path-completed-this-week banner (populated by renderProgress) -->
@@ -900,7 +922,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
       </div>
 
       <!-- ─── STRENGTH ─── PBs, lift trends, 1RM, strength ratios ─── -->
-      <div data-prog-tab="strength">
+      <div data-prog-tab="strength" id="progPane-strength" role="tabpanel" aria-labelledby="progTab-strength">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px 8px;">
           <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text2);">PERSONAL BESTS</div>
           <button onclick="addPBTile()" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer;">+ Add lift</button>
@@ -920,8 +942,8 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         <div id="variationPicker" style="display:none;flex-wrap:wrap;gap:6px;padding:0 16px 10px;"></div>
         <div class="card" style="padding:16px;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-            <div><div style="font-size:15px;font-weight:700;" id="liftName">Bench Press</div><div style="font-size:12px;color:var(--text2);" id="liftDetail">31 sessions</div></div>
-            <div style="text-align:right;"><div style="font-size:20px;font-weight:900;color:var(--accent);" id="liftPB">82.5 kg</div><div style="background:rgba(200,255,0,0.15);color:var(--accent);font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;">PB</div></div>
+            <div><div style="font-size:15px;font-weight:700;" id="liftName"></div><div style="font-size:12px;color:var(--text2);" id="liftDetail"></div></div>
+            <div style="text-align:right;"><div style="font-size:20px;font-weight:900;color:var(--accent);" id="liftPB">–</div><div style="background:rgba(200,255,0,0.15);color:var(--accent);font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;">PB</div></div>
           </div>
           <!-- Chart row: Y-axis labels on left + SVG on right -->
           <div style="display:flex;height:116px;gap:0;">
@@ -948,7 +970,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
       </div>
 
       <!-- ─── VOLUME ─── muscle heatmap + balance + compound/isolation ─── -->
-      <div data-prog-tab="volume">
+      <div data-prog-tab="volume" id="progPane-volume" role="tabpanel" aria-labelledby="progTab-volume">
         <div class="section-label">MUSCLE HEATMAP</div>
         <div class="card" style="padding:16px;"><div id="muscleHeatmap"></div></div>
 
@@ -972,7 +994,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
       </div>
 
       <!-- ─── HABITS ─── calendar + TUT + rest + training frequency ─── -->
-      <div data-prog-tab="habits">
+      <div data-prog-tab="habits" id="progPane-habits" role="tabpanel" aria-labelledby="progTab-habits">
         <div class="section-label">WORKOUT CALENDAR</div>
         <div class="card" style="padding:14px 12px;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding:0 4px;">
@@ -1020,6 +1042,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
           <div class="cs-body"><div id="restAnalysis"></div></div>
         </div>
       </div>
+      </div><!-- /#progExplore -->
     </div>
 
     <!-- IDEAS -->
@@ -14920,12 +14943,15 @@ function renderPBCards(){
   }
   const colors=['var(--accent)','var(--accent2)','var(--purple)','var(--green)','var(--orange)','var(--red)','#9d7bff','#ff8cdd'];
   let html='';
-  for(let i=0;i<pbLifts.length;i+=2){
+  // Only lifts with data get a tile; the rest collapse into one prompt (Phase 1).
+  const _withPB = pbLifts.map((l, j) => ({ l, j, pb:getPBForLabel(l.label) })).filter(x => x.pb !== null);
+  const _noPB = pbLifts.map((l, j) => ({ l, j })).filter(x => getPBForLabel(x.l.label) === null);
+  for(let i=0;i<_withPB.length;i+=2){
     html+='<div class="stat-row">';
-    for(let j=i;j<=i+1;j++){
-      const l=pbLifts[j];
-      if(!l){html+='<div style="flex:1;min-height:80px;"></div>';continue;}
-      const pb=getPBForLabel(l.label);
+    for(let k=i;k<=i+1;k++){
+      const _x=_withPB[k];
+      if(!_x){html+='<div style="flex:1;min-height:80px;"></div>';continue;}
+      const l=_x.l, j=_x.j, pb=_x.pb;
       const hist=getHistForLabel(l.label);
       const trend=hist.length>=2?(hist[hist.length-1].weight>hist[hist.length-2].weight?'↑':hist[hist.length-1].weight<hist[hist.length-2].weight?'↓':'→'):'';
       const col=_safePBColor(l.color)||colors[j%colors.length];
@@ -14942,13 +14968,21 @@ function renderPBCards(){
     }
     html+='</div>';
   }
+  if(_noPB.length){
+    // Each no-data lift stays a button into the change/remove picker (openChangePB),
+    // so it can still be swapped or removed — and the 8-lift cap can't lock.
+    html += `<div class="pb-empty">${_withPB.length ? 'No PB yet for these — log them in a workout to set a baseline:' : 'Your personal bests will show here once you log these lifts:'}`
+      + `<div class="pb-empty-list">${_noPB.map(x => `<button type="button" class="dp-chip" onclick="openChangePB(${x.j})" aria-label="${esc(x.l.label)} — no data yet; change or remove">${esc(x.l.label)} ⋯</button>`).join('')}</div></div>`;
+  }
   if(pbLifts.length<8){
     html+=`<div style="padding:0 16px 10px;"><button onclick="addPBTile()" style="width:100%;background:var(--surface);border:0.5px dashed var(--border);border-radius:14px;padding:12px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;">+ Add lift (${pbLifts.length}/8)</button></div>`;
   }
   el.innerHTML = html;
   // Update bench PB in today card if shown
   const benchEl=document.getElementById('todayBenchPB');
-  if(benchEl){const b=getPBForLabel('Bench Press');benchEl.textContent=b!==null?b:'–';}
+  if(benchEl){const b=getPBForLabel('Bench Press');benchEl.textContent=b!==null?b:'–';
+    // Don't advertise a Bench PB card to someone who has never benched.
+    const _bc=benchEl.closest('.stat-card'); if(_bc) _bc.style.display = b!==null ? '' : 'none';}
 }
 
 function openChangePB(idx){
@@ -18644,15 +18678,22 @@ function renderBWChart() {
 }
 
 function renderProgress(){
+  renderWeeklyBriefing();
+  renderPBCards();   // also feeds Today's bench card
+  _syncProgExplore();
+  if(!_progExploreOpen()){ updateStorageBadge(); return; }
+  _renderProgressDetails();
+}
+
+// The detailed views behind "Explore data" (rendered only when it's open).
+function _renderProgressDetails(){
   renderWeekKpi();
-  // Path-completed-this-week banner (empty string when none completed)
   const _wpc = document.getElementById('weekPathComplete');
-  if(_wpc) _wpc.innerHTML = (typeof _renderPathCompletedThisWeekCard === 'function')
-    ? _renderPathCompletedThisWeekCard() : '';
+  if(_wpc) _wpc.innerHTML = '';   // the path-complete banner now heads the briefing
   renderWeekInsights();
-  renderPBCards();
   renderCalendar();
-  selLift('bench',document.querySelector('#liftTabs .chip.active')||document.querySelector('#liftTabs .chip'));
+  const _lk = _firstLiftWithHistory();
+  selLift(_lk, [...document.querySelectorAll('#liftTabs .chip')].find(c => (c.getAttribute('onclick') || '').indexOf("'" + _lk + "'") !== -1) || document.querySelector('#liftTabs .chip'));
   renderMuscleHeatmap();
   renderMuscleBalance();
   renderStrengthRatios();
@@ -18669,18 +18710,180 @@ function renderProgress(){
   updateStorageBadge();
 }
 
+
+// ── Phase 1: Progress as a weekly briefing ─────────────────────────────────
+// Pure: sessions/week the active plan asks for (core days + add-ons), else null.
+function _plannedPerWeek(path){
+  if(!path || path.status !== 'active' || !path.coreSchedule) return null;
+  const core = Number(path.coreSchedule.daysPerWeek) || 0;
+  const add = (path.addOns || []).reduce((a, x) => a + (Number(x && x.frequency) || 0), 0);
+  return core + add > 0 ? core + add : null;
+}
+// Pure: local Monday 00:00 of the week containing nowMs.
+function _weekStartMs(nowMs){
+  const d = new Date(nowMs); d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return d.getTime();
+}
+function _sessTime(s){ const t = new Date(s && s.date).getTime(); return isFinite(t) ? t : NaN; }
+// Pure: new PBs in [startMs, endMs) — heaviest logged weight per exercise that
+// beats every EARLIER session. First-ever lifts aren't PBs (no baseline).
+function _prsInWindow(sessions, startMs, endMs){
+  const prior = {}, inWin = {};
+  (sessions || []).forEach(s => {
+    if(!s || s.manualActivity || !s.setLog) return;
+    const t = _sessTime(s); if(!isFinite(t)) return;
+    Object.entries(s.setLog).forEach(([n, v]) => {
+      if(!v || v.bw) return;
+      const sw = Array.isArray(v.setWeights) ? v.setWeights.map(Number).filter(x => x > 0) : [];
+      const w = Math.max(Number(v.weight) || 0, sw.length ? Math.max.apply(null, sw) : 0);
+      if(!(w > 0)) return;
+      if(t < startMs){ if(w > (prior[n] || 0)) prior[n] = w; }
+      else if(t < endMs){ if(w > (inWin[n] || 0)) inWin[n] = w; }
+    });
+  });
+  return Object.keys(inWin).filter(n => prior[n] > 0 && inWin[n] > prior[n])
+    .map(n => ({ name:n, weight:inWin[n], prev:prior[n] }))
+    .sort((a, b) => (b.weight - b.prev) - (a.weight - a.prev) || (a.name < b.name ? -1 : 1));
+}
+// Pure: the weekly briefing. opts = {nowMs, planned (number|null), balance
+// (_muscleBalanceVerdict output or null)}. Plain text out; caller escapes.
+function _weeklyBriefing(sessions, opts){
+  const o = opts || {}, now = Number(o.nowMs), DAY = 864e5, WEEK = 7 * DAY;
+  const ws = _weekStartMs(now);
+  const list = (sessions || []).filter(s => s && isFinite(_sessTime(s)) && _sessTime(s) <= now);
+  const gym = list.filter(s => !s.manualActivity);
+  const done = gym.filter(s => _sessTime(s) >= ws).length;
+  const activities = list.filter(s => s.manualActivity && _sessTime(s) >= ws).length;
+  const planned = Number(o.planned) > 0 ? Number(o.planned) : 3;
+  const plannedSource = Number(o.planned) > 0 ? 'plan' : 'default';
+  const daysLeft = Math.max(0, 6 - Math.floor((now - ws) / DAY));   // days after today
+  // Trend: last full week's volume vs the average of the three before it.
+  const vol = k => gym.filter(s => { const t = _sessTime(s); return t >= ws - k * WEEK && t < ws - (k - 1) * WEEK; })
+                      .reduce((a, s) => a + (Number(s.volume) || 0), 0);
+  const recent = vol(1), base = [vol(2), vol(3), vol(4)].filter(v => v > 0);
+  let trend = null;
+  if(recent > 0 && base.length >= 2){
+    const avg = base.reduce((a, b) => a + b, 0) / base.length;
+    const pct = Math.round((recent - avg) / avg * 100);
+    trend = pct >= 10 ? { dir:'up', text:`Last week's training volume was ${pct}% above your recent average — you're building.` }
+      : pct <= -10 ? { dir:'down', text:`Last week's volume was ${-pct}% below your recent average. A lighter week is fine; two in a row is worth a look.` }
+      : { dir:'steady', text:`Last week's volume was in line with your recent average — steady and consistent.` };
+  }
+  const newPBs = _prsInWindow(gym, ws, now + 1).slice(0, 3);
+  const last28 = gym.filter(s => _sessTime(s) > now - 4 * WEEK).length;
+  const smallSample = gym.length < 4 || last28 < 3;
+  const sampleNote = !gym.length ? '' : smallSample
+    ? `Based on ${gym.length} session${gym.length === 1 ? '' : 's'} so far — trends and balance become reliable after a few weeks of logging.` : '';
+  const b = o.balance;
+  const underTrained = (!smallSample && b && b.level >= 1 && b.low)
+    ? { label:b.low.label, pct:b.low.pct, exs:(b.low.exs || []).slice(0, 2) } : null;
+  const left = Math.max(0, planned - done);
+  let action;
+  if(!gym.length) action = { kind:'start', text:'Log your first workout — this briefing fills in from there.' };
+  else if(left > 0 && left <= daysLeft + 1) action = { kind:'schedule', text:`Fit in ${left} more session${left === 1 ? '' : 's'} by Sunday to hit your ${planned}.` };
+  else if(left > 0) action = { kind:'schedule', text:`${left} sessions to go with ${daysLeft + 1} day${daysLeft === 0 ? '' : 's'} left — do what you can; one session keeps the habit alive.` };
+  else if(underTrained) action = { kind:'balance', text:`Add ${underTrained.exs.join(' or ')} next week — ` + (underTrained.pct > 0 ? `${underTrained.label} is only ${underTrained.pct}% of your training.` : `you haven't trained ${underTrained.label.toLowerCase()} lately.`) };
+  else if(newPBs.length) action = { kind:'progress', text:'Repeat your new top weights once more next week before adding load.' };
+  else action = { kind:'keep', text:'Week done — keep the same schedule next week.' };
+  return { weekStartMs:ws, done, planned, plannedSource, activities, daysLeft, trend, newPBs, underTrained,
+           balanced: !smallSample && !!b && b.level === 0, action, smallSample, sampleNote, empty: gym.length === 0 };
+}
+
+function renderWeeklyBriefing(){
+  const el = document.getElementById('weekBriefing');
+  if(!el) return;
+  if(typeof _isColdSyncing === 'function' && _isColdSyncing()){
+    el.innerHTML = '<div class="brief-card"><div class="skeleton" style="width:40%;height:14px;margin-bottom:12px;"></div><div class="skeleton" style="width:70%;height:30px;"></div></div>';
+    return;
+  }
+  let balance = null;
+  try {
+    const bw = (userProfile && Number(userProfile.bodyWeight)) || 80;
+    const sh = _calcMuscleGroupShare(completedSessions, { windowWeeks:4, bodyweight:bw });
+    balance = _muscleBalanceVerdict(sh.share, sh.hasData);
+  } catch(e){ balance = null; }
+  const B = _weeklyBriefing(completedSessions, { nowMs:Date.now(), planned:_plannedPerWeek(typeof userPath !== 'undefined' ? userPath : null), balance });
+  const ws = new Date(B.weekStartMs), we = new Date(B.weekStartMs + 6 * 864e5);
+  const fmt = d => d.toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+  const pathDone = (typeof _renderPathCompletedThisWeekCard === 'function') ? _renderPathCompletedThisWeekCard() : '';
+  if(B.empty){
+    el.innerHTML = `<div class="brief-card">
+      <div class="brief-head"><h2 class="brief-title" id="briefTitle">Your week</h2><span class="brief-range">${esc(fmt(ws))} – ${esc(fmt(we))}</span></div>
+      <p class="brief-note" style="margin-top:0;font-size:13px;">No workouts logged yet. After your first session this page tells you how the week went, what improved and what to do next.</p>
+      <div class="brief-action"><div class="more-lbl">Do this next</div>${esc(B.action.text)}</div>
+      <button type="button" class="st-secondary" onclick="goTab2('today')">Go to today's workout</button>
+    </div>`;
+    return;
+  }
+  const pct = Math.min(100, Math.round(B.done / B.planned * 100));
+  const trendTxt = B.trend ? B.trend.text : 'Not enough full weeks yet to call a trend.';
+  const pbTxt = B.newPBs.length
+    ? B.newPBs.map(p => `${esc(p.name)} ${esc(_fmtKg(p.weight))} kg <span style="color:var(--green);">(+${esc(_fmtKg(p.weight - p.prev))})</span>`).join('<br>')
+    : 'None yet this week — PBs count when you beat a weight from an earlier week.';
+  const watchTxt = B.underTrained
+    ? (B.underTrained.pct > 0 ? `${esc(B.underTrained.label)} is only ${esc(B.underTrained.pct)}% of your recent training.` : `No ${esc(B.underTrained.label.toLowerCase())} work in your last 4 weeks.`)
+    : B.balanced ? 'Training is well spread across push, pull, legs and core.'
+    : B.smallSample ? 'Too early to judge balance — a few more sessions needed.'
+    : 'Nothing under-trained stands out.';
+  el.innerHTML = `${pathDone}<div class="brief-card">
+    <div class="brief-head"><h2 class="brief-title" id="briefTitle">Your week</h2><span class="brief-range">${esc(fmt(ws))} – ${esc(fmt(we))}</span></div>
+    <div class="brief-count"><span class="brief-big">${B.done}</span>of ${B.planned} planned session${B.planned === 1 ? '' : 's'}</div>
+    <div class="ach-bar" role="progressbar" aria-label="Sessions this week" aria-valuemin="0" aria-valuemax="${B.planned}" aria-valuenow="${Math.min(B.done, B.planned)}"><span style="width:${pct}%;background:var(--accent);"></span></div>
+    <div class="brief-sub">${B.plannedSource === 'plan' ? 'Planned from your Path' : 'Default target of 3 — start a Path in Plan to set your own'}${B.activities ? ` · +${B.activities} other activit${B.activities === 1 ? 'y' : 'ies'}` : ''}</div>
+    <ul class="brief-list">
+      <li><span class="brief-k">Trend</span><span>${esc(trendTxt)}</span></li>
+      <li><span class="brief-k">New PBs</span><span>${pbTxt}</span></li>
+      <li><span class="brief-k">Watch</span><span>${watchTxt}</span></li>
+    </ul>
+    <div class="brief-action"><div class="more-lbl">Do this next</div>${esc(B.action.text)}</div>
+    ${B.sampleNote ? `<p class="brief-note">ⓘ ${esc(B.sampleNote)}</p>` : ''}
+  </div>`;
+}
+
+// First tracked lift the user actually has history for (chart default).
+function _firstLiftWithHistory(){
+  try { const t = TRACKED_LIFTS.find(l => getLiftHistory(l.key).length > 0); return t ? t.key : 'bench'; } catch(e){ return 'bench'; }
+}
+
+// "Explore data" disclosure (state remembered per device).
+function _progExploreOpen(){ const el = document.getElementById('progExplore'); return !!el && !el.hidden; }
+function _syncProgExplore(){
+  const el = document.getElementById('progExplore'), btn = document.getElementById('progExploreBtn');
+  if(!el || !btn) return;
+  const open = lsGetRaw('progExplore', '0') === '1';
+  el.hidden = !open;
+  btn.setAttribute('aria-expanded', String(open));
+}
+function toggleProgExplore(){
+  const open = !_progExploreOpen();
+  lsSetRaw('progExplore', open ? '1' : '0');
+  _syncProgExplore();
+  if(open) _renderProgressDetails();
+}
+function _progTabKey(e){
+  const tabs = [...document.querySelectorAll('#progSubTabs [role="tab"]')];
+  const idx = tabs.indexOf(document.activeElement);
+  if(idx < 0) return;
+  const next = _navKeyIndex(e.key, idx, tabs.length);
+  if(next < 0) return;
+  e.preventDefault();
+  tabs[next].focus();
+  setProgressSubTab(tabs[next].dataset.tab, tabs[next]);
+}
+
 // Switch which sub-tab section of the Progress screen is visible.
 // Called by the chip nav. Persists across sessions.
 // Optional `liftKey` (3rd arg) is honoured when tab==='strength' — taps the
 // matching chip in #liftTabs so insight cards can drill to a specific lift.
 function setProgressSubTab(tab, chipEl, skipPersist, liftKey){
   // Toggle chip active state
-  document.querySelectorAll('#progSubTabs .chip').forEach(c => c.classList.remove('active'));
-  if(chipEl) chipEl.classList.add('active');
-  else {
-    const c = document.querySelector('#progSubTabs .chip[data-tab="' + tab + '"]');
-    if(c) c.classList.add('active');
-  }
+  document.querySelectorAll('#progSubTabs .chip').forEach(c => {
+    const on = c.dataset.tab === tab;
+    c.classList.toggle('active', on);
+    c.setAttribute('aria-selected', String(on));
+    c.setAttribute('tabindex', on ? '0' : '-1');
+  });
   // Show only the matching tab container
   document.querySelectorAll('#s-progress [data-prog-tab]').forEach(el => {
     el.classList.toggle('active', el.dataset.progTab === tab);
@@ -18866,9 +19069,9 @@ function renderWeekInsights(){
   // Determine target: pull from path target if available, else infer from history
   let weeklyTarget = 3;
   try {
-    if(typeof userPath !== 'undefined' && userPath && userPath.daysPerWeek){
-      weeklyTarget = userPath.daysPerWeek;
-    }
+    // (used to read a daysPerWeek field that only exists under coreSchedule → always 3)
+    const _pp = _plannedPerWeek(typeof userPath !== 'undefined' ? userPath : null);
+    if(_pp) weeklyTarget = _pp;
   } catch(e){}
   if(thisWeekCount >= weeklyTarget){
     insights.push({text: `🔥 Hit your weekly target — ${thisWeekCount}/${weeklyTarget} sessions logged. Anything extra is a bonus.`, target:'habits'});
@@ -19347,28 +19550,9 @@ function renderWeekKpi(){
     });
   });
 
-  // PRs this week — count distinct exercises that hit a new max weight
-  const allBefore = completedSessions.filter(s => {
-    const d = s.date instanceof Date ? s.date : new Date(s.date);
-    return d < wStart && !s.manualActivity;
-  });
-  const priorMax = {};
-  allBefore.forEach(s => {
-    Object.entries(s.setLog || {}).forEach(([n, v]) => {
-      const w = v.weight || 0;
-      if(w > (priorMax[n] || 0)) priorMax[n] = w;
-    });
-  });
-  const prSet = new Set();
-  weekSess.forEach(s => {
-    Object.entries(s.setLog || {}).forEach(([n, v]) => {
-      const w = v.weight || 0;
-      if(w > 0 && w > (priorMax[n] || 0)){
-        prSet.add(n);
-        if(w > (priorMax[n] || 0)) priorMax[n] = w; // ensure same exercise PR'd within the week only counts once
-      }
-    });
-  });
+  // PRs this week — beat the heaviest weight from EARLIER weeks. A first-ever
+  // lift has no baseline, so it isn't a PR (it used to count every new lift).
+  const prSet = new Set(_prsInWindow(completedSessions, wStart.getTime(), Date.now() + 1).map(p => p.name));
 
   const volStr = volume >= 1000 ? (Math.round(volume / 100) / 10) + 'k' : Math.round(volume);
   const tutStr = tutSec >= 3600 ? Math.round(tutSec / 360) / 10 + 'h' : Math.round(tutSec / 60) + 'm';
@@ -19519,7 +19703,8 @@ function renderMuscleHeatmap(){
     </div>` : '';
 
   if(data.total === 0){
-    el.innerHTML = `${toggleHtml}<div style="padding:20px;text-align:center;color:var(--text2);font-size:13px;">No sessions in the last ${_muscleHeatmapWindow} days — start training to see your heatmap.</div>${svg}${legend}${chips}`;
+    // No body diagram here: with nothing logged every muscle would render as 'untrained' red.
+    el.innerHTML = `${toggleHtml}<div class="prog-empty">No workouts in the last ${_muscleHeatmapWindow} days yet. Log a session and this map shows which muscles you've trained and which need attention.</div>`;
     return;
   }
   el.innerHTML = `${toggleHtml}${svg}${legend}${chips}${topHtml}${underHtml}`;

@@ -2431,38 +2431,161 @@ def gate_nav_v2(html, js):
     return ok_all
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gate 14 — Phase 1 Progress weekly briefing
+# Pure logic with a fixed clock (Tue 24 Nov 2026, local) + markup/wiring lint.
+# ─────────────────────────────────────────────────────────────────────────────
+BRIEF_FNS = ['_plannedPerWeek', '_weekStartMs', '_sessTime', '_prsInWindow', '_weeklyBriefing']
+
+BRIEF_ASSERTIONS = r"""
+var fails = [];
+function eq(label, got, want){ if(JSON.stringify(got)!==JSON.stringify(want)) fails.push(label+' — got '+JSON.stringify(got)+', want '+JSON.stringify(want)); }
+function ok(label, cond){ if(!cond) fails.push(label); }
+var NOW = new Date(2026, 10, 24, 18, 0, 0).getTime();          // Tue 24 Nov 2026 18:00 local
+var MON = new Date(2026, 10, 23, 0, 0, 0).getTime();
+var D = 864e5;
+function S(daysAgo, lifts, extra){ var setLog = {}, vol = 0;
+  lifts.forEach(function(l){ setLog[l[0]] = { reps:[5,5,5], weight:l[1], setWeights:[l[1],l[1],l[1]], sets:3 }; vol += l[1]*15; });
+  var s = { date:new Date(NOW - daysAgo*D), setLog:setLog, volume:vol }; if(extra) for(var k in extra) s[k]=extra[k]; return s; }
+
+// _plannedPerWeek
+eq('active path: core + add-ons', _plannedPerWeek({status:'active', coreSchedule:{daysPerWeek:3}, addOns:[{frequency:2}]}), 5);
+eq('5-day path is 5 (the old target bug read a missing field → 3)', _plannedPerWeek({status:'active', coreSchedule:{daysPerWeek:5}, addOns:[]}), 5);
+eq('no path → null', _plannedPerWeek(null), null);
+eq('completed path → null', _plannedPerWeek({status:'completed', coreSchedule:{daysPerWeek:4}}), null);
+
+// _weekStartMs
+eq('week starts Monday 00:00 local', _weekStartMs(NOW), MON);
+eq('a Monday maps to itself', _weekStartMs(MON + 3600e3), MON);
+eq('a Sunday maps to the Monday before', _weekStartMs(new Date(2026, 10, 29, 22, 0).getTime()), MON);
+
+// _prsInWindow
+var H = [S(10, [['Bench Press',60],['Squat',80]]), S(1, [['Bench Press',62.5],['Deadlift',100],['Squat',80]])];
+eq('beats an earlier week → PB; first-ever lift and a tie are not', _prsInWindow(H, MON, NOW+1).map(function(p){return p.name;}), ['Bench Press']);
+eq('PB carries the previous best', _prsInWindow(H, MON, NOW+1)[0], {name:'Bench Press', weight:62.5, prev:60});
+eq('manual activities ignored', _prsInWindow([S(10,[['Row',50]]), S(1,[['Row',90]],{manualActivity:true})], MON, NOW+1), []);
+eq('per-set weights count (top set heavier than setLog.weight)', _prsInWindow([S(10,[['Row',50]]), {date:new Date(NOW-D), setLog:{Row:{weight:50, setWeights:[50,55]}}}], MON, NOW+1).length, 1);
+
+// _weeklyBriefing
+var empty = _weeklyBriefing([], {nowMs:NOW, planned:null, balance:null});
+ok('no sessions → empty state with a start action', empty.empty === true && empty.action.kind === 'start' && empty.sampleNote === '');
+var B = _weeklyBriefing(H, {nowMs:NOW, planned:null, balance:null});
+eq('done counts this week only', B.done, 1);
+eq('no plan → default target 3', [B.planned, B.plannedSource], [3, 'default']);
+eq('with a plan → its count', _weeklyBriefing(H, {nowMs:NOW, planned:5}).planned, 5);
+ok('2 sessions → small-sample note', B.smallSample === true && /2 sessions/.test(B.sampleNote));
+eq('small sample never diagnoses imbalance', _weeklyBriefing(H, {nowMs:NOW, balance:{level:2, low:{label:'Core', pct:0, exs:['planks']}}}).underTrained, null);
+eq('behind target → schedule action', B.action.kind, 'schedule');
+eq('days left counted to Sunday (Tue → 5)', B.daysLeft, 5);
+var BIG = [];
+[29,27,22,20,15,13,9,8].forEach(function(d){ BIG.push(S(d, [['Squat',80]])); });
+BIG.push(S(1,[['Squat',80]])); BIG.push(S(0.2,[['Squat',80]])); BIG.push(S(0.1,[['Squat',80]]));
+var R = _weeklyBriefing(BIG, {nowMs:NOW, planned:3, balance:{level:2, low:{label:'Core', pct:4, exs:['planks','leg raises','x']}}});
+ok('enough data → no small-sample note', R.smallSample === false && R.sampleNote === '');
+ok('target met + imbalance → balance action naming exercises', R.action.kind === 'balance' && /planks or leg raises/.test(R.action.text));
+eq('under-trained area reported', R.underTrained, {label:'Core', pct:4, exs:['planks','leg raises']});
+ok('trend computed from full weeks', R.trend && ['up','down','steady'].indexOf(R.trend.dir) !== -1);
+var FUT = _weeklyBriefing([S(-2, [['Squat',90]])].concat(H), {nowMs:NOW});
+eq('future-dated sessions ignored', FUT.done, 1);
+var ACT = _weeklyBriefing(H.concat([S(0.5, [], {manualActivity:true})]), {nowMs:NOW});
+eq('manual activities counted separately', [ACT.done, ACT.activities], [1, 1]);
+JSON.stringify(fails);
+"""
+
+def gate_briefing(html, js):
+    ok_all = True
+    pieces = []
+    for fn in BRIEF_FNS:
+        src = extract_decl(js, fn)
+        if not src:
+            print(f'  ✗ could not extract function {fn}'); return False
+        pieces.append(src)
+    out, _ = run_jxa('\n'.join(pieces) + '\n' + BRIEF_ASSERTIONS)
+    try:
+        fails = json.loads(out)
+    except Exception:
+        fails = ['briefing runner errored: ' + out[:300]]
+    for f in fails: print('  ✗ ' + f)
+    if fails: ok_all = False
+    else: print('  ✓ briefing: planned count, Monday weeks, PBs need a baseline, small-sample honesty, one action, trend')
+
+    lint = []
+    m1, m2 = html.find('id="s-progress"'), html.find('id="s-profile"')
+    prog = html[m1:m2] if m1 != -1 and m2 != -1 else ''
+    if 'id="weekBriefing"' not in prog: lint.append('#weekBriefing missing from Progress')
+    if not re.search(r'id="progExploreBtn"[^>]*aria-expanded="false"[^>]*aria-controls="progExplore"', prog):
+        lint.append('Explore data is not a disclosure button (aria-expanded/aria-controls)')
+    if not re.search(r'<div id="progExplore" hidden>', prog): lint.append('#progExplore is not hidden by default')
+    if prog.find('id="progExplore"') > prog.find('id="progSubTabs"'): lint.append('detailed sub-tabs are not inside Explore data')
+    if not re.search(r'id="progSubTabs" role="tablist"[^>]*onkeydown="_progTabKey\(event\)"', prog): lint.append('Progress sub-tabs are not a keyboard tablist')
+    if len(re.findall(r'<button type="button" role="tab" class="chip[^>]*aria-selected=', prog)) != 4: lint.append('Progress sub-tabs are not 4 role=tab buttons with aria-selected')
+    if len(re.findall(r'role="tabpanel" aria-labelledby="progTab-', prog)) != 4: lint.append('Progress panes are not labelled tabpanels')
+    if re.search(r'31 sessions|82\.5 kg', prog): lint.append('fake lift-card placeholder values are still in the markup')
+    rp = extract_decl(js, 'renderProgress') or ''
+    if 'renderWeeklyBriefing()' not in rp or '_progExploreOpen()' not in rp: lint.append('renderProgress does not lead with the briefing / skip hidden detail')
+    st = extract_decl(js, 'setProgressSubTab') or ''
+    if "setAttribute('aria-selected'" not in st: lint.append('setProgressSubTab does not update aria-selected')
+    wk = extract_decl(js, 'renderWeekKpi') or ''
+    if '_prsInWindow(' not in wk or 'priorMax' in wk: lint.append('week KPI still counts first-ever lifts as PRs')
+    wi = extract_decl(js, 'renderWeekInsights') or ''
+    if 'userPath.daysPerWeek' in wi or '_plannedPerWeek(' not in wi: lint.append('insights weekly target still reads the missing userPath.daysPerWeek')
+    pb = extract_decl(js, 'renderPBCards') or ''
+    if '_withPB' not in pb or 'pb-empty' not in pb: lint.append('PB tiles with no data are still rendered as "– kg" cards')
+    if not re.search(r'_noPB\.map\([^`]*`<button type="button"[^>]*onclick="openChangePB\(\$\{x\.j\}\)"', pb):
+        lint.append('no-data PB lifts have no control to change/remove them (8-lift cap can lock)')
+    if ".style.display = b!==null ? '' : 'none'" not in pb: lint.append("Today's Bench PB card still shows for someone who never benched")
+    hm = extract_decl(js, 'renderMuscleHeatmap') or ''
+    m = re.search(r'if\(data\.total === 0\)\{[\s\S]*?return;', hm)
+    if not m or '${svg}' in m.group(0): lint.append('empty heatmap still draws the all-red body')
+    rb = extract_decl(js, 'renderWeeklyBriefing') or ''
+    # EVERY ${...} that touches a name/text value must route it through esc().
+    for name in ['p.name', 'B.action.text', 'B.sampleNote', 'trendTxt', 'B.underTrained.label']:
+        for expr in re.findall(r'\$\{([^{}]*)\}', rb):
+            if name in expr and not re.search(r'esc\(\s*' + re.escape(name), expr):
+                lint.append(f'renderWeeklyBriefing interpolates {name} without esc(): ${{{expr[:50]}}}')
+    if lint:
+        for f in lint: print('  ✗ ' + f)
+        ok_all = False
+    else:
+        print('  ✓ briefing first, detail behind Explore data, real tabs, empty states, PR/target fixes wired, names escaped')
+    return ok_all
+
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/13] parse')
+    print('[1/14] parse')
     p = gate_parse(js)
-    print('[2/13] invariants')
+    print('[2/14] invariants')
     inv = gate_invariants(js)
-    print('[3/13] video map')
+    print('[3/14] video map')
     vm = gate_videomap(js)
-    print('[4/13] inline handler wiring')
+    print('[4/14] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/13] auth log hygiene')
+    print('[5/14] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/13] sign-out scrub')
+    print('[6/14] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/13] safe rendering of user text')
+    print('[7/14] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/13] sync honesty')
+    print('[8/14] sync honesty')
     sy = gate_sync(js)
-    print('[9/13] media fallback + reminder copy')
+    print('[9/14] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/13] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/14] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/13] core-journey accessibility (session + dialogs)')
+    print('[11/14] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/13] Start today (first-use flow) + shortened Path wizard')
+    print('[12/14] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/13] simplified navigation (flagged)')
+    print('[13/14] simplified navigation (flagged)')
     nv = gate_nav_v2(html, js)
+    print('[14/14] Progress weekly briefing')
+    br = gate_briefing(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 
