@@ -550,18 +550,138 @@ def gate_videomap(js):
     print(f'  ✓ WARMUP_MOVES well-formed ({len(ws)} moves)')
     return True
 
+def extract_const_object(js, name):
+    """Extract `const NAME={ ... };` by brace-matching."""
+    m = re.search(r'const\s+' + re.escape(name) + r'\s*=\s*\{', js)
+    if not m:
+        return None
+    i = js.index('{', m.start())
+    depth = 0
+    for j in range(i, len(js)):
+        c = js[j]
+        if c == '{': depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0:
+                return js[m.start():j+1] + ';'
+    return None
+
+MEDIA_FALLBACK_ASSERTIONS = r"""
+var fails = [];
+var names = {};
+function walk(x, inEx){ if(Array.isArray(x)){ x.forEach(function(y){ walk(y, inEx); }); return; }
+  if(x && typeof x === 'object'){ if(inEx && typeof x.name === 'string') names[x.name] = 1;
+    for(var k in x){ walk(x[k], inEx || k === 'exercises'); } } }
+for(var k in ULF) walk(ULF[k], true);
+for(var k in PPL) walk(PPL[k], true);
+walk(LIBRARY_PROGRAMMES, false); walk(WARMUP_MOVES, true); walk(COOLDOWN_STRETCHES, true);
+walk(HIIT, false); walk(HIIT_TEMPLATES, false);
+var all = Object.keys(names);
+if(all.length < 150) fails.push('programme universe too small (' + all.length + ') — extraction broke');
+var specific = 0;
+all.forEach(function(n){
+  var e = _findEXDBEntry(n);
+  if(e && Array.isArray(e.cues) && e.cues.length){ specific++; return; }
+  var g = _genericCues(n);
+  if(!Array.isArray(g) || !g.length || g.some(function(c){ return typeof c !== 'string' || !c.trim(); }))
+    fails.push('no text cues for ' + JSON.stringify(n));
+});
+function nm(n){ var e = _findEXDBEntry(n); return e ? e.name : null; }
+function bad(label, n, re){ var r = nm(n); if(r && re.test(r)) fails.push(label + ' — got ' + JSON.stringify(r)); }
+bad("'Incline Dumbbell Press' must not resolve to a curl", 'Incline Dumbbell Press', /curl/i);
+bad("'Seated Calf Stretch' must not resolve to a raise", 'Seated Calf Stretch', /raise/i);
+bad("'Single Leg Stretch' must not resolve to a press", 'Single Leg Stretch', /press/i);
+bad("'Press' must not resolve to Bench Press", 'Press', /bench/i);
+bad("'Side Plank Dips (Left)' must not resolve to tricep Dips", 'Side Plank Dips (Left)', /^dips$/i);
+if(nm('Incline Dumbbell Press') !== 'Incline Dumbbell Press') fails.push('Incline Dumbbell Press has no exact EXDB entry');
+if(nm('Dumbbell Bicep Curls') !== 'Dumbbell Bicep Curls') fails.push('Dumbbell Bicep Curls has no exact EXDB entry');
+if(!/squat/i.test(nm('Goblet Squat') || '')) fails.push('Goblet Squat lost its squat match');
+if(nm('Dumbbell Row') !== 'Dumbbell Rows') fails.push('Dumbbell Row lost its Dumbbell Rows match');
+if(nm('Dumbbell Lunges') !== 'Lunges') fails.push('Dumbbell Lunges lost its Lunges match');
+if(!_hasExerciseGuide('Some Unmapped Move')) fails.push('_hasExerciseGuide false for a non-empty name');
+if(_hasExerciseGuide('')) fails.push('_hasExerciseGuide true for an empty name');
+JSON.stringify({fails: fails, n: all.length, specific: specific});
+"""
+
+def gate_media_fallback(js, html):
+    """Offline text fallback for exercise media + honest reminder copy:
+    (a) every programme-universe exercise yields text cues (EXDB or generic),
+    (b) fuzzy EXDB lookup never crosses movement patterns,
+    (c) every self-hosted demo <video>/<img> has an onerror fallback,
+    (d) reminder copy makes no background-push promise; dismiss-day is local."""
+    ok_all = True
+    # (a)+(b) sandboxed lookups over the real programme literals
+    pieces = []
+    missing_src = []
+    for o in ['ULF', 'PPL']:
+        src = extract_const_object(js, o)
+        if src: pieces.append(src)
+        else: missing_src.append(o)
+    for a in ['_EX_STEMS', 'LIBRARY_PROGRAMMES', 'WARMUP_MOVES', 'COOLDOWN_STRETCHES', 'HIIT', 'HIIT_TEMPLATES', 'EXDB']:
+        src = extract_const_array(js, a)
+        if src: pieces.append(src)
+        else: missing_src.append(a)
+    for fn in ['_exStem', '_findEXDBEntry', '_genericCues', '_hasExerciseGuide']:
+        src = extract_decl(js, fn)
+        if src: pieces.append(src)
+        else: missing_src.append(fn)
+    if missing_src:
+        print(f'  ✗ could not extract {missing_src}'); ok_all = False
+    else:
+        out, _ = run_jxa('\n'.join(pieces) + '\n' + MEDIA_FALLBACK_ASSERTIONS)
+        try:
+            res = json.loads(out)
+        except Exception:
+            res = None
+            print('  ✗ media-fallback runner errored: ' + out); ok_all = False
+        if res is not None and res['fails']:
+            for f in res['fails'][:20]: print('  ✗ ' + f)
+            ok_all = False
+        elif res is not None:
+            print(f"  ✓ all {res['n']} programme exercises have text cues ({res['specific']} exercise-specific, rest general); fuzzy lookup stays within movement pattern")
+    # (c) static: every self-hosted media element falls back on error
+    fb = extract_decl(js, '_exFallbackBlockHtml')
+    cd = extract_decl(js, '_renderCooldownStretch')
+    if not fb or not cd:
+        print('  ✗ could not extract _exFallbackBlockHtml / _renderCooldownStretch'); ok_all = False
+    else:
+        vids = re.findall(r'<video\b[^>]*>', fb)
+        imgs = re.findall(r'<img\b[^>]*>', fb)
+        cimgs = re.findall(r'<img\b[^>]*>', cd)
+        tags_ok = len(vids) >= 1 and len(imgs) >= 2 and len(cimgs) >= 2
+        if not tags_ok:
+            print(f'  ✗ expected media tags not found (video={len(vids)}, img={len(imgs)}, cooldown img={len(cimgs)})'); ok_all = False
+        missing = [t for t in vids + imgs + cimgs if 'onerror=' not in t]
+        for t in missing: print('  ✗ media tag without onerror: ' + t[:90])
+        if missing: ok_all = False
+        elif tags_ok:
+            print('  ✓ self-hosted demo <video>/<img> (form guide + cooldown) all have onerror fallbacks')
+    # (d) reminder copy honesty + local dismiss day
+    bad_copy = [p for p in ['background push coming later', "we'll nudge you", "we\\'ll nudge you"] if p in html]
+    if bad_copy:
+        print(f'  ✗ dishonest reminder copy still present: {bad_copy}'); ok_all = False
+    tdk = extract_decl(js, '_todayDateKey')
+    tdk_ok = bool(tdk) and 'toISOString' not in tdk and 'getFullYear' in tdk
+    if not tdk_ok:
+        print('  ✗ _todayDateKey is not a LOCAL date (missing, uses toISOString, or no getFullYear)'); ok_all = False
+    if not bad_copy and tdk_ok:
+        print('  ✓ reminder copy is honest (no background-push promise) and dismiss-day is local')
+    return ok_all
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/3] parse')
+    print('[1/4] parse')
     p = gate_parse(js)
-    print('[2/3] invariants')
+    print('[2/4] invariants')
     inv = gate_invariants(js)
-    print('[3/3] video map')
+    print('[3/4] video map')
     vm = gate_videomap(js)
+    print('[4/4] media fallback + reminder copy')
+    mf = gate_media_fallback(js, html)
     print()
-    if p and inv and vm:
+    if p and inv and vm and mf:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 
