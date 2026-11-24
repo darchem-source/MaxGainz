@@ -6114,7 +6114,7 @@ function _aiCheckOutput(task, out, f){
     const all = out.headline + ' ' + out.body;
     if(unsafe(all)) return { ok:false, reason:'medical' };
     const derived = f.pbs.map(p => Math.round((p.weight - p.prev) * 100) / 100)
-      .concat([Math.max(0, f.planned - f.done), f.daysLeft + 1, Math.abs(f.trend ? f.trend.pct : 0)]);
+      .concat([Math.max(0, f.planned - f.done), f.daysLeft + 1, Math.abs(f.trend ? f.trend.pct : 0), f.pbs.length]);   // PB count: also checked by 'pb count' below
     if(!_aiGrounded(all, _aiFactNumbers(f).concat(derived)).ok) return { ok:false, reason:'ungrounded' };
     // Labels: only L1..Ln for the PBs that exist; never exercise ids.
     const labels = all.match(/\b[LE]\d+\b/g) || [];

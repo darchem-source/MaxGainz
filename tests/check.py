@@ -3564,6 +3564,9 @@ eq('a small sample must be admitted', _aiCheckOutput('recap', {headline:'1 of 3 
 var F1 = F;   // 1 PB, small sample, no trend
 eq('a label for a PB that does not exist fails', _aiCheckOutput('recap', {headline:'1 of 3', body:'L1 and L3 are flying. Still early, with only 2 sessions.', mentionsSmallSample:true}, F1).reason, 'label');
 eq('exercise ids never appear in a recap', _aiCheckOutput('recap', {headline:'1 of 3', body:'E9 is up. Still early, with only 2 sessions.', mentionsSmallSample:true}, F1).reason, 'label');
+var F2 = Object.assign(JSON.parse(JSON.stringify(F)), {done:3, planned:3, smallSample:false, pbs:[{ref:'L1', weight:62.5, prev:60}, {ref:'L2', weight:140, prev:135}]});
+ok('the real eval answer (two new PBs, all numbers true) passes', _aiCheckOutput('recap', {headline:'Three of three sessions done, two new PBs', body:'You completed all 3 planned sessions this week. You set new personal bests on L1 at 62.5 (up from 60) and on L2 at 140 (up from 135). Next step: repeat your new top weights once more next week before adding load.', mentionsSmallSample:false}, F2).ok);
+eq('"three new PBs" when there are two still fails', _aiCheckOutput('recap', {headline:'3 of 3 sessions, three new PBs', body:'L1 and L2 moved up.', mentionsSmallSample:false}, F2).reason, 'pb count');
 eq('"3 new PBs" with 1 PB fails', _aiCheckOutput('recap', {headline:'3 new PBs', body:'Still early, with only 2 sessions.', mentionsSmallSample:true}, F1).reason, 'pb count');
 eq('a percentage with no trend fails', _aiCheckOutput('recap', {headline:'1 of 3', body:'Volume up 3%. Still early, with only 2 sessions.', mentionsSmallSample:true}, F1).reason, 'percent');
 var FU = Object.assign(JSON.parse(JSON.stringify(F)), {under:{label:'Core', pct:4}, smallSample:false});
