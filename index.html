@@ -491,6 +491,8 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
 @media (orientation: landscape) and (max-height: 500px) {
   .nav { padding: 6px 0 max(8px, env(safe-area-inset-bottom, 8px)); }
   .tab-content { padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px)); }
+  /* nav = 6 + 49.5 + max(8px, safe) tall; scroller pads 68 + safe → keep the bar just above it */
+  .sess-action-bar { bottom: var(--sess-bar-bottom, calc(max(8px, env(safe-area-inset-bottom, 0px)) - env(safe-area-inset-bottom, 0px) - 12px)); }
   .page-header { padding: 10px 20px 8px; }
   .section-label { padding: 8px 20px 4px; }
 }
@@ -6721,7 +6723,9 @@ function updateSessUI(){
     // New exercise: collapse More and drop stale feedback from the previous one
     // (unless that feedback is the fresh "Exercise done → Next" hand-off).
     _sessMoreSet(false);
-    if(window._setFb && window._setFb.exIdx !== curIdx && window._setFb.handoffTo !== curIdx) window._setFb = null;
+    // Keep it only for the deliberate hand-off to this exercise; a swap (same
+    // index, new name) or a manual jump drops it.
+    if(window._setFb && !(window._setFb.exIdx !== curIdx && window._setFb.handoffTo === curIdx)) window._setFb = null;
 
     // Cancel any pending pulse timeout from the previous exercise
     clearTimeout(window._pulsePendingTimer);
@@ -7224,7 +7228,8 @@ function _lastSetsFromLog(entry){
   return entry.reps.map((r, i) => {
     const rn = Number(r);
     const wi = sw ? Number(sw[i]) : NaN;
-    const w = entry.bw ? 0 : (wi > 0 ? wi : top);
+    // Bodyweight moves can carry added load (BW +10): keep whatever was recorded.
+    const w = wi > 0 ? wi : top;
     return { w: w > 0 ? w : 0, r: (Number.isFinite(rn) && rn > 0) ? rn : null };
   });
 }
@@ -7257,7 +7262,8 @@ function _setDeltaText(cur, prev, opts){
   if(!prev || !(Number(prev.r) > 0)) return { text: 'No matching set last time to compare', dir: 'new' };
   const unit = o.timed ? ' s' : '';
   const dr = Number(cur.r) - Number(prev.r);
-  const useW = !o.bw && !o.timed && Number(prev.w) > 0 && Number(cur.w) > 0;
+  // Bodyweight compares added load (BW +10 vs BW +5) only when both sets carried some.
+  const useW = !o.timed && Number(prev.w) > 0 && Number(cur.w) > 0;
   const dw = useW ? Math.round((Number(cur.w) - Number(prev.w)) * 100) / 100 : 0;
   const parts = [];
   if(dw) parts.push((dw > 0 ? '+' : '−') + _fmtKg(Math.abs(dw)) + ' kg');
@@ -7266,7 +7272,7 @@ function _setDeltaText(cur, prev, opts){
     else parts.push((dr > 0 ? '+' : '−') + Math.abs(dr) + (Math.abs(dr) === 1 ? ' rep' : ' reps'));
   }
   if(!parts.length){
-    const what = o.timed ? (cur.r + unit) : (useW ? _fmtKg(cur.w) + ' kg × ' + cur.r : cur.r + (cur.r === 1 ? ' rep' : ' reps'));
+    const what = o.timed ? (cur.r + unit) : (useW ? (o.bw ? 'BW +' : '') + _fmtKg(cur.w) + ' kg × ' + cur.r : cur.r + (cur.r === 1 ? ' rep' : ' reps'));
     return { text: 'Matched last time (' + what + ')', dir: 'same' };
   }
   let dir;
@@ -7293,11 +7299,12 @@ function _repeatSetValues(setIdx, sessReps, sessWts, lastSets, plannedW, bw){
     const r = Number(R[j]);
     if(r > 0){
       const w = Number(W[j]);
-      return { r, w: bw ? 0 : (w > 0 ? w : (Number(plannedW) || 0)), src: 'session', from: j };
+      // bw moves keep their added load (BW +10) exactly like the rep modal does.
+      return { r, w: w > 0 ? w : (Number(plannedW) || 0), src: 'session', from: j };
     }
   }
   const p = Array.isArray(lastSets) ? lastSets[setIdx] : null;
-  if(p && Number(p.r) > 0) return { r: Number(p.r), w: bw ? 0 : (Number(p.w) || 0), src: 'last', from: setIdx };
+  if(p && Number(p.r) > 0) return { r: Number(p.r), w: Number(p.w) || 0, src: 'last', from: setIdx };
   return null;
 }
 
@@ -7308,8 +7315,8 @@ function _nextStepText(info){
   if(i.nextSetNo){
     let what;
     if(i.timed) what = (i.reps || '') ;
-    else if(i.bw || !(Number(i.w) > 0)) what = (i.reps ? i.reps + ' reps' : '');
-    else what = _fmtKg(i.w) + ' kg × ' + (i.reps || '');
+    else if(!(Number(i.w) > 0)) what = (i.reps ? i.reps + ' reps' : '');
+    else what = (i.bw ? 'BW +' : '') + _fmtKg(i.w) + ' kg × ' + (i.reps || '');
     let t = 'Next: set ' + i.nextSetNo + ' of ' + i.totalSets + (what ? ' · ' + what : '');
     if(Number(i.suggestW) > 0 && Number(i.suggestW) !== Number(i.w)) t += ' (or try ' + _fmtKg(i.suggestW) + ' kg)';
     if(Number(i.restSecs) > 0) t += ' after ' + i.restSecs + ' s rest';
@@ -8263,7 +8270,7 @@ function markCoreRound(i){
     totalSets++;
     // Only start rest if more rounds remain
     const roundsDone=setsDone[curIdx].length;
-    if(roundsDone<ex.sets) startRest();
+    if(roundsDone<ex.sets) startRest(_sessRestSecs());
   }
   renderCoreCircuit(ex);
   renderQueue();updNextBtn();
@@ -8595,7 +8602,7 @@ function transitionTwoPhase(){
     } else {
       // All sets complete - start rest before next exercise
       const isHIITWorkout = HIIT.some(h => h.name === sessDay);
-      startRest(isHIITWorkout ? 30 : 90);
+      startRest(isHIITWorkout ? 30 : _sessRestSecs());
       // Show celebrate after brief delay
       setTimeout(()=>showCelebrate(), 400);
     }
@@ -8690,7 +8697,7 @@ function startTimedSet(){
         stopRest();
         // Extract rest duration from reps (e.g. "30s on/10s rest" → take 10s)
         const restMatch=ex.reps.match(/\/(\d+)s/);
-        const restSecs=restMatch?parseInt(restMatch[1]):90;
+        const restSecs=restMatch?parseInt(restMatch[1]):_sessRestSecs();
         // Start our custom timed rest that auto-setups next set after countdown
         startTimedRest(restSecs,()=>{setupTimedExercise(ex);});
       }
@@ -9556,6 +9563,7 @@ function updNextBtn(){
   if(isCoreCircuit(ex)){
     if(done>=ex.sets){nb.textContent='Next exercise →';nb.style.background='var(--accent2)';}
     else{nb.textContent='Log round '+(done+1)+' ✓';nb.style.background='var(--accent)';}
+    _updRepeatBtn(); // hides it (rounds aren't repeatable) instead of leaving a stale label
     return;
   }
   if(done>=ex.sets){nb.textContent='Next exercise →';nb.style.background='var(--accent2)';}
@@ -9583,7 +9591,7 @@ function _updRepeatBtn(){
   if(ex && isCoreCircuit(ex)){ b.style.display = 'none'; return; }
   const v = _repeatCandidate();
   if(!v){ b.style.display = 'none'; return; }
-  const what = (ex.bw || !(v.w > 0)) ? (v.r + ' reps') : (_fmtKg(v.w) + ' kg × ' + v.r);
+  const what = !(v.w > 0) ? (v.r + ' reps') : ((ex.bw ? 'BW +' : '') + _fmtKg(v.w) + ' kg × ' + v.r);
   const src = v.src === 'session' ? 'Same as set ' + (v.from + 1) : 'Same as last time';
   b.innerHTML = `↻ Repeat<small>${esc(what)}</small>`;
   b.setAttribute('aria-label', 'Repeat: log set ' + (v.setIdx + 1) + ' as ' + what + ' (' + src.toLowerCase() + ')');
@@ -9598,7 +9606,7 @@ function repeatPrevSet(){
   if(!repsLogged[curIdx]) repsLogged[curIdx] = {};
   if(!setWeights[curIdx]) setWeights[curIdx] = {};
   repsLogged[curIdx][i] = v.r;
-  setWeights[curIdx][i] = ex.bw ? 0 : (v.w || ex.weight || 0);
+  setWeights[curIdx][i] = v.w || ex.weight || 0;
   // RPE: copy the repeated in-session set's RPE (if any) — a repeat means "same as that set".
   if(v.src === 'session'){
     const r = (rpeLogged[curIdx] || {})[v.from];
@@ -9668,7 +9676,9 @@ function _recordSetFeedback(exIdx, setIdx, restSecs){
     const pos = g ? g.exerciseIndices.indexOf(exIdx) : -1;
     const nx = g && pos >= 0 ? g.exerciseIndices[(pos + 1) % g.exerciseIndices.length] : -1;
     const roundDone = g ? g.exerciseIndices.every(k => (setsDone[k] || []).length >= g.completedRounds + 1) : false;
-    const next = roundDone ? 'Superset round done · rest, then the next round'
+    const finalRound = roundDone && g && (g.completedRounds + 1 >= g.sets);
+    const next = finalRound ? 'Superset complete'
+      : roundDone ? 'Superset round done · rest, then the next round'
       : (nx != null && nx !== exIdx && sessExs[nx] ? 'Superset · Next: ' + sessExs[nx].name : 'Superset · continue the round');
     window._setFb = { exIdx, setIdx, delta, next, handoffTo: roundDone ? -1 : nx,
       handoffHead: ex.name + ' · set ' + (setIdx + 1) + ' logged' + (delta.text ? ' · ' + delta.text : '') };
@@ -9692,7 +9702,8 @@ function _renderSetFeedback(){
   const el = document.getElementById('setFeedback');
   if(!el) return;
   const fb = window._setFb;
-  if(!fb || (fb.exIdx !== curIdx && fb.handoffTo !== curIdx)){
+  const _cx = sessExs[curIdx];
+  if(!fb || (fb.exIdx !== curIdx && fb.handoffTo !== curIdx) || (_cx && isCoreCircuit(_cx))){
     el.style.display = 'none'; el.innerHTML = ''; return;
   }
   const onNext = fb.exIdx !== curIdx;
@@ -9704,6 +9715,13 @@ function _renderSetFeedback(){
 
 // ── Phase 1: rest length (session-only "advanced timing"; never saved) ─────
 const SESS_REST_CHOICES = [60, 90, 120, 180];
+// The rest that will actually follow a set of `ex`: HIIT circuits use 30 s;
+// timed reps may carry their own ('30s on/10s rest'); otherwise the session choice.
+function _restSecsFor(ex){
+  if(HIIT.some(h => h.name === sessDay)) return 30;
+  if(ex && !ex.duration && isTimedExercise(ex)){ const m = String(ex.reps || '').match(/\/(\d+)s/); if(m) return parseInt(m[1]); }
+  return _sessRestSecs();
+}
 function _sessRestSecs(){
   const v = Number(window._sessRestChoice);
   return SESS_REST_CHOICES.includes(v) ? v : 90;
@@ -9781,6 +9799,7 @@ function _dlgOnOpen(ov){
   ov._returnTo = (fromDlg && fromDlg !== ov) ? (fromDlg._returnTo || null)
     : ((ae && ae !== document.body && !ov.contains(ae)) ? ae : null);
   ov._returnId = (ov._returnTo && ov._returnTo.id) || null;
+  ov._openerEl = (ae && ae !== document.body) ? ae : null;
   const box = _dlgBox(ov);
   if(!box.hasAttribute('role')) box.setAttribute('role', 'dialog');
   box.setAttribute('aria-modal', 'true');
@@ -9806,6 +9825,15 @@ function _dlgOnClose(ov){
   // never steal it from wherever the app deliberately moved it.
   if(ae && ae !== document.body && !ov.contains(ae)) return;
   const usable = el => el && el.isConnected && el.offsetParent !== null;
+  // Still another dialog open (a picker stacked on a sheet): stay inside it —
+  // back on the control that opened the child if it's there, else its first control.
+  const stillTop = _dlgTop();
+  if(stillTop && stillTop !== ov){
+    const op = ov._openerEl;
+    const inTop = (op && stillTop.contains(op) && usable(op)) ? op : _dlgFocusables(_dlgBox(stillTop))[0];
+    if(inTop) inTop.focus({ preventScroll: true });
+    return;
+  }
   let tgt = usable(rt) ? rt : (ov._returnId ? document.getElementById(ov._returnId) : null);
   if(!usable(tgt) && ov.dataset.returnFallback) tgt = document.getElementById(ov.dataset.returnFallback);
   if(usable(tgt)) tgt.focus({ preventScroll: true });
@@ -9815,12 +9843,21 @@ function closeDialog(id){
   if(ov) ov.classList.remove('open');
 }
 function _dlgKeydown(e){
+  // The rest-complete alert sits above any sheet: it owns Escape/Tab while shown.
+  const ra = document.getElementById('restAlert');
+  if(ra && ra.classList.contains('show')){
+    const ae = document.activeElement, typing = ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName || '');
+    if(e.key === 'Escape'){ e.preventDefault(); dismissRestAlert(); return; }
+    if(e.key === 'Tab' && !typing){ e.preventDefault(); const b = document.getElementById('restAlertBtn'); if(b) b.focus(); return; }
+  }
   const top = _dlgTop();
   if(!top) return;
   if(e.key === 'Escape'){
     // Only overlays the user can already dismiss by tapping the backdrop.
     const oc = top.getAttribute('onclick') || '';
-    if(oc.indexOf('event.target===this') !== -1){ e.preventDefault(); top.classList.remove('open'); }
+    // Dispatch a click ON the overlay so its own handler runs (e.g. closeCircuitTimer
+    // clears its interval, closeFormGuide stops the video) — never a bare class strip.
+    if(oc.indexOf('event.target===this') !== -1){ e.preventDefault(); top.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
     return;
   }
   if(e.key !== 'Tab') return;
@@ -9896,7 +9933,8 @@ function _currLastSets(ex){
 function _lastSetLabel(lt, noWeight, timed){
   if(!lt || !(Number(lt.r) > 0)) return '';
   if(timed) return lt.r + 's';
-  if(noWeight || !(Number(lt.w) > 0)) return '×' + lt.r;
+  if(!(Number(lt.w) > 0)) return '×' + lt.r;
+  if(noWeight) return '+' + _fmtKg(lt.w) + '×' + lt.r;   // bodyweight + added load
   return _fmtKg(lt.w) + '×' + lt.r;
 }
 
@@ -10016,7 +10054,7 @@ function initExerciseSwipe(){
     if(!isManualNavAllowed()) return;
     // Ignore swipe when starting on interactive children we don't want to override
     const t = e.target;
-    if(t.closest('.set-bub, button, input, textarea, select, .wadj-btn, #miniPlateViz, #plateCalcTrigger, #timedSetWrap, #restWrap')) return;
+    if(t.closest('.set-bub, button:not(.curr-name-btn), input, textarea, select, .wadj-btn, #miniPlateViz, #plateCalcTrigger, #timedSetWrap, #restWrap')) return;
     startX = e.touches[0].clientX;
     startY = e.touches[0].clientY;
     axisLocked = null;
@@ -10234,7 +10272,7 @@ function initCurrCardLongPress(){
       }
     }
     showActionSheet(ex.name, actions);
-  });
+  }, { exclude: 'button:not(.curr-name-btn), input, textarea, select, .set-bub, .wadj-btn' }); // name is a button now; keep long-press on it
 }
 
 function addSett(){const ex=sessExs[curIdx];ex.sets=Math.min(ex.sets+1,10);document.getElementById('setCountLbl').textContent=ex.sets+' sets planned';document.getElementById('currMeta').textContent=ex.sets+' sets · '+ex.reps+(ex._recoveryPick?' · 🌿 recovery pick':ex._rotated?' · 🔄 variation':'')+(ex.note?' · '+ex.note:'');renderBubbles(ex);updNextBtn();}
@@ -10386,9 +10424,8 @@ function markSet(i){
   // Post-set feedback (what changed vs last time + next step). The rest it
   // names is the rest markSet is about to start (supersets rest per round).
   if(isNew){
-    const _isHIITw = HIIT.some(h => h.name === sessDay);
     const _willRest = !ssId && !allDone && !window._restStoppedManually;
-    _recordSetFeedback(curIdx, i, _willRest ? (_isHIITw ? 30 : _sessRestSecs()) : 0);
+    _recordSetFeedback(curIdx, i, _willRest ? _restSecsFor(ex) : 0);
   }
   renderBubbles(sessExs[curIdx]);renderQueue();updNextBtn();_renderSetFeedback();
   
@@ -10432,7 +10469,7 @@ function markSet(i){
       // console.log('[SUPERSET] ⏱️  STARTING 90 SECOND REST!');
       const _ssRound = group.completedRounds; // already incremented above
       const _ssTot   = group.sets;
-      startRest(90, 'Round ' + (_ssRound) + '/' + _ssTot + ' — rest');
+      startRest(_sessRestSecs(), 'Round ' + (_ssRound) + '/' + _ssTot + ' — rest');
       scrollToActiveEx(); // bring curr-card + rest bar into view if user scrolled down
       return;
     }
@@ -11333,9 +11370,10 @@ function showRestAlert(){
   document.getElementById('restAlert').classList.add('show');
   // Keyboard/screen-reader users: move focus to the dismiss button, remember where they were.
   const _ae = document.activeElement;
+  const _typing = _ae && (/^(INPUT|TEXTAREA|SELECT)$/.test(_ae.tagName) || _ae.isContentEditable);
   window._restAlertReturn = (_ae && _ae !== document.body) ? _ae : null;
   const _rb = document.getElementById('restAlertBtn');
-  if(_rb) _rb.focus({ preventScroll: true });
+  if(_rb && !_typing) _rb.focus({ preventScroll: true });
 }
 
 function dismissRestAlert(){

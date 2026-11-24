@@ -1742,6 +1742,8 @@ eq('a zero/missing per-set weight falls back to the top weight', _lastSetsFromLo
    [{w:90,r:5},{w:90,r:5}]);
 eq('bodyweight reports w:0', _lastSetsFromLog({reps:[12,10], setWeights:[0,0], weight:0, bw:true}),
    [{w:0,r:12},{w:0,r:10}]);
+eq('bodyweight keeps added load (BW +10)', _lastSetsFromLog({reps:[8,8], setWeights:[10,12.5], weight:12.5, bw:true}),
+   [{w:10,r:8},{w:12.5,r:8}]);
 eq('non-numeric reps become null', _lastSetsFromLog({reps:['x',7], weight:20}), [{w:20,r:null},{w:20,r:7}]);
 eq('no reps array → []', _lastSetsFromLog({weight:20}), []);
 eq('null entry → []', _lastSetsFromLog(null), []);
@@ -1768,7 +1770,9 @@ eq('lighter, fewer reps → down', _setDeltaText({w:77.5,r:6},{w:80,r:8},{}), {t
 eq('heavier but fewer reps → mixed', _setDeltaText({w:85,r:6},{w:80,r:8},{}), {text:'+5 kg, −2 reps vs last time', dir:'mixed'});
 eq('identical → matched', _setDeltaText({w:80,r:8},{w:80,r:8},{}), {text:'Matched last time (80 kg × 8)', dir:'same'});
 eq('float noise is rounded (72.5 vs 70)', _setDeltaText({w:72.5,r:8},{w:70,r:8},{}).text, '+2.5 kg vs last time');
-eq('bodyweight ignores weight', _setDeltaText({w:0,r:12},{w:0,r:10},{bw:true}), {text:'+2 reps vs last time', dir:'up'});
+eq('plain bodyweight compares reps', _setDeltaText({w:0,r:12},{w:0,r:10},{bw:true}), {text:'+2 reps vs last time', dir:'up'});
+eq('bodyweight + more added load → up', _setDeltaText({w:15,r:8},{w:10,r:8},{bw:true}), {text:'+5 kg vs last time', dir:'up'});
+eq('bodyweight + same load → matched with BW +', _setDeltaText({w:10,r:8},{w:10,r:8},{bw:true}).text, 'Matched last time (BW +10 kg × 8)');
 eq('timed compares seconds', _setDeltaText({w:0,r:45},{w:0,r:40},{timed:true}), {text:'+5 s vs last time', dir:'up'});
 eq('no previous set → new', _setDeltaText({w:80,r:8}, null, {}).dir, 'new');
 eq('previous set without reps → new', _setDeltaText({w:80,r:8}, {w:80,r:null}, {}).dir, 'new');
@@ -1785,7 +1789,8 @@ eq('set 1 repeats last time\'s set 1', _repeatSetValues(0, {}, {}, LAST, 80, fal
 eq('set 2 repeats THIS session\'s set 1', _repeatSetValues(1, {0:6}, {0:85}, LAST, 80, false), {r:6, w:85, src:'session', from:0});
 eq('skips an unlogged set to the latest logged one', _repeatSetValues(2, {0:6}, {0:85}, LAST, 80, false), {r:6, w:85, src:'session', from:0});
 eq('missing session weight falls back to planned', _repeatSetValues(1, {0:6}, {}, null, 80, false), {r:6, w:80, src:'session', from:0});
-eq('bodyweight logs w:0', _repeatSetValues(1, {0:12}, {0:0}, null, 0, true), {r:12, w:0, src:'session', from:0});
+eq('plain bodyweight logs w:0', _repeatSetValues(1, {0:12}, {0:0}, null, 0, true), {r:12, w:0, src:'session', from:0});
+eq('bodyweight repeat keeps added load (BW +10)', _repeatSetValues(1, {0:8}, {0:10}, null, 10, true), {r:8, w:10, src:'session', from:0});
 eq('nothing to repeat → null', _repeatSetValues(0, {}, {}, null, 80, false), null);
 eq('no matching set last time → null', _repeatSetValues(3, {}, {}, LAST, 80, false), null);
 
@@ -1793,6 +1798,7 @@ eq('no matching set last time → null', _repeatSetValues(3, {}, {}, LAST, 80, f
 eq('next set line', _nextStepText({nextSetNo:3, totalSets:4, w:80, reps:'6–8', restSecs:90}), 'Next: set 3 of 4 · 80 kg × 6–8 after 90 s rest');
 eq('suggests a heavier weight when given', _nextStepText({nextSetNo:2, totalSets:3, w:80, reps:'6–8', suggestW:82.5}), 'Next: set 2 of 3 · 80 kg × 6–8 (or try 82.5 kg)');
 eq('bodyweight next set', _nextStepText({nextSetNo:2, totalSets:3, bw:true, reps:'10–15'}), 'Next: set 2 of 3 · 10–15 reps');
+eq('bodyweight + load next set', _nextStepText({nextSetNo:2, totalSets:3, bw:true, w:10, reps:'8–10'}), 'Next: set 2 of 3 · BW +10 kg × 8–10');
 eq('exercise done hands off', _nextStepText({nextExName:'Row'}), 'Exercise done · Next: Row');
 eq('everything done', _nextStepText({}), 'All exercises done · Finish when ready');
 
@@ -1862,7 +1868,7 @@ def gate_phase1_session(js):
         fails = ['phase-1 logic runner errored: ' + out[:300]]
     for f in fails: print('  ✗ ' + f)
     if fails: ok_all = False
-    else: print('  ✓ last-time per set, delta text, repeat-set values and next-step copy hold (38 cases)')
+    else: print('  ✓ last-time per set, delta text, repeat-set values and next-step copy hold (43 cases)')
 
     # Real renderers vs adversarial names
     rpieces = []
@@ -1925,6 +1931,7 @@ function ok(label, cond){ if(!cond) fails.push(label); }
 var _focused = null, _byId = {}, _dlgSeqN = 0;
 function setTimeout(f){ f(); }
 function getComputedStyle(el){ return { zIndex: el._z || '200' }; }
+function MouseEvent(type, o){ this.type = type; this.bubbles = !!(o && o.bubbles); }
 function N(tag, o){
   o = o || {};
   var n = { tagName:tag, id:o.id||'', _cls:{}, attrs:{}, dataset:o.dataset||{}, children:[], parent:null,
@@ -1936,6 +1943,8 @@ function N(tag, o){
   n.getAttribute = function(k){ return (k in n.attrs) ? n.attrs[k] : null; };
   n.hasAttribute = function(k){ return k in n.attrs; };
   n.focus = function(){ _focused = n; };
+  // Simulates the inline backdrop handler `if(event.target===this)…` firing for a click ON the overlay.
+  n.dispatchEvent = function(ev){ if(ev && ev.type === 'click'){ n._clicked = (n._clicked || 0) + 1; var oc = n.attrs.onclick || ''; if(oc.indexOf("this.classList.remove('open')") !== -1) n.classList.remove('open'); if(oc.indexOf('closeCircuitTimer()') !== -1){ n._cleanedUp = true; n.classList.remove('open'); } } return true; };
   n.contains = function(x){ for(var c=x; c; c=c.parent){ if(c===n) return true; } return false; };
   n.closest = function(sel){ var cls = sel.replace('.',''); for(var c=n; c; c=c.parent){ if(c._cls[cls]) return c; } return null; };
   n.add = function(){ for(var i=0;i<arguments.length;i++){ arguments[i].parent=n; n.children.push(arguments[i]); } return n; };
@@ -1972,7 +1981,11 @@ var rep = N('DIV', {id:'repMod', cls:['modal-ov'], dataset:{returnFallback:'next
 var fin = N('DIV', {id:'finMod', cls:['modal-ov']}).add(N('DIV', {cls:['modal']}).add(N('BUTTON')));
 var onlyInput = N('DIV', {cls:['modal']}).add(N('DIV', {id:'noteTitle'}), N('TEXTAREA'));
 var note = N('DIV', {id:'noteMod', cls:['modal-ov'], attrs:{onclick:"if(event.target===this)this.classList.remove('open')"}}).add(onlyInput);
-body.add(opener, nextBtn, other, rep, fin, note);
+var timerMod = N('DIV', {id:'circuitTimerMod', cls:['modal-ov'], attrs:{onclick:"if(event.target===this)closeCircuitTimer()"}}).add(N('DIV', {cls:['modal']}).add(N('BUTTON')));
+var innerBtn = N('BUTTON', {id:'addExBtn'});
+var sheet = N('DIV', {id:'customProgMod', cls:['modal-ov'], attrs:{onclick:"if(event.target===this)this.classList.remove('open')"}}).add(N('DIV', {cls:['modal']}).add(N('DIV', {id:'cpTitle'}), innerBtn, N('BUTTON')));
+var picker = N('DIV', {id:'customExPickerMod', cls:['modal-ov'], z:'300', attrs:{onclick:"if(event.target===this)this.classList.remove('open')"}}).add(N('DIV', {cls:['modal']}).add(N('BUTTON'), N('BUTTON')));
+body.add(opener, nextBtn, other, rep, fin, note, timerMod, sheet, picker);
 
 // 1. open → semantics + focus on the selected rep (not the text field)
 opener.focus(); rep.classList.add('open'); _dlgOnOpen(rep);
@@ -2009,6 +2022,18 @@ fin.classList.remove('open'); _dlgOnClose(fin);
 opener.focus(); note.classList.add('open'); _dlgOnOpen(note);
 ok('text field is not auto-focused on open', _focused === opener);
 note.classList.remove('open'); _dlgOnClose(note);
+// 8. Escape runs the overlay's own close handler (its cleanup), not a bare class strip
+opener.focus(); timerMod.classList.add('open'); _dlgOnOpen(timerMod);
+_dlgKeydown({key:'Escape', preventDefault:function(){}});
+ok('Escape routes through the overlay\'s own close handler (cleanup runs)', timerMod._cleanedUp === true && !timerMod.classList.contains('open'));
+_dlgOnClose(timerMod);
+// 9. a picker stacked on an open sheet: closing it returns focus INTO the sheet
+opener.focus(); sheet.classList.add('open'); _dlgOnOpen(sheet); innerBtn.focus();
+picker.classList.add('open'); _dlgOnOpen(picker);
+picker.classList.remove('open'); _dlgOnClose(picker);
+ok('closing a stacked picker returns focus to its opener inside the still-open sheet', _focused === innerBtn);
+sheet.classList.remove('open'); _dlgOnClose(sheet);
+ok('closing the sheet then returns focus to the page opener', _focused === opener);
 JSON.stringify(fails);
 """
 
@@ -2036,8 +2061,9 @@ def gate_core_a11y(html, js):
             fails = ['dialog runner errored: ' + out[:300]]
         for f in fails: print('  ✗ ' + f)
         if fails: ok_all = False
-        else: print('  ✓ dialogs: role/aria-modal/label, focus in, Tab trap, Escape, focus return + fallback, no stealing')
-    if '_initDialogA11y' not in js or not re.search(r"_initDialogA11y\(\)|addEventListener\('DOMContentLoaded',\s*_initDialogA11y\)", js):
+        else: print('  ✓ dialogs: role/aria-modal/label, focus in, Tab trap, Escape via own handler, focus return + fallback, stacked, no stealing')
+    # Must be STARTED, not just declared (`function _initDialogA11y(){` itself contains "_initDialogA11y()").
+    if not re.search(r"(?<!function )(?<!function)\b_initDialogA11y\(\)\s*;|addEventListener\('DOMContentLoaded',\s*_initDialogA11y\)", js):
         print('  ✗ _initDialogA11y is never started'); ok_all = False
 
     lint = []
