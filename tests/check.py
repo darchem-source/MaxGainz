@@ -4173,50 +4173,236 @@ def gate_offline_media(html, js, sw=None, root=None):
     return ok_all
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gate 20 — Phase 3 programme discovery (metadata, finder, why, switch)
+# (a) PROGRAMME_META covers exactly the Path programmes, every field is valid
+#     and consistent with the programme it describes (level, goal, days,
+#     equipment class, and session length against _estSessionMin of every
+#     day); (b) the finder's filters, (c) "why this programme" agrees with the
+#     Start-today recommender over every answer combination, (d) the switch
+#     preview lists what changes and keeps history, (e) wiring: flag-gated,
+#     old library view untouched when off, handlers index/literal only, text
+#     escaped, a switch never touches saved history.
+# ─────────────────────────────────────────────────────────────────────────────
+DISC_FNS = ['_discKeys', '_progInfo', '_estSessionMin', '_progMatches', '_whyProgramme', '_progBaseExercises',
+            '_progSwitchDiff', '_discRenderCards', '_discRenderFilters', '_discFilterOpts', '_discAnswers',
+            '_discSwitchHtml', '_discWhyHtml', 'recommendProgramme', '_stCatalogue', '_stProgEquip', '_stAnswersFrom',
+            'isLibraryProgramme', 'getLibraryId', 'getLibraryProgramme', 'esc', '_p3FlagOn', '_offlineFmtMB']
+DISC_OBJS = ['PROGRAMME_META', 'DISC_LEVEL_LABEL', 'DISC_GOAL_LABEL', 'DISC_PROG_LABEL', 'DISC_EQUIP_LABEL',
+             'ULF_VARIANTS', 'PPL', 'P3_FLAG_KEYS']
+DISC_ARRS = ['LIBRARY_PROGRAMMES', '_BUILTIN_STRENGTH', 'ST_DAYS', 'ST_MINUTES']
+
+DISC_STUBS = r"""
+var LS = {}; var localStorage = { getItem: function(k){ return Object.prototype.hasOwnProperty.call(LS, k) ? LS[k] : null; }, setItem: function(k, v){ LS[k] = String(v); }, removeItem: function(k){ delete LS[k]; } };
+var userProfile = { onboarding: null }; var userPath = null; var completedSessions = [];
+var _pathWizard = { programme:null, daysPerWeek:3 };
+var _discFilters = { goal:'all', level:'all', days:'all', equip:'all', minutes:'all' }, _discList = [], _discCompare = [], _discDetailKey = null, _discRemoveOldMedia = true;
+function isPathActive(){ return !!userPath; }
+function getPathCurrentWeek(){ return 2; }
+function _progDisplayName(k){ return k; }
+var OFF_STATE = { progs:{} };
+function _offlineProgKey(p){ return p ? p.programme : null; }
+function _offlineStateGet(){ return OFF_STATE; }
+function _offlineSetForKey(){ return [{ size: 5e6 }]; }
+function _offlineSetBytes(f){ return f.reduce(function(a, x){ return a + x.size; }, 0); }
+function eqA(a, b){ return JSON.stringify(a) === JSON.stringify(b); }
+"""
+
+DISC_PURE = r"""
+var fails = [];
+function ok(l, c){ if(!c) fails.push(l); }
+var keys = _discKeys();
+ok('catalogue: 2 built-ins + every library programme', keys.length === 2 + LIBRARY_PROGRAMMES.length);
+ok('no metadata for unknown programmes', Object.keys(PROGRAMME_META).sort().join() === keys.slice().sort().join());
+var EQ = Object.keys(DISC_EQUIP_LABEL);
+keys.forEach(function(k){
+  var m = PROGRAMME_META[k], p = _progInfo(k);
+  if(!m || !p){ fails.push(k + ': no metadata'); return; }
+  ok(k + ': goal', !!DISC_GOAL_LABEL[m.goal]);
+  ok(k + ': level', !!DISC_LEVEL_LABEL[m.level]);
+  ok(k + ': progression', !!DISC_PROG_LABEL[m.progression] && typeof m.progressionText === 'string' && m.progressionText.length >= 20);
+  ok(k + ': days', Array.isArray(m.days) && m.days.length && m.days.every(function(d){ return d === Math.floor(d) && d >= 1 && d <= 7; }));
+  ok(k + ': minutes', Array.isArray(m.minutes) && m.minutes.length === 2 && m.minutes[0] >= 15 && m.minutes[0] <= m.minutes[1] && m.minutes[1] <= 150);
+  ok(k + ': equipment', Array.isArray(m.equipment) && m.equipment.length && m.equipment.every(function(e){ return EQ.indexOf(e) !== -1; }));
+  ok(k + ': for / not for', Array.isArray(m.forWho) && m.forWho.length >= 2 && Array.isArray(m.notFor) && m.notFor.length >= 1
+    && m.forWho.concat(m.notFor).every(function(t){ return typeof t === 'string' && t.length >= 10 && t.length <= 120; }));
+  ok(k + ': description', typeof p.description === 'string' && p.description.length >= 30 && typeof p.blurb === 'string' && p.blurb.length > 10);
+  ok(k + ': author shown', typeof p.author === 'string' && p.author.length > 0);
+  // Consistency with the programme itself.
+  var lib = getLibraryProgramme(k), b = null; _BUILTIN_STRENGTH.forEach(function(x){ if(x.id === k) b = x; });
+  var src = lib || b;
+  ok(k + ': level matches the programme (' + src.level + ')', m.level === String(src.level).toLowerCase());
+  ok(k + ': days include the programme\'s days', m.days.indexOf(src.daysPerWeek) !== -1 || (k === 'PPL' && eqA(m.days, [3, 6])));
+  var g = String(src.goal).toLowerCase();
+  var gOk = m.goal === 'strength' ? (/strength/.test(g) && !/hypertrophy|size|power/.test(g))
+          : m.goal === 'muscle' ? (/hypertrophy/.test(g) && !/strength|power/.test(g))
+          : ((/strength/.test(g) && /hypertrophy|size/.test(g)) || (/hypertrophy/.test(g) && /power/.test(g)));
+  ok(k + ': goal matches "' + src.goal + '"', gOk);
+  var ec = p.equipClass;
+  if(ec === 'bodyweight') ok(k + ': bodyweight programme lists no gym kit', m.equipment.every(function(e){ return ['bodyweight','band'].indexOf(e) !== -1; }));
+  if(ec === 'home') ok(k + ': home programme needs dumbbells, no barbell/machines', m.equipment.indexOf('dumbbells') !== -1 && m.equipment.indexOf('barbell') === -1 && m.equipment.indexOf('machines') === -1);
+  if(ec === 'gym') ok(k + ': gym programme lists gym kit', m.equipment.some(function(e){ return ['barbell','machines','cables'].indexOf(e) !== -1; }));
+  var allDays = k === 'ULF' ? [].concat.apply([], Object.keys(ULF_VARIANTS).map(function(d){ return ULF_VARIANTS[d]; })) : p.days.map(function(d){ return d.exercises; });
+  allDays.forEach(function(exs, i){ var e = _estSessionMin(exs);
+    ok(k + ': day ' + (i + 1) + ' (~' + e + ' min) fits ' + m.minutes[0] + '–' + m.minutes[1], e >= m.minutes[0] * 0.8 && e <= m.minutes[1] * 1.2); });
+  ok(k + ': barbell programmes list a barbell', !allDays.some(function(exs){ return exs.some(function(x){ return /^(Squat|Bench Press|Deadlift|Overhead Press)$/.test(x.name); }); }) || m.equipment.indexOf('barbell') !== -1);
+});
+// Filters.
+function F(o){ var f = { goal:'all', level:'all', days:'all', equip:'all', minutes:'all' }; for(var x in o) f[x] = o[x]; return keys.filter(function(k){ return _progMatches(_progInfo(k), f); }); }
+ok('no filter → everything', F({}).length === keys.length);
+ok('no equipment → only bodyweight programmes', F({ equip:'bodyweight' }).every(function(k){ return _progInfo(k).equipClass === 'bodyweight'; }) && F({ equip:'bodyweight' }).length >= 1);
+ok('dumbbells at home → home + bodyweight', F({ equip:'home' }).every(function(k){ var c = _progInfo(k).equipClass; return c === 'home' || c === 'bodyweight'; }) && F({ equip:'home' }).length >= 2);
+ok('≤ 45 min → shortest session ≤ 45', F({ minutes:45 }).every(function(k){ return PROGRAMME_META[k].minutes[0] <= 45; }) && F({ minutes:45 }).length >= 3);
+ok('6 days → PPL included', F({ days:6 }).indexOf('PPL') !== -1 && F({ days:6 }).every(function(k){ return PROGRAMME_META[k].days.indexOf(6) !== -1; }));
+ok('strength → includes strength + both', F({ goal:'strength' }).every(function(k){ return PROGRAMME_META[k].goal !== 'muscle'; }) && F({ goal:'strength' }).indexOf('library:phul') !== -1);
+ok('beginner → beginner + beginner-intermediate', F({ level:'beginner' }).indexOf('library:gzclp') !== -1 && F({ level:'beginner' }).every(function(k){ return PROGRAMME_META[k].level.indexOf('beginner') === 0; }));
+ok('unknown key never matches', _progMatches(_progInfo('nope'), { goal:'all', level:'all', days:'all', equip:'all', minutes:'all' }) === false);
+// Why: agrees with the recommender over every answer combination.
+var cat = _stCatalogue(), n = 0;
+['strength','muscle','fitness','health'].forEach(function(goal){ ['gym','home','bodyweight'].forEach(function(equipment){ [2,3,4,5,6].forEach(function(days){
+  ['beginner','intermediate','advanced'].forEach(function(experience){ [30,45,60,75].forEach(function(minutes){
+    var ans = { goal:goal, equipment:equipment, days:days, minutes:minutes, experience:experience };
+    var rec = recommendProgramme(ans, cat); n++;
+    var tops = keys.filter(function(k){ return _whyProgramme(k, ans, cat).isTop; });
+    if(rec){ if(tops.length !== 1 || tops[0] !== rec.key){ fails.push('why/top disagree for ' + JSON.stringify(ans) + ': ' + tops + ' vs ' + rec.key); return; }
+      var w = _whyProgramme(rec.key, ans, cat);
+      if(w.top.reason !== rec.reason) fails.push('why reason differs from Start today for ' + JSON.stringify(ans));
+      if(w.misses.some(function(t){ return /^Needs .* — you said/.test(t); })) fails.push('recommended programme flagged as wrong equipment ' + JSON.stringify(ans));
+    }
+    keys.forEach(function(k){ var w = _whyProgramme(k, ans, cat); var e = _progInfo(k).equipClass;
+      var eqOk = equipment === 'gym' || (equipment === 'home' ? (e === 'home' || e === 'bodyweight') : e === 'bodyweight');
+      if(eqOk !== w.fits.some(function(t){ return /^Works with/.test(t); })) fails.push('equipment fit wrong for ' + k + ' / ' + equipment); });
+  }); }); }); }); });
+ok('why: ' + n + ' answer sets checked', n === 4 * 3 * 5 * 3 * 4);
+ok('why without answers → invite, no claims', (function(){ var w = _whyProgramme('ULF', {}, cat); return !w.hasAnswers && !w.isTop && !w.fits.length && !w.misses.length; })());
+// Switch diff.
+var d = _progSwitchDiff({ programme:'ULF', duration:8, coreSchedule:{ daysPerWeek:3 } }, 'library:sl5x5', 3, { sessions:42, week:3, offlineBytes:0 });
+ok('switch: removed lists ULF-only lifts', d.removed.indexOf('Leg Press') !== -1 && d.removed.indexOf('Squat') === -1);
+ok('switch: kept lists shared lifts', d.kept.indexOf('Squat') !== -1 && d.kept.indexOf('Bench Press') !== -1);
+ok('switch: added lists new lifts', d.added.indexOf('Bent Over Barbell Row') !== -1);
+ok('switch: history count carried', d.sessions === 42 && d.week === 3 && d.weeks === 8);
+ok('switch: names', d.fromName === 'Upper · Lower · Full Body' && d.toName === 'StrongLifts 5×5');
+// Switch preview on the review step: only for a real switch, flag on.
+userPath = { programme:'ULF', duration:8, coreSchedule:{ daysPerWeek:3 } }; _pathWizard = { programme:'PPL', daysPerWeek:3 };
+completedSessions = [{}, {}, { manualActivity:true }];
+ok('switch preview hidden with the flag off', _discSwitchHtml() === '');
+LS['maxgainz_p3_discover'] = '1';
+var h = _discSwitchHtml();
+ok('switch preview shown for a real switch', /What changes/.test(h) && /Kept: all 2 logged workouts/.test(h) && /week 2 of 8/.test(h));
+ok('no media checkbox without a download', !/type="checkbox"/.test(h));
+OFF_STATE = { progs: { 'ULF': { tier:'images' } } };
+var h2 = _discSwitchHtml(); ok('media checkbox (ticked) when the old programme is downloaded', /type="checkbox" checked/.test(h2) && /discToggleRemoveMedia\(this\.checked\)/.test(h2));
+_pathWizard = { programme:'ULF', daysPerWeek:3 }; ok('same programme → no switch preview', _discSwitchHtml() === '');
+// Rendering: escaped text, index/literal handlers only.
+var saveName = LIBRARY_PROGRAMMES[0].name, saveBlurb = LIBRARY_PROGRAMMES[0].blurb;
+LIBRARY_PROGRAMMES[0].name = '<img src=x onerror=alert(1)>'; LIBRARY_PROGRAMMES[0].blurb = '"><script>x()</script>';
+var cards = _discRenderCards();
+LIBRARY_PROGRAMMES[0].name = saveName; LIBRARY_PROGRAMMES[0].blurb = saveBlurb;
+ok('cards escape names and blurbs', cards.indexOf('<img src=x') === -1 && cards.indexOf('<script>') === -1 && cards.indexOf('&lt;img') !== -1);
+var bad = (cards + _discRenderFilters()).match(/on\w+="[^"]*"/g).filter(function(a){ return !/^on\w+="(openProgrammeDetail|discToggleCompare)\(\d+\)"$|^onclick="discSetFilter\('[a-z]+', \d+\)"$|^onclick="(discClearCompare|openProgrammeCompare|discClearFilters)\(\)"$/.test(a); });
+ok('handlers pass only indices/literals: ' + bad.slice(0, 3).join(' '), bad.length === 0);
+ok('cards are real buttons with pressed state', /<button type="button" onclick="openProgrammeDetail\(0\)"/.test(cards) && /aria-pressed="false"[^>]*onclick="discToggleCompare\(0\)"/.test(cards));
+userProfile = { onboarding: { goal:'muscle', equipment:'home', daysPerWeek:3, experienceLevel:'beginner', sessionMinutes:60 } };
+var c2 = _discRenderCards(); var rec = recommendProgramme(_stAnswersFrom(userProfile.onboarding), cat);
+ok('recommended programme first and marked (' + rec.key + ')', rec.key.indexOf('library:') === 0 && _discList[0] === rec.key && /Recommended for you/.test(c2));
+JSON.stringify(fails);
+"""
+
+
+def gate_discovery(html, js):
+    ok_all = True
+    pieces = []; missing = []
+    for n in DISC_OBJS:
+        s = extract_const_object(js, n); (pieces.append(s) if s else missing.append(n))
+    for n in DISC_ARRS:
+        s = extract_const_array(js, n); (pieces.append(s) if s else missing.append(n))
+    for n in DISC_FNS:
+        s = extract_decl(js, n); (pieces.append(s) if s else missing.append(n))
+    if missing:
+        print(f'  ✗ could not extract {missing}'); return False
+    base = '\n'.join(pieces).replace('const ', 'var ') + '\n' + DISC_STUBS
+    script = base + '\nprint((function(){ try { ' + DISC_PURE.replace('JSON.stringify(fails);', 'return JSON.stringify(fails);') + ' } catch(e){ return JSON.stringify(["threw " + e + " " + (e.stack||"")]); } })());'
+    with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as t:
+        t.write(script); path = t.name
+    try:
+        out = subprocess.run([JSC, path], capture_output=True, text=True, timeout=120)
+        raw = (out.stdout.strip() or out.stderr.strip()).split('\n')[-1]
+    finally:
+        os.unlink(path)
+    try:
+        pf = json.loads(raw)
+    except Exception:
+        pf = ['runner errored: ' + raw[:400]]
+    for f in pf[:15]: print('  ✗ ' + f)
+    if pf: ok_all = False
+    else: print('  ✓ metadata complete + consistent for every programme (level, goal, days, equipment, session length per day); filters; why agrees with Start today over 720 answer sets; switch preview; escaped, index-only handlers')
+    problems = []
+    rf = extract_decl(js, 'renderLibraryFilters') or ''; rc = extract_decl(js, 'renderLibraryCards') or ''
+    if "_p3FlagOn('discover')" not in rf or "_p3FlagOn('discover')" not in rc: problems.append('finder not behind the discover flag')
+    if 'selectBuiltInStrength' not in rc or 'openLibraryPreview' not in rc: problems.append('old library view changed (flag-off behaviour)')
+    csp = extract_decl(js, 'confirmStartPath') or ''
+    if re.search(r'completedSessions\s*=|customWeights\s*=|completedSessions\.(splice|pop|shift|length\s*=)', csp): problems.append('a switch touches saved history')
+    if not re.search(r'if\(_oldOfflineKey && _discRemoveOldMedia && [^\n]*_offlineRemoveKey\(_oldOfflineKey\)', csp): problems.append('switch does not honour the remove-offline-demos choice')
+    if not re.search(r'\$\{_discSwitchHtml\(\)\}\s*\n\s*<div', extract_decl(js, 'renderPathStep5') or ''): problems.append('review step lacks the switch preview')
+    for fn in ['adoptLibraryProgramme', 'discChoose']:
+        body = extract_decl(js, fn) or ''
+        i_open = body.find("contains('open')) openPathWizard();"); i_set = body.find('_pathWizard.programme =')
+        if i_open == -1 or i_set == -1 or i_open > i_set: problems.append(fn + ': the wizard is opened after the choice is set (openPathWizard re-seeds it with the old programme)')
+    rpt = extract_decl(js, 'renderPathTab') or ''
+    if "_p3FlagOn('discover')" not in rpt or 'id="planFindProg" hidden' not in html: problems.append('Plan finder button not flag-gated')
+    for p in problems: print('  ✗ ' + p)
+    if problems: ok_all = False
+    else: print('  ✓ flag-gated finder + Plan button, old view intact when off, review step shows the switch, history untouched, offline-demo choice honoured')
+    return ok_all
+
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/19] parse')
+    print('[1/20] parse')
     p = gate_parse(js)
-    print('[2/19] invariants')
+    print('[2/20] invariants')
     inv = gate_invariants(js)
-    print('[3/19] video map')
+    print('[3/20] video map')
     vm = gate_videomap(js)
-    print('[4/19] inline handler wiring')
+    print('[4/20] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/19] auth log hygiene')
+    print('[5/20] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/19] sign-out scrub')
+    print('[6/20] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/19] safe rendering of user text')
+    print('[7/20] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/19] sync honesty')
+    print('[8/20] sync honesty')
     sy = gate_sync(js)
-    print('[9/19] media fallback + reminder copy')
+    print('[9/20] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/19] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/20] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/19] core-journey accessibility (session + dialogs)')
+    print('[11/20] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/19] Start today (first-use flow) + shortened Path wizard')
+    print('[12/20] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/19] simplified navigation (flagged)')
+    print('[13/20] simplified navigation (flagged)')
     nv = gate_nav_v2(html, js)
-    print('[14/19] Progress weekly briefing')
+    print('[14/20] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/19] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/20] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/19] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/20] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/19] Phase 2 typed sets (preview before save)')
+    print('[17/20] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
-    print('[18/19] Phase 2 weekly AI recap + measurement')
+    print('[18/20] Phase 2 weekly AI recap + measurement')
     rc = gate_recap(html, js)
-    print('[19/19] Phase 3 offline media (download, cache versioning, fallback order)')
+    print('[19/20] Phase 3 offline media (download, cache versioning, fallback order)')
     om = gate_offline_media(html, js)
+    print('[20/20] Phase 3 programme discovery (metadata, finder, why, switch preview)')
+    dc = gate_discovery(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 

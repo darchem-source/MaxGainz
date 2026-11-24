@@ -672,6 +672,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
       <div id="planMoreLinks" class="plan-links">
         <div class="more-lbl">Change your programme</div>
         <button type="button" class="st-secondary" onclick="openStartTodayFromProfile()">⚡ Recommend a plan for me</button>
+        <button type="button" class="st-secondary" id="planFindProg" hidden onclick="openProgrammeFinder()">🔎 Find &amp; compare programmes</button>
         <button type="button" class="st-secondary" onclick="openPlanLibrary()">📚 Browse all programmes &amp; one-off workouts</button>
       </div>
     </div>
@@ -1496,10 +1497,10 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
   <div class="modal" style="max-height:92vh;overflow-y:auto;padding:20px;">
     <div class="modal-handle"></div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-      <div style="font-size:22px;font-weight:900;">🏋️ Strength</div>
+      <div id="libBrowseTitle" style="font-size:22px;font-weight:900;">🏋️ Strength</div>
       <button onclick="closeLibraryBrowse()" style="background:transparent;border:none;color:var(--text2);font-size:22px;cursor:pointer;padding:4px 8px;line-height:1;">✕</button>
     </div>
-    <div style="font-size:13px;color:var(--text2);margin-bottom:14px;">
+    <div id="libBrowseSub" style="font-size:13px;color:var(--text2);margin-bottom:14px;">
       ULF and PPL built-ins plus curated, well-known programmes from the strength community.
     </div>
     <!-- Filter chips -->
@@ -2892,6 +2893,92 @@ const LIBRARY_PROGRAMMES = [
     ],
   },
 ];
+
+// ── PROGRAMME METADATA (Phase 3 · slice 2) — data only, no behaviour ──
+// One entry per Path programme (built-ins + every LIBRARY_PROGRAMMES id).
+// goal: 'strength' | 'muscle' | 'strength-muscle'; days: the weekly options;
+// minutes: typical session length [shortest, longest] incl. warm-up (gate 20
+// checks it against _estSessionMin of every day); equipment: what you need;
+// progression: how load goes up. forWho / notFor are plain-language fit notes.
+const PROGRAMME_META = {
+  'ULF': { goal:'strength', level:'beginner', days:[3], minutes:[60,80],
+    equipment:['barbell','rack','bench','dumbbells','cables','machines','pull-up bar'],
+    progression:'double', progressionText:'Work to the top of each rep range, then the app raises the weight. Two versions of each day alternate so sessions stay fresh.',
+    description:'Three sessions a week: an upper-body day, a lower-body day and a full-body day. Heavy main lifts first, then assistance and accessory work.',
+    forWho:['Newer lifters who can train three times a week', 'Anyone who wants strength and balanced muscle from one plan'],
+    notFor:['Sessions under 60 minutes', 'Training without a gym'] },
+  'PPL': { goal:'muscle', level:'intermediate', days:[3,6], minutes:[65,75],
+    equipment:['barbell','rack','bench','dumbbells','cables','machines','pull-up bar','dip bars'],
+    progression:'double', progressionText:'Work to the top of each rep range, then the app raises the weight. Run it 3 days a week, or 6 for twice the volume.',
+    description:'Push, pull and legs days, each with a heavy main lift and plenty of volume. Three days covers every muscle once a week; six days covers them twice.',
+    forWho:['Lifters with some experience who want more volume', 'People who can train 3 or 6 days a week'],
+    notFor:['Complete beginners', 'Sessions under an hour'] },
+  'library:sl5x5': { goal:'strength', level:'beginner', days:[3], minutes:[45,65],
+    equipment:['barbell','rack','bench'],
+    progression:'linear', progressionText:'Add a little weight every session. When you stall three times on a lift, take some weight off and build back up.',
+    forWho:['Beginners who want to get strong on the big barbell lifts', 'People who like short, simple sessions'],
+    notFor:['Building arms, shoulders or specific muscles', 'Training without a barbell and rack'] },
+  'library:starting-strength': { goal:'strength', level:'beginner', days:[3], minutes:[30,40],
+    equipment:['barbell','rack','bench'],
+    progression:'linear', progressionText:'Add weight to the bar every session for as long as you can — the whole plan is built around that.',
+    forWho:['Brand-new lifters who want strength fast', 'People with only about 40 minutes'],
+    notFor:['Anyone focused on muscle size', 'Lifters past the beginner stage'] },
+  'library:greyskull': { goal:'strength', level:'beginner', days:[3], minutes:[35,45],
+    equipment:['barbell','rack','bench','pull-up bar'],
+    progression:'linear', progressionText:'Add weight each session. The last set is as many reps as possible: beat 5 to go up faster; miss 5 and drop back 10%.',
+    forWho:['Beginners who want strength plus some arm work', 'People who like to push a final set'],
+    notFor:['Lifters who want lots of variety', 'Training without a barbell'] },
+  'library:gzclp': { goal:'strength', level:'beginner-intermediate', days:[4], minutes:[35,45],
+    equipment:['barbell','rack','bench','cables'],
+    progression:'tiered', progressionText:'Three tiers per session. When a heavy set stalls, you change sets and reps before dropping weight, so progress lasts longer.',
+    forWho:['Beginners ready for a bit more structure', 'People who can train four times a week'],
+    notFor:['Training three days or fewer', 'Home training without a barbell'] },
+  'library:madcow-5x5': { goal:'strength', level:'intermediate', days:[3], minutes:[35,65],
+    equipment:['barbell','rack','bench'],
+    progression:'weekly', progressionText:'Weight goes up once a week instead of every session: ramp to a top set and beat last week by a small amount.',
+    forWho:['Lifters whose beginner gains have slowed', 'People who like a heavy, a light and a medium day'],
+    notFor:['Complete beginners', 'Training without a barbell'] },
+  'library:531-bbb': { goal:'strength-muscle', level:'intermediate', days:[4], minutes:[40,45],
+    equipment:['barbell','rack','bench','pull-up bar'],
+    progression:'wave', progressionText:'A 4-week wave from a training max (5s, 3s, then 1s). The max goes up a little after each wave.',
+    forWho:['Intermediate lifters who want steady long-term progress', 'People who like one main lift per session'],
+    notFor:['Beginners who can still add weight every session', 'Training three days or fewer'] },
+  'library:phul': { goal:'strength-muscle', level:'intermediate', days:[4], minutes:[55,70],
+    equipment:['barbell','rack','bench','dumbbells','cables','machines'],
+    progression:'double', progressionText:'Heavy days for strength, lighter days for size. Reach the top of each rep range, then add weight.',
+    forWho:['Intermediate lifters who want strength and size together', 'People who can train four days a week'],
+    notFor:['Complete beginners', 'Home training'] },
+  'library:phat': { goal:'strength-muscle', level:'advanced', days:[5], minutes:[50,70],
+    equipment:['barbell','rack','bench','dumbbells','cables','machines','pull-up bar'],
+    progression:'double', progressionText:'Two heavy days plus three high-volume days. Reach the top of each rep range, then add weight.',
+    forWho:['Experienced lifters chasing size and strength', 'People who can recover from five demanding days'],
+    notFor:['Beginners and lifters returning from a break', 'Busy weeks or short sessions'] },
+  'library:arnold-split': { goal:'muscle', level:'advanced', days:[6], minutes:[60,70],
+    equipment:['barbell','rack','bench','dumbbells','cables','machines','pull-up bar','dip bars'],
+    progression:'double', progressionText:'Very high volume. Reach the top of each rep range, then add weight.',
+    forWho:['Experienced lifters focused on muscle size', 'People with time for six sessions a week'],
+    notFor:['Beginners and lifters returning from a break', 'Anyone short on time or recovery'] },
+  'library:bro-split': { goal:'muscle', level:'intermediate', days:[5], minutes:[45,60],
+    equipment:['barbell','rack','bench','dumbbells','cables','machines','pull-up bar','dip bars'],
+    progression:'double', progressionText:'One muscle group per day. Reach the top of each rep range, then add weight.',
+    forWho:['Intermediate lifters who enjoy one muscle per day', 'People who can train five days a week'],
+    notFor:['Beginners, who grow faster training each muscle more often', 'Training three days or fewer'] },
+  'library:db-home-fb': { goal:'muscle', level:'beginner', days:[3], minutes:[50,55],
+    equipment:['dumbbells','bench'],
+    progression:'double', progressionText:'Reach the top of each rep range, then use slightly heavier dumbbells.',
+    forWho:['Home trainers with a pair of dumbbells', 'Beginners who want to build muscle'],
+    notFor:['Lifters who want barbell strength numbers', 'Training with no equipment at all'] },
+  'library:home-gainz': { goal:'muscle', level:'beginner', days:[3], minutes:[50,55],
+    equipment:['bodyweight','band'],
+    progression:'variation', progressionText:'Reach the top of each rep range, then lower more slowly, then move to a harder version or a shorter band.',
+    forWho:['Training at home with only a resistance band', 'Beginners who want muscle without a gym'],
+    notFor:['Lifters who want heavy strength work', 'People with access to a full gym'] },
+  'library:machine-foundations': { goal:'muscle', level:'beginner', days:[3], minutes:[45,50],
+    equipment:['machines','cables'],
+    progression:'double', progressionText:'Reach the top of each rep range on every set, then add one pin (about 5 kg).',
+    forWho:['Gym beginners who feel unsure with free weights', 'Anyone who wants to train hard without a spotter'],
+    notFor:['Home training', 'Lifters who want barbell strength'] },
+};
 
 // Library helpers
 function isLibraryProgramme(prog){
@@ -15409,7 +15496,7 @@ function _renderMyProgrammesSection(){
     const dayCount = (p.schedule || []).length;
     let inner = '';
     if(p.description){
-      inner += `<div style="font-size:12px;color:var(--text2);line-height:1.5;padding:8px 4px 12px;border-bottom:0.5px solid var(--border);margin-bottom:8px;">${p.description}${p.author ? `<div style="font-size:11px;color:var(--text2);margin-top:6px;opacity:0.7;">By ${p.author}</div>` : ''}</div>`;
+      inner += `<div style="font-size:12px;color:var(--text2);line-height:1.5;padding:8px 4px 12px;border-bottom:0.5px solid var(--border);margin-bottom:8px;">${p.description}${p.author ? `<div style="font-size:11px;color:var(--text2);margin-top:6px;opacity:0.7;">By ${p.author || 'Max Gainz'}</div>` : ''}</div>`;
     }
     (p.schedule || []).forEach(d => {
       const dk = 'libd_' + p.id + '_' + (d.day || '').replace(/[^a-zA-Z0-9]/g, '_');
@@ -25820,6 +25907,7 @@ function renderPathTab() {
   if(!el) return;
   el.innerHTML = isPathActive() ? _renderPathTabActive() : _renderPathTabEmpty();
   if(isPathActive()) _offlineRefreshCard();
+  const fp = document.getElementById('planFindProg'); if(fp) fp.hidden = !_p3FlagOn('discover');
 }
 
 function _renderPathTabEmpty() {
@@ -26333,6 +26421,10 @@ function updatePathWizardDots(activeStep) {
 }
 
 function confirmStartPath() {
+  // Offline demos of the programme being replaced (removed below if the
+  // switch preview's checkbox stayed ticked).
+  let _oldOfflineKey = null;
+  try { if(_p3FlagOn('discover') && isPathActive() && userPath && userPath.programme !== _pathWizard.programme) _oldOfflineKey = _offlineProgKey(userPath); } catch(e){ _oldOfflineKey = null; }
   // Archive any completed path before it's overwritten by the new one, so a
   // finished path is never silently discarded (idempotent — deduped by id).
   _archiveCompletedPathIfNeeded();
@@ -26370,6 +26462,10 @@ function confirmStartPath() {
   cloudSaveProfile();
   todayProg = userPath.programme;
   saveLocalCache();
+  try {
+    if(_oldOfflineKey && _discRemoveOldMedia && _oldOfflineKey !== _offlineProgKey(userPath) && _offlineStateGet().progs[_oldOfflineKey]) _offlineRemoveKey(_oldOfflineKey);
+  } catch(e){}
+  _discRemoveOldMedia = true;
   document.getElementById('pathWizardMod').classList.remove('open');
   renderToday();
   setTimeout(() => {
@@ -26390,6 +26486,11 @@ let _libFilters = { goal:'all', level:'all', days:'all' };
 
 function openLibraryBrowse(){
   _libFilters = { goal:'all', level:'all', days:'all' };
+  _discFilters = { goal:'all', level:'all', days:'all', equip:'all', minutes:'all' };
+  const disc = _p3FlagOn('discover'), t = document.getElementById('libBrowseTitle'), st = document.getElementById('libBrowseSub');
+  if(t) t.textContent = disc ? '🔎 Find a programme' : '🏋️ Strength';
+  if(st) st.textContent = disc ? 'Filter by what fits your week, compare up to three, and see why one suits you. Switching keeps all your history.'
+    : 'ULF and PPL built-ins plus curated, well-known programmes from the strength community.';
   renderLibraryFilters();
   renderLibraryCards();
   document.getElementById('libraryBrowseMod').classList.add('open');
@@ -26406,6 +26507,7 @@ function setLibFilter(key, val){
 }
 
 function renderLibraryFilters(){
+  if(_p3FlagOn('discover')){ document.getElementById('libFilterChips').innerHTML = _discRenderFilters(); return; }
   const goals = [
     { id:'all', label:'All goals' },
     { id:'Strength', label:'💪 Strength' },
@@ -26470,6 +26572,7 @@ function selectBuiltInStrength(prog){
 }
 
 function renderLibraryCards(){
+  if(_p3FlagOn('discover')){ document.getElementById('libCards').innerHTML = _discRenderCards(); return; }
   const matches = LIBRARY_PROGRAMMES.filter(p => {
     if(!_libGoalMatches(p.goal)) return false;
     if(_libFilters.level !== 'all' && !p.level.startsWith(_libFilters.level)) return false;
@@ -26524,7 +26627,7 @@ function renderLibraryCards(){
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px;">
         <div style="flex:1;min-width:0;">
           <div style="font-size:16px;font-weight:800;color:var(--text);">${p.name}</div>
-          <div style="font-size:11px;color:var(--text2);margin-top:2px;">${p.author}</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px;">${p.author || 'Max Gainz'}</div>
         </div>
         <div style="font-size:18px;color:var(--text2);flex-shrink:0;">›</div>
       </div>
@@ -26550,7 +26653,7 @@ function openLibraryPreview(id){
     </div>
     <div style="margin-bottom:14px;">
       <div style="font-size:24px;font-weight:900;color:var(--text);">${p.name}</div>
-      <div style="font-size:12px;color:var(--text2);margin-top:3px;">${p.author}</div>
+      <div style="font-size:12px;color:var(--text2);margin-top:3px;">${p.author || 'Max Gainz'}</div>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px;">
       <span style="background:rgba(200,255,0,0.10);color:var(--accent);font-size:11px;font-weight:700;padding:4px 10px;border-radius:12px;">${p.level}</span>
@@ -26596,17 +26699,18 @@ function closeLibraryPreview(){
 function adoptLibraryProgramme(id){
   const p = getLibraryProgramme(id);
   if(!p) return;
+  // Open the wizard FIRST: openPathWizard() re-seeds _pathWizard from the
+  // current Path, which would silently replace this choice with the old
+  // programme (reachable since the Plan tab can open the finder directly).
+  if(!document.getElementById('pathWizardMod').classList.contains('open')) openPathWizard();
   _pathWizard.programme = 'library:' + id;
+  if(typeof _discRemoveOldMedia !== 'undefined') _discRemoveOldMedia = true;
   _pathWizard.daysPerWeek = p.daysPerWeek;
   _pathWizard.variant = 'standard';
   _pathWizard.coreDays = [];
   _pathWizard.addOns = [];
   closeLibraryPreview();
   closeLibraryBrowse();
-  // Make sure wizard is open at step 1, then jump to step 2
-  if(!document.getElementById('pathWizardMod').classList.contains('open')){
-    openPathWizard();
-  }
   // Force step 1 -> step 2 transition
   if(_pathWizard.step !== 1){
     // Reset to step 1 first so pathWizardNext lands us at step 2
@@ -26617,6 +26721,342 @@ function adoptLibraryProgramme(id){
   renderPathStep1();
   setTimeout(() => pathWizardNext(), 100);
 }
+
+
+// ── PROGRAMME DISCOVERY (Phase 3 · slice 2, flag maxgainz_p3_discover) ──
+// Browse / filter / compare every Path programme using PROGRAMME_META, explain
+// "why this programme" with the Start-today recommender, and show what a
+// switch changes before it is confirmed. History is never touched by a switch
+// (sessions, PBs and weights stay; rotation is scoped per programme).
+const DISC_LEVEL_LABEL = { 'beginner':'Beginner', 'beginner-intermediate':'Beginner–intermediate', 'intermediate':'Intermediate', 'advanced':'Advanced' };
+const DISC_GOAL_LABEL = { 'strength':'Strength', 'muscle':'Muscle', 'strength-muscle':'Strength + muscle' };
+const DISC_PROG_LABEL = { 'linear':'Add weight every session', 'double':'Reps, then weight', 'tiered':'Tiered (GZCL)', 'weekly':'Weekly increase', 'wave':'4-week wave', 'variation':'Harder variations' };
+const DISC_EQUIP_LABEL = { 'barbell':'Barbell', 'rack':'Squat rack', 'bench':'Bench', 'dumbbells':'Dumbbells', 'cables':'Cables', 'machines':'Machines', 'pull-up bar':'Pull-up bar', 'dip bars':'Dip bars', 'band':'Resistance band', 'bodyweight':'Bodyweight' };
+let _discFilters = { goal:'all', level:'all', days:'all', equip:'all', minutes:'all' };
+let _discList = [];          // keys exactly as the cards were drawn (buttons pass an index)
+let _discCompare = [];       // keys picked for comparison (≤ 3)
+let _discDetailKey = null;   // programme shown in the detail sheet
+let _discRemoveOldMedia = true; // switch preview: also remove the old programme's offline demos
+
+function _discKeys(){ return ['ULF', 'PPL'].concat(LIBRARY_PROGRAMMES.map(p => 'library:' + p.id)); }
+// Pure: everything the finder shows about one programme. null for unknown keys.
+function _progInfo(key){
+  const m = PROGRAMME_META[key];
+  if(!m) return null;
+  const lib = (typeof isLibraryProgramme === 'function' && isLibraryProgramme(key)) ? getLibraryProgramme(key) : null;
+  const b = lib ? null : _BUILTIN_STRENGTH.find(x => x.id === key);
+  if(!lib && !b) return null;
+  const days = lib ? lib.schedule.map(d => ({ day:d.day, exercises:d.exercises }))
+    : key === 'ULF' ? Object.keys(ULF_VARIANTS).map(d => ({ day:d, exercises:ULF_VARIANTS[d][0] }))
+    : Object.keys(PPL).map(d => ({ day:d, exercises:PPL[d] }));
+  return {
+    key, meta:m,
+    name: lib ? lib.name : (key === 'ULF' ? 'Upper · Lower · Full Body' : 'Push · Pull · Legs'),
+    short: lib ? lib.short : key,
+    author: lib ? (lib.author || 'Max Gainz') : 'Max Gainz',
+    blurb: lib ? lib.blurb : b.blurb,
+    description: lib ? lib.description : m.description,
+    equipClass: lib ? _stProgEquip(lib) : 'gym',
+    days
+  };
+}
+// Pure: rough session length in minutes (warm-up + sets × (work + rest)).
+// Rest follows the slot type, shortened for higher-rep work; a core circuit
+// counts as 6 minutes.
+function _estSessionMin(exs){
+  const REST = { 'Primary':180, 'Main Assistance':120, 'Compound':105, 'Compound Mass':105, 'Mass Assistance':90, 'Assistance':90, 'Mass':75, 'Accessory':75 };
+  let sec = 8 * 60;
+  (exs || []).forEach(e => {
+    if(!e) return;
+    if(e.coreCircuit || e.name === 'Abdominal Work'){ sec += 6 * 60; return; }
+    const sets = Number(e.sets) || 3;
+    let rest = REST[e.type] || 90;
+    const lo = parseInt(String(e.reps), 10);
+    if(lo >= 8) rest = Math.min(rest, 90); else if(lo >= 6) rest = Math.min(rest, 120);
+    const each = /each/.test(String(e.reps)) ? 2 : 1;
+    sec += sets * (40 * each + rest);
+  });
+  return Math.round(sec / 60);
+}
+// Pure: does a programme pass the finder's filters?
+function _progMatches(info, f){
+  if(!info) return false;
+  const m = info.meta;
+  if(f.goal !== 'all' && m.goal !== f.goal && !(m.goal === 'strength-muscle' && (f.goal === 'strength' || f.goal === 'muscle'))) return false;
+  if(f.level !== 'all' && m.level.indexOf(f.level) !== 0) return false;
+  if(f.days !== 'all' && m.days.indexOf(Number(f.days)) === -1) return false;
+  if(f.equip === 'home' && !(info.equipClass === 'home' || info.equipClass === 'bodyweight')) return false;
+  if(f.equip === 'bodyweight' && info.equipClass !== 'bodyweight') return false;
+  if(f.minutes !== 'all' && m.minutes[0] > Number(f.minutes)) return false;
+  return true;
+}
+// Pure: "why this programme" for saved Start-today answers. Reuses
+// recommendProgramme on the same catalogue Start today uses.
+function _whyProgramme(key, ans, catalogue){
+  const info = _progInfo(key);
+  const a = ans || {};
+  const hasAnswers = !!(a.goal || a.equipment || a.experience || a.minutes);
+  const out = { hasAnswers, isTop:false, top:null, fits:[], misses:[] };
+  if(!info || !hasAnswers) return out;
+  const top = recommendProgramme(a, catalogue);
+  if(top){ out.top = { key: top.key, name: top.name, reason: top.reason }; out.isTop = top.key === key; }
+  const m = info.meta;
+  const goalOk = !a.goal || (a.goal === 'strength' && m.goal !== 'muscle') || (a.goal === 'muscle' && m.goal !== 'strength')
+    || ((a.goal === 'fitness' || a.goal === 'health') && m.level === 'beginner');
+  const goalTxt = { strength:'getting stronger', muscle:'building muscle', fitness:'getting fitter', health:'staying healthy' }[a.goal];
+  if(a.goal) (goalOk ? out.fits : out.misses).push(goalOk ? 'Suits your goal: ' + goalTxt : 'Built for ' + DISC_GOAL_LABEL[m.goal].toLowerCase() + ', not ' + goalTxt);
+  const ud = Number(a.days) || 0;
+  if(ud){
+    const best = m.days.filter(d => d <= ud).sort((x, y) => y - x)[0];
+    if(best) out.fits.push(best === ud ? 'Uses your ' + ud + ' training days' : 'Needs ' + best + ' of your ' + ud + ' days');
+    else out.misses.push('Designed for ' + m.days[0] + ' days; you have ' + ud + ' (it would rotate through on fewer)');
+  }
+  if(a.equipment){
+    const e = info.equipClass;
+    const ok = a.equipment === 'gym' || (a.equipment === 'home' ? (e === 'home' || e === 'bodyweight') : e === 'bodyweight');
+    const has = { gym:'a gym', home:'dumbbells at home', bodyweight:'no equipment' }[a.equipment];
+    (ok ? out.fits : out.misses).push(ok ? 'Works with ' + has : 'Needs ' + m.equipment.slice(0, 3).map(x => DISC_EQUIP_LABEL[x] || x).join(', ').toLowerCase() + ' — you said ' + has);
+  }
+  if(a.experience){
+    const LV = { 'beginner':0, 'beginner-intermediate':0.5, 'intermediate':1, 'advanced':2 }, EX = { beginner:0, intermediate:1, advanced:2 };
+    const gap = LV[m.level] - EX[a.experience];
+    if(Math.abs(gap) <= 0.5) out.fits.push('Matches your experience');
+    else out.misses.push(gap > 0 ? 'Aimed at more experienced lifters' : 'Simpler than you may need');
+  }
+  if(a.minutes){
+    if(m.minutes[0] <= a.minutes) out.fits.push('Sessions fit in ' + a.minutes + ' minutes' + (m.minutes[1] > a.minutes ? ' on most days' : ''));
+    else out.misses.push('Sessions usually take ' + m.minutes[0] + '–' + m.minutes[1] + ' minutes; you have ' + a.minutes);
+  }
+  return out;
+}
+// Pure: the base exercise list of a programme (every day, both ULF variants).
+function _progBaseExercises(key){
+  const names = new Set();
+  const add = exs => (exs || []).forEach(e => { if(e && e.name) names.add(e.name); });
+  if(key === 'ULF') Object.keys(ULF_VARIANTS).forEach(d => ULF_VARIANTS[d].forEach(add));
+  else if(key === 'PPL') Object.keys(PPL).forEach(d => add(PPL[d]));
+  else if(typeof isLibraryProgramme === 'function' && isLibraryProgramme(key)){ const l = getLibraryProgramme(key); if(l) l.schedule.forEach(d => add(d.exercises)); }
+  return Array.from(names).sort();
+}
+// Pure: what switching from one Path to another changes. ctx carries the
+// facts the UI already knows (history count, current week, offline size).
+function _progSwitchDiff(fromPath, toKey, toDays, ctx){
+  const c = ctx || {};
+  const fromKey = fromPath && fromPath.programme;
+  const a = _progBaseExercises(fromKey), b = _progBaseExercises(toKey);
+  const A = new Set(a), B = new Set(b);
+  const fi = _progInfo(fromKey), ti = _progInfo(toKey);
+  return {
+    fromKey, toKey,
+    fromName: fi ? fi.name : (typeof _progDisplayName === 'function' ? _progDisplayName(fromKey) : String(fromKey || '')),
+    toName: ti ? ti.name : (typeof _progDisplayName === 'function' ? _progDisplayName(toKey) : String(toKey || '')),
+    daysFrom: fromPath && fromPath.coreSchedule ? fromPath.coreSchedule.daysPerWeek : null,
+    daysTo: toDays,
+    minutesFrom: fi ? fi.meta.minutes : null, minutesTo: ti ? ti.meta.minutes : null,
+    added: b.filter(n => !A.has(n)), removed: a.filter(n => !B.has(n)), kept: b.filter(n => A.has(n)),
+    sessions: Number(c.sessions) || 0,
+    week: Number(c.week) || null, weeks: fromPath ? fromPath.duration : null,
+    offlineBytes: Number(c.offlineBytes) || 0
+  };
+}
+
+// ── Finder UI (inside the existing library sheet) ──
+function openProgrammeFinder(){
+  if(typeof openLibraryBrowse === 'function') openLibraryBrowse();
+}
+function discSetFilter(group, i){
+  const opts = _discFilterOpts()[group];
+  if(!opts || !opts[i]) return;
+  _discFilters[group] = opts[i].id;
+  renderLibraryFilters();
+  renderLibraryCards();
+  const b = document.querySelector('#libFilterChips button[onclick="discSetFilter(\'' + group + '\', ' + i + ')"]');
+  if(b) b.focus();
+}
+function _discFilterOpts(){
+  return {
+    goal:[{ id:'all', label:'Any goal' }, { id:'strength', label:'Strength' }, { id:'muscle', label:'Muscle' }, { id:'strength-muscle', label:'Both' }],
+    level:[{ id:'all', label:'Any level' }, { id:'beginner', label:'Beginner' }, { id:'intermediate', label:'Intermediate' }, { id:'advanced', label:'Advanced' }],
+    days:[{ id:'all', label:'Any days' }, { id:3, label:'3 days' }, { id:4, label:'4 days' }, { id:5, label:'5 days' }, { id:6, label:'6 days' }],
+    equip:[{ id:'all', label:'Any equipment' }, { id:'home', label:'Dumbbells at home' }, { id:'bodyweight', label:'No equipment' }],
+    minutes:[{ id:'all', label:'Any length' }, { id:45, label:'≤ 45 min' }, { id:60, label:'≤ 60 min' }]
+  };
+}
+function _discRenderFilters(){
+  const o = _discFilterOpts();
+  const names = { goal:'Goal', level:'Level', days:'Days a week', equip:'Equipment', minutes:'Session length' };
+  return Object.keys(o).map(g => `<div role="group" aria-label="${names[g]}" style="display:flex;flex-wrap:wrap;gap:5px;width:100%;margin-bottom:6px;">${o[g].map((opt, i) => {
+    const on = _discFilters[g] === opt.id;
+    return `<button type="button" aria-pressed="${on}" onclick="discSetFilter('${g}', ${i})" style="background:${on ? 'rgba(200,255,0,0.15)' : 'var(--surface2)'};border:1px solid ${on ? 'var(--accent)' : 'var(--border)'};border-radius:18px;padding:6px 12px;font-size:11px;font-weight:700;color:${on ? 'var(--accent)' : 'var(--text2)'};cursor:pointer;white-space:nowrap;">${esc(opt.label)}</button>`;
+  }).join('')}</div>`).join('');
+}
+function _discAnswers(){ return (typeof _stAnswersFrom === 'function') ? _stAnswersFrom(typeof userProfile === 'object' && userProfile ? userProfile.onboarding : null) : {}; }
+function _discRenderCards(){
+  const ans = _discAnswers();
+  const top = (ans.goal || ans.equipment || ans.experience) ? recommendProgramme(ans, _stCatalogue()) : null;
+  _discList = _discKeys().filter(k => _progMatches(_progInfo(k), _discFilters));
+  if(top) _discList.sort((x, y) => (y === top.key) - (x === top.key));
+  if(!_discList.length) return `<div style="text-align:center;padding:30px 16px;color:var(--text2);font-size:13px;">No programmes match those filters. <button type="button" onclick="discClearFilters()" style="background:none;border:none;color:var(--accent);cursor:pointer;font-weight:700;font-size:13px;">Clear filters</button></div>`;
+  const pill = (t, hi) => `<span style="background:${hi ? 'rgba(200,255,0,0.10)' : 'var(--surface3)'};color:${hi ? 'var(--accent)' : 'var(--text2)'};font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;">${esc(t)}</span>`;
+  const cards = _discList.map((k, i) => {
+    const p = _progInfo(k), m = p.meta;
+    const inCmp = _discCompare.indexOf(k) !== -1;
+    const cmpFull = !inCmp && _discCompare.length >= 3;
+    return `<div style="background:var(--surface2);border:1px solid ${top && top.key === k ? 'var(--accent)' : 'var(--border)'};border-radius:14px;padding:14px;margin-bottom:10px;">
+      ${top && top.key === k ? `<div style="font-size:10px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;">Recommended for you</div>` : ''}
+      <button type="button" onclick="openProgrammeDetail(${i})" style="display:block;width:100%;text-align:left;background:none;border:none;padding:0;color:inherit;cursor:pointer;">
+        <div style="display:flex;justify-content:space-between;gap:10px;"><div style="font-size:16px;font-weight:800;color:var(--text);">${esc(p.name)}</div><div aria-hidden="true" style="font-size:18px;color:var(--text2);">›</div></div>
+        <div style="font-size:13px;color:var(--text2);margin:4px 0 8px;line-height:1.4;">${esc(p.blurb)}</div>
+      </button>
+      <div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;">
+        ${pill(DISC_LEVEL_LABEL[m.level], true)}${pill(DISC_GOAL_LABEL[m.goal])}${pill(m.days.join(' or ') + ' days')}${pill(m.minutes[0] + '–' + m.minutes[1] + ' min')}${pill(p.equipClass === 'gym' ? 'Gym' : p.equipClass === 'home' ? 'Dumbbells' : 'No gym')}
+        <button type="button" aria-pressed="${inCmp}" ${cmpFull ? 'disabled' : ''} onclick="discToggleCompare(${i})" aria-label="Compare ${esc(p.name)}" style="margin-left:auto;background:${inCmp ? 'rgba(200,255,0,0.15)' : 'transparent'};border:1px solid ${inCmp ? 'var(--accent)' : 'var(--border)'};color:${inCmp ? 'var(--accent)' : 'var(--text2)'};border-radius:10px;padding:5px 10px;font-size:11px;font-weight:700;cursor:${cmpFull ? 'default' : 'pointer'};opacity:${cmpFull ? '0.45' : '1'};">${inCmp ? '✓ Compare' : '+ Compare'}</button>
+      </div>
+    </div>`;
+  }).join('');
+  const bar = _discCompare.length ? `<div style="position:sticky;bottom:0;background:var(--surface);padding:10px 0;display:flex;gap:8px;align-items:center;border-top:0.5px solid var(--border);">
+      <div role="status" style="flex:1;font-size:12px;color:var(--text2);">${_discCompare.length} of 3 picked to compare</div>
+      <button type="button" onclick="discClearCompare()" style="background:transparent;border:0.5px solid var(--border);color:var(--text);border-radius:10px;padding:9px 12px;font-size:12px;font-weight:700;cursor:pointer;">Clear</button>
+      <button type="button" class="btn-p" ${_discCompare.length < 2 ? 'disabled' : ''} onclick="openProgrammeCompare()" style="padding:9px 14px;font-size:13px;">Compare</button></div>` : '';
+  return cards + bar;
+}
+function discClearFilters(){ _discFilters = { goal:'all', level:'all', days:'all', equip:'all', minutes:'all' }; renderLibraryFilters(); renderLibraryCards(); }
+function discToggleCompare(i){
+  const k = _discList[i]; if(!k) return;
+  const at = _discCompare.indexOf(k);
+  if(at !== -1) _discCompare.splice(at, 1); else if(_discCompare.length < 3) _discCompare.push(k);
+  renderLibraryCards();
+  const b = document.querySelectorAll('#libCards button[aria-pressed][onclick^="discToggleCompare"]')[i];
+  if(b) b.focus();
+}
+function discClearCompare(){ _discCompare = []; renderLibraryCards(); }
+
+function _discWhyHtml(key){
+  const w = _whyProgramme(key, _discAnswers(), _stCatalogue());
+  if(!w.hasAnswers) return `<div style="font-size:13px;color:var(--text2);line-height:1.5;">Answer four quick questions and we'll show how this fits you. <button type="button" onclick="discOpenStartToday()" style="background:none;border:none;color:var(--accent);font-weight:700;cursor:pointer;font-size:13px;padding:0;">Recommend a plan for me</button></div>`;
+  const li = (t, ok) => `<li style="display:flex;gap:8px;padding:3px 0;"><span aria-hidden="true" style="color:${ok ? 'var(--green)' : 'var(--orange)'};font-weight:800;">${ok ? '✓' : '!'}</span><span>${esc(t)}</span></li>`;
+  const head = w.isTop ? `<div style="font-size:13px;font-weight:800;color:var(--accent);margin-bottom:6px;">This is the plan Start today recommends for you.</div><div style="font-size:12px;color:var(--text2);margin-bottom:8px;">${esc(w.top.reason)}</div>`
+    : w.top ? `<div style="font-size:12px;color:var(--text2);margin-bottom:8px;">For your answers, Start today would pick <strong style="color:var(--text);">${esc(w.top.name)}</strong>. ${esc(w.top.reason)}</div>` : '';
+  return head + `<ul style="list-style:none;margin:0;padding:0;font-size:13px;color:var(--text);">${w.fits.map(t => li(t, true)).join('')}${w.misses.map(t => li(t, false)).join('')}</ul>`;
+}
+function discOpenStartToday(){ closeLibraryPreview(); closeLibraryBrowse(); if(typeof openStartTodayFromProfile === 'function') openStartTodayFromProfile(); }
+function openProgrammeDetail(i){
+  const k = _discList[i];
+  if(k) _discShowDetail(k);
+}
+function _discShowDetail(k){
+  const p = _progInfo(k); if(!p) return;
+  _discDetailKey = k;
+  const m = p.meta;
+  const sec = (t, body) => `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px;"><div style="font-size:11px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:8px;">${t}</div>${body}</div>`;
+  const ul = arr => `<ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.5;color:var(--text);">${arr.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
+  const current = typeof isPathActive === 'function' && isPathActive() && userPath && userPath.programme === k;
+  document.getElementById('libPreviewContent').innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <button type="button" onclick="closeLibraryPreview()" style="background:transparent;border:none;color:var(--text2);font-size:14px;cursor:pointer;padding:4px 0;font-weight:700;">‹ Back</button>
+    </div>
+    <h2 id="discDetailTitle" style="font-size:24px;font-weight:900;color:var(--text);margin:0;">${esc(p.name)}</h2>
+    <div style="font-size:12px;color:var(--text2);margin:3px 0 12px;">${esc(p.author)}</div>
+    <dl style="display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:13px;margin:0 0 12px;">
+      <dt style="color:var(--text2);">Goal</dt><dd style="margin:0;font-weight:700;">${esc(DISC_GOAL_LABEL[m.goal])}</dd>
+      <dt style="color:var(--text2);">Level</dt><dd style="margin:0;font-weight:700;">${esc(DISC_LEVEL_LABEL[m.level])}</dd>
+      <dt style="color:var(--text2);">Days a week</dt><dd style="margin:0;font-weight:700;">${esc(m.days.join(' or '))}</dd>
+      <dt style="color:var(--text2);">Session</dt><dd style="margin:0;font-weight:700;">about ${m.minutes[0]}–${m.minutes[1]} min</dd>
+      <dt style="color:var(--text2);">Equipment</dt><dd style="margin:0;font-weight:700;">${esc(m.equipment.map(x => DISC_EQUIP_LABEL[x] || x).join(', '))}</dd>
+      <dt style="color:var(--text2);">Progression</dt><dd style="margin:0;font-weight:700;">${esc(DISC_PROG_LABEL[m.progression])}</dd>
+    </dl>
+    ${sec('Why this programme', _discWhyHtml(k))}
+    ${sec('Good for', ul(m.forWho))}
+    ${sec('Not ideal for', ul(m.notFor))}
+    ${sec('How it works', `<div style="font-size:13px;line-height:1.5;color:var(--text);margin-bottom:8px;">${esc(p.description)}</div><div style="font-size:12px;line-height:1.5;color:var(--text2);">${esc(m.progressionText)} In the app, the coach suggests each weight from the sets you log.</div>`)}
+    ${sec('Schedule · ' + p.days.length + ' days', p.days.map(d => `<div style="padding:6px 0;border-top:0.5px solid var(--border);font-size:12px;"><strong>${esc(d.day)}</strong> · <span style="color:var(--text2);">${esc(d.exercises.map(e => e.name).join(', '))}</span> · ~${_estSessionMin(d.exercises)} min</div>`).join(''))}
+    ${current ? `<div role="status" style="text-align:center;font-size:13px;color:var(--text2);padding:10px;">This is your current programme.</div>`
+      : `<button type="button" class="btn-p" style="width:100%;font-size:15px;padding:14px;" onclick="discChoose()">Choose ${esc(p.name)}</button>`}
+    <button type="button" onclick="closeLibraryPreview()" style="width:100%;margin-top:8px;background:transparent;border:none;color:var(--text2);font-size:13px;padding:8px;cursor:pointer;">Back to programmes</button>`;
+  document.getElementById('libraryPreviewMod').classList.add('open');
+  const h = document.getElementById('discDetailTitle'); if(h){ h.tabIndex = -1; try { h.focus(); } catch(e){} }
+}
+function openProgrammeCompare(){
+  const ps = _discCompare.map(_progInfo).filter(Boolean);
+  if(ps.length < 2) return;
+  const row = (label, f) => `<tr><th scope="row" style="text-align:left;color:var(--text2);font-weight:700;padding:8px 6px;vertical-align:top;border-top:0.5px solid var(--border);">${label}</th>${ps.map(p => `<td style="padding:8px 6px;vertical-align:top;border-top:0.5px solid var(--border);">${f(p)}</td>`).join('')}</tr>`;
+  const ul = arr => arr.map(x => '• ' + esc(x)).join('<br>');
+  const ans = _discAnswers(), cat = _stCatalogue();
+  document.getElementById('libPreviewContent').innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <button type="button" onclick="closeLibraryPreview()" style="background:transparent;border:none;color:var(--text2);font-size:14px;cursor:pointer;padding:4px 0;font-weight:700;">‹ Back</button>
+    </div>
+    <h2 id="discCmpTitle" style="font-size:22px;font-weight:900;margin:0 0 12px;">Compare programmes</h2>
+    <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:${ps.length * 120 + 90}px;">
+      <thead><tr><td></td>${ps.map(p => `<th scope="col" style="text-align:left;padding:6px;font-size:13px;font-weight:800;">${esc(p.name)}</th>`).join('')}</tr></thead>
+      <tbody>
+        ${row('Goal', p => esc(DISC_GOAL_LABEL[p.meta.goal]))}
+        ${row('Level', p => esc(DISC_LEVEL_LABEL[p.meta.level]))}
+        ${row('Days', p => esc(p.meta.days.join(' or ')))}
+        ${row('Session', p => p.meta.minutes[0] + '–' + p.meta.minutes[1] + ' min')}
+        ${row('Equipment', p => esc(p.meta.equipment.map(x => DISC_EQUIP_LABEL[x] || x).join(', ')))}
+        ${row('Progression', p => esc(DISC_PROG_LABEL[p.meta.progression]))}
+        ${row('Good for', p => ul(p.meta.forWho))}
+        ${row('Not ideal for', p => ul(p.meta.notFor))}
+        ${row('Fit for you', p => { const w = _whyProgramme(p.key, ans, cat); return !w.hasAnswers ? '—' : (w.isTop ? '<strong style="color:var(--accent);">Recommended</strong><br>' : '') + w.fits.length + ' match' + (w.fits.length === 1 ? '' : 'es') + (w.misses.length ? ', ' + w.misses.length + ' to note' : ''); })}
+        <tr><td></td>${ps.map((p, i) => `<td style="padding:8px 6px;"><button type="button" onclick="discCompareOpen(${i})" style="background:var(--surface3);border:none;color:var(--text);border-radius:10px;padding:8px 10px;font-size:12px;font-weight:700;cursor:pointer;">Details</button></td>`).join('')}</tr>
+      </tbody>
+    </table></div>`;
+  document.getElementById('libraryPreviewMod').classList.add('open');
+  const h = document.getElementById('discCmpTitle'); if(h){ h.tabIndex = -1; try { h.focus(); } catch(e){} }
+}
+function discCompareOpen(i){ const k = _discCompare[i]; if(k) _discShowDetail(k); }
+// Choose: hand the programme to the Path wizard (its review step shows what
+// changes before anything is saved).
+function discChoose(){
+  const k = _discDetailKey;
+  if(!k || !PROGRAMME_META[k]) return;
+  if(isLibraryProgramme(k)){ adoptLibraryProgramme(getLibraryId(k)); return; }
+  _discRemoveOldMedia = true;
+  // Open first — openPathWizard() re-seeds the wizard from the current Path.
+  if(!document.getElementById('pathWizardMod').classList.contains('open')) openPathWizard();
+  _pathWizard.programme = k;
+  _pathWizard.daysPerWeek = 3;
+  _pathWizard.variant = k === 'PPL' ? '3day' : 'standard';
+  _pathWizard.coreDays = []; _pathWizard.addOns = []; _pathWizard.hiitSeries = null;
+  closeLibraryPreview(); closeLibraryBrowse();
+  if(_pathWizard.step !== 1){
+    document.getElementById('pathStep' + _pathWizard.step).style.display = 'none';
+    _pathWizard.step = 1;
+    document.getElementById('pathStep1').style.display = 'block';
+  }
+  renderPathStep1();
+  setTimeout(() => pathWizardNext(), 100);
+}
+
+// ── Switch preview on the wizard's review step ──
+function _discSwitchHtml(){
+  if(!_p3FlagOn('discover') || typeof isPathActive !== 'function' || !isPathActive() || !userPath) return '';
+  if(!_pathWizard.programme || userPath.programme === _pathWizard.programme) return '';
+  const real = (typeof completedSessions !== 'undefined' ? completedSessions : []).filter(s => s && !s.manualActivity).length;
+  let offlineBytes = 0, oldOfflineKey = null;
+  try {
+    oldOfflineKey = typeof _offlineProgKey === 'function' ? _offlineProgKey(userPath) : null;
+    const st = typeof _offlineStateGet === 'function' ? _offlineStateGet() : { progs:{} };
+    if(oldOfflineKey && st.progs[oldOfflineKey]) offlineBytes = _offlineSetBytes(_offlineSetForKey(oldOfflineKey, st.progs[oldOfflineKey].tier));
+  } catch(e){ offlineBytes = 0; }
+  const d = _progSwitchDiff(userPath, _pathWizard.programme, _pathWizard.daysPerWeek, { sessions: real, week: typeof getPathCurrentWeek === 'function' ? getPathCurrentWeek() : null, offlineBytes });
+  const list = (arr, max) => arr.length ? esc(arr.slice(0, max).join(', ')) + (arr.length > max ? ' and ' + (arr.length - max) + ' more' : '') : 'none';
+  return `<div role="region" aria-label="What changes" style="background:var(--surface2);border:1px solid rgba(255,140,66,0.35);border-radius:16px;padding:16px;margin-bottom:18px;">
+    <div style="font-size:11px;font-weight:800;color:var(--orange);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">What changes</div>
+    <ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.55;color:var(--text);">
+      <li><strong>${esc(d.fromName)}</strong> → <strong>${esc(d.toName)}</strong>${d.week && d.weeks ? ` (your current Path ends at week ${d.week} of ${d.weeks})` : ''}</li>
+      ${d.daysFrom !== d.daysTo ? `<li>Training days: ${d.daysFrom} → ${d.daysTo} a week</li>` : ''}
+      ${d.minutesFrom && d.minutesTo ? `<li>Sessions: about ${d.minutesFrom[0]}–${d.minutesFrom[1]} → ${d.minutesTo[0]}–${d.minutesTo[1]} min</li>` : ''}
+      <li>New exercises: ${list(d.added, 6)}</li>
+      <li>Dropped: ${list(d.removed, 6)}</li>
+      <li style="color:var(--green);">Kept: all ${d.sessions} logged workout${d.sessions === 1 ? '' : 's'}, your PBs and working weights${d.kept.length ? ` (${d.kept.length} exercise${d.kept.length === 1 ? '' : 's'} carry straight over)` : ''}</li>
+    </ul>
+    ${d.offlineBytes ? `<label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:12px;color:var(--text2);cursor:pointer;"><input type="checkbox" ${_discRemoveOldMedia ? 'checked' : ''} onchange="discToggleRemoveMedia(this.checked)" style="margin-top:2px;"> Also remove the offline demos for ${esc(d.fromName)} (${_offlineFmtMB(d.offlineBytes)})</label>` : ''}
+  </div>`;
+}
+function discToggleRemoveMedia(on){ _discRemoveOldMedia = !!on; }
 
 // ── Step 1: Choose Programme ──
 function renderPathStep1() {
@@ -27060,6 +27500,7 @@ function renderPathStep5() {
       <div style="font-size:14px;color:var(--text2);margin-top:6px;">Ready to commit?</div>
     </div>
     ${equipBlockHtml}
+    ${_discSwitchHtml()}
     <div style="background:var(--surface2);border:1px solid var(--border);border-radius:16px;padding:18px;margin-bottom:20px;">
       <div style="display:flex;flex-direction:column;gap:12px;">
         <div style="display:flex;justify-content:space-between;">
@@ -27103,7 +27544,7 @@ function renderPathStep5() {
     </div>
     <button class="btn-p" style="width:100%;font-size:16px;padding:16px;margin-bottom:10px;"
             onclick="confirmStartPath()">
-      🚀 Start My Path
+      ${_discSwitchHtml() ? '✓ Switch programme' : '🚀 Start My Path'}
     </button>
     <button onclick="pathWizardBack()" style="width:100%;padding:12px;background:transparent;border:none;color:var(--text2);font-size:13px;cursor:pointer;">
       ← Go back
