@@ -4923,13 +4923,13 @@ function _pushEnv(){ return { ua:'Mozilla/5.0 (X11; Linux x86_64) Chrome/125', m
 function _pushActivePath(){ return null; }
 function _pushTz(){ return 'Europe/London'; }
 renderRemindersCard();
-t(card.hidden === true && card.innerHTML === '', 'card must stay hidden without the flag');
-LS[P4_FLAG_KEYS.reminders] = '1'; renderRemindersCard();
-t(card.hidden === false && /Training-day reminders/.test(card.innerHTML) && /aria-checked="false"/.test(card.innerHTML), 'flag on: card shown, switch off');
-delete LS[P4_FLAG_KEYS.reminders]; LS[PUSH_PREFS_KEY] = JSON.stringify({ enabled:true, hour:7, days:[1] });
+t(card.hidden === false && /Training-day reminders/.test(card.innerHTML) && /aria-checked="false"/.test(card.innerHTML), 'rolled out: card shown by default, switch off');
+LS[P4_FLAG_KEYS.reminders] = '0'; renderRemindersCard();
+t(card.hidden === true && card.innerHTML === '', 'a device that opted out (?p4=0) must not see the card');
+LS[PUSH_PREFS_KEY] = JSON.stringify({ enabled:true, hour:7, days:[1] });
 renderRemindersCard();
-t(card.hidden === false && /aria-checked="true"/.test(card.innerHTML), 'flag off but reminders on: the off switch must stay reachable');
-LS = {}; renderRemindersCard(); t(card.hidden === true, 'flag off and reminders off: hidden again');
+t(card.hidden === false && /aria-checked="true"/.test(card.innerHTML), 'opted out but reminders on: the off switch must stay reachable');
+LS = {}; renderRemindersCard(); t(card.hidden === false, 'default again: shown');
 SACT = true; _pushOpenToday(); t(went.length === 0, 'a notification tap must not leave the workout screen');
 SACT = false; _pushOpenToday(); t(went.join() === 'today', 'a notification tap opens Today');
 JSON.stringify(fails);
@@ -5957,6 +5957,11 @@ t(_p5FlagsFromQuery('') === null && _p5FlagsFromQuery('?p4=reminders') === null,
 t(_p5FlagsFromQuery('?p5=profile').profile === true && _p5FlagsFromQuery('?p5=1').profile === true, 'on');
 t(_p5FlagsFromQuery('?p5=0').profile === false && _p5FlagsFromQuery('?p5=off').profile === false, 'off');
 t(_p5FlagsFromQuery('?p5=nope') === null, 'unknown ignored');
+var LS = {}; var localStorage = { getItem: function(k){ return LS.hasOwnProperty(k) ? LS[k] : null; } };
+t(_p5FlagOn('profile') === true, 'rolled out: on by default');
+LS[P5_FLAG_KEYS.profile] = '0'; t(_p5FlagOn('profile') === false, '?p5=0 opts a device out');
+LS[P5_FLAG_KEYS.profile] = '1'; t(_p5FlagOn('profile') === true, 'old opt-in value still on');
+t(_p5FlagOn('nope') === false, 'unknown flag off');
 JSON.stringify(fails);
 """
 
@@ -6043,7 +6048,7 @@ def gate_profile_v2(html, js):
     for bad in ['Height helps track body composition', 'All data is saved locally on your device']:
         if bad in html: problems.append(f'over-promising copy still present: {bad!r}')
     # pure flag parser
-    pieces = [extract_const_line(js, 'P5_FLAG_KEYS') or '', extract_decl(js, '_p5FlagsFromQuery') or '']
+    pieces = [extract_const_line(js, 'P5_FLAG_KEYS') or '', extract_decl(js, '_p5FlagsFromQuery') or '', extract_decl(js, '_p5FlagOn') or '']
     out, _ = run_jxa('\n'.join(pieces) + '\n' + P5_PURE)
     try: problems += json.loads(out)
     except Exception: problems.append('flag runner errored: ' + out[:200])

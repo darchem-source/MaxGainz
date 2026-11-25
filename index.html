@@ -5669,13 +5669,15 @@ function _p4ApplyFlagQuery(){
   try { f = _p4FlagsFromQuery(location.search); } catch(e){ f = null; }
   if(!f) return;
   try {
-    Object.keys(P4_FLAG_KEYS).forEach(k => { if(f[k]) localStorage.setItem(P4_FLAG_KEYS[k], '1'); else localStorage.removeItem(P4_FLAG_KEYS[k]); });
+    // Rolled out: on unless this device opted out (?p4=0 stores '0'; ?p4=1 clears it).
+    Object.keys(P4_FLAG_KEYS).forEach(k => { if(f[k]) localStorage.removeItem(P4_FLAG_KEYS[k]); else localStorage.setItem(P4_FLAG_KEYS[k], '0'); });
     const rest = location.search.replace(/[?&]p4=[^&#]*/, '').replace(/^&/, '?');
     history.replaceState(null, '', location.pathname + (rest && rest !== '?' ? rest : '') + location.hash);
   } catch(e){}
 }
 function _p4FlagOn(name){
-  try { return !!P4_FLAG_KEYS[name] && localStorage.getItem(P4_FLAG_KEYS[name]) === '1'; } catch(e){ return false; }
+  // Rolled out to everyone; a device can still opt out with ?p4=0.
+  try { return !!P4_FLAG_KEYS[name] && localStorage.getItem(P4_FLAG_KEYS[name]) !== '0'; } catch(e){ return !!P4_FLAG_KEYS[name]; }
 }
 
 // Pure: settings with safe defaults. Reminders are OFF unless the user turned them on.
@@ -29396,13 +29398,15 @@ function _p5ApplyFlagQuery(){
   try { f = _p5FlagsFromQuery(location.search); } catch(e){ f = null; }
   if(!f) return;
   try {
-    Object.keys(P5_FLAG_KEYS).forEach(k => { if(f[k]) localStorage.setItem(P5_FLAG_KEYS[k], '1'); else localStorage.removeItem(P5_FLAG_KEYS[k]); });
+    // Rolled out: on unless this device opted out (?p5=0 stores '0'; ?p5=1 clears it).
+    Object.keys(P5_FLAG_KEYS).forEach(k => { if(f[k]) localStorage.removeItem(P5_FLAG_KEYS[k]); else localStorage.setItem(P5_FLAG_KEYS[k], '0'); });
     const rest = location.search.replace(/[?&]p5=[^&#]*/, '').replace(/^&/, '?');
     history.replaceState(null, '', location.pathname + (rest && rest !== '?' ? rest : '') + location.hash);
   } catch(e){}
 }
 function _p5FlagOn(name){
-  try { return !!P5_FLAG_KEYS[name] && localStorage.getItem(P5_FLAG_KEYS[name]) === '1'; } catch(e){ return false; }
+  // Rolled out to everyone; a device can still opt out with ?p5=0.
+  try { return !!P5_FLAG_KEYS[name] && localStorage.getItem(P5_FLAG_KEYS[name]) !== '0'; } catch(e){ return !!P5_FLAG_KEYS[name]; }
 }
 
 // Section → blocks, in order. A block is every element tagged data-pb="<key>"
