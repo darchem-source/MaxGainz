@@ -4807,15 +4807,20 @@ FEEDBACK_RUN = r"""
 var SB_URL = 'https://sb.test', SB_KEY = 'ANON_PUBLIC_KEY', authToken = 'USER_JWT_SECRET';
 var currentUser = { id: 'user-123', email: 'me@example.com' };
 var _fbImageData = null, _fbImageFilename = null, _fbAnon = false;
-var ELS = { fbMessage: { value: 'The timer skips a beat sometimes.' }, fbCategory: { value: 'bug' }, fbLocation: { value: 'session' },
+var ELS = { fbMessage: { value: 'The timer skips a beat sometimes.', focus: function(){} }, fbCategory: { value: 'bug' }, fbLocation: { value: 'session' },
             fbSubmitBtn: { disabled: false, textContent: '' } };
-var document = { getElementById: function(id){ return ELS[id] || { focus: function(){} }; } };
+var document = { getElementById: function(id){ return ELS[id] || (ELS[id] = { id: id, hidden: false, textContent: '', value: '', focus: function(){ FOCUS = id; } }); } };
+var FOCUS = null; var crypto = { randomUUID: function(){ UUIDS++; return 'aaaaaaaa-bbbb-4ccc-8ddd-00000000000' + UUIDS; } }; var UUIDS = 0;
+var REPLIES = [];   // queue of { status, body } (default 201)
 function showToast(){} function closeFeedbackModal(){}
 var console = { error: function(){}, warn: function(){}, log: function(){} };
 function setTimeout(){ return 1; } function clearTimeout(){}
 function AbortController(){ this.signal = {}; this.abort = function(){}; }
 var SENT = [];
-function fetch(url, o){ SENT.push({ url: url, headers: o.headers, body: o.body }); return Promise.resolve({ ok: true, text: function(){ return Promise.resolve(''); } }); }
+function fetch(url, o){ SENT.push({ url: url, headers: o.headers, body: o.body }); var r = REPLIES.shift() || { status: 201 };
+  if(r.status === 'throw') return Promise.reject(new TypeError('Failed to fetch'));
+  return Promise.resolve({ ok: r.status >= 200 && r.status < 300, status: r.status, text: function(){ return Promise.resolve(r.body ? JSON.stringify(r.body) : ''); } }); }
+function clearFeedbackImage(){ _fbImageData = null; }
 """
 FEEDBACK_SCENARIOS = {
  'anonymous feedback carries no JWT, id or email': r"""
@@ -4834,6 +4839,17 @@ FEEDBACK_SCENARIOS = {
    return true;""",
 }
 
+
+FB_HELPERS = ['_fbDataUrlOk', '_fbRequestId', '_fbNewId', '_fbResult', '_fbMissingIdColumn', '_fbDataUrlBytes', '_fbKB', '_fbImageCheck', '_fbFitSize', '_fbCleanName', '_fbEncodePlan']
+def _feedback_src(js):
+    consts = []
+    for n in ['FB_IMG_TYPES']:
+        consts.append(extract_const_array(js, n) or '')
+    for n in ['FB_IMG_MAX_INPUT', 'FB_IMG_MAX_SIDE', 'FB_IMG_MAX_BYTES', 'FB_MSG_MAX']:
+        consts.append(extract_const_line(js, n) or '')
+    fns = [extract_decl(js, f) or '' for f in FB_HELPERS] + [extract_async_decl(js, '_fbPost') or '', extract_async_decl(js, 'submitFeedback') or '']
+    if not all(consts) or not all(fns): return None
+    return '\n'.join(consts + fns) + '\nvar _fbReqId = null, _fbReqSig = null, _fbBusy = false, _fbImageNote = "";\n'
 
 def _profile_blob_keys(js):
     prof = extract_async_decl(js, 'cloudSaveProfile') or ''
@@ -4905,8 +4921,7 @@ def gate_leftovers(html, js, sw=None, vendor=None):
     if problems: ok_all = False
     else: print(f'  ✓ no third-party script (Lottie self-hosted, SRI {sri[:19]}…, precached); pre-deletion download = full export ({len(keys)} profile fields) + CSV, no email claim, no auto-advance')
     # (b) anonymous feedback, run for real
-    fb = extract_decl(js, 'submitFeedback')
-    if fb and js[max(0, js.find(fb) - 6):js.find(fb)].endswith('async '): fb = 'async ' + fb
+    fb = _feedback_src(js)
     if not fb:
         print('  ✗ could not extract submitFeedback'); return False
     # CSV: quotes escaped, formulas neutralised
@@ -6651,72 +6666,183 @@ def gate_offline_coverage(html, js):
     for p in problems: print('  ✗ ' + p)
     return not problems
 
+# ── Gate 31: feedback operational controls (Priority 5) ───────────────────
+FB_PURE = r"""
+var P = [];
+function eq(l, g, w){ if(JSON.stringify(g) !== JSON.stringify(w)) P.push(l + ' — got ' + JSON.stringify(g) + ', want ' + JSON.stringify(w)); }
+var ok = function(t, z){ return _fbImageCheck({ type:t, size:z == null ? 1000 : z }); };
+eq('accepted types', [ok('image/jpeg'), ok('image/png'), ok('image/webp'), ok('image/heic'), ok('IMAGE/PNG')], [null, null, null, null, null]);
+eq('SVG / GIF / PDF / no type refused before reading', [!!ok('image/svg+xml'), !!ok('image/gif'), !!ok('application/pdf'), !!ok('')], [true, true, true, true]);
+eq('empty and oversized refused', [!!ok('image/png', 0), !!ok('image/png', 16 * 1024 * 1024), ok('image/png', 15 * 1024 * 1024)], [true, true, null]);
+eq('no file', !!_fbImageCheck(null), true);
+eq('fit: landscape / portrait / small / junk', [_fbFitSize(4032, 3024, 1280), _fbFitSize(1170, 2532, 1280), _fbFitSize(300, 200, 1280), _fbFitSize(0, NaN, 1280)], [{ w:1280, h:960 }, { w:591, h:1280 }, { w:300, h:200 }, { w:1, h:1 }]);
+eq('encode plan shrinks', _fbEncodePlan().every(function(x, i, a){ return i === 0 || (x[0] <= a[i - 1][0] && x[1] <= a[i - 1][1]); }), true);
+eq('file names: no path, no markup, always .jpg', [_fbCleanName('C:\\\\Users\\\\me\\\\IMG_1.PNG'), _fbCleanName('../../<script>.heic'), _fbCleanName(''), _fbCleanName('a"b\u0007c.webp')], ['IMG_1.jpg', 'script.jpg', 'screenshot.jpg', 'abc.jpg']);
+var big = 'data:image/jpeg;base64,' + new Array(FB_IMG_MAX_BYTES).join('A');
+eq('only bounded JPEG data URLs go out', [_fbDataUrlOk('data:image/jpeg;base64,AAAA'), _fbDataUrlOk('data:image/png;base64,AAAA'), _fbDataUrlOk(big), _fbDataUrlOk('data:image/jpeg;base64,<x>'), _fbDataUrlOk(null)], [true, false, false, false, false]);
+eq('client limit is under the server limit (700 KB)', FB_IMG_MAX_BYTES < 716800, true);
+var n = 0, mk = function(){ n++; return 'id' + n; };
+eq('request id: reused for the same content, new for changed content', [_fbRequestId(null, null, 's1', mk), _fbRequestId('id1', 's1', 's1', mk), _fbRequestId('id1', 's1', 's2', mk)], ['id1', 'id1', 'id2']);
+var u = _fbNewId(); eq('fallback id is uuid-shaped', /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(u), true);
+var R = function(st, b){ var r = _fbResult(st, b); return [r.ok, r.code]; };
+eq('replies', [R(201), R(204), R(409), R(0), R(400, { code:'P0001', message:'mg_rate_limited' }), R(429), R(400, { code:'23514', message:'violates check constraint "mg_feedback_bounds"' }), R(413), R(503), R(400, { message:'relation "feedback" does not exist' })],
+  [[true, 'ok'], [true, 'ok'], [true, 'duplicate'], [false, 'network'], [false, 'rate_limit'], [false, 'rate_limit'], [false, 'too_large'], [false, 'too_large'], [false, 'server'], [false, 'rejected_400']]);
+var raw = _fbResult(400, { message:'new row violates row-level security policy for table "feedback"', code:'42501', details:'secret' });
+eq('backend text never shown', /security|policy|feedback"|42501|secret|Supabase|migration/i.test(raw.msg), false);
+eq('pre-migration detection', [_fbMissingIdColumn(400, { code:'PGRST204', message:"Could not find the 'request_id' column of 'feedback'" }), _fbMissingIdColumn(400, { code:'PGRST204', message:"Could not find the 'x' column" }), _fbMissingIdColumn(500, null)], [true, false, false]);
+eq('sizes', [_fbDataUrlBytes('data:image/jpeg;base64,AAAA'), _fbKB(2048), _fbKB(3 * 1024 * 1024)], [3, '2 KB', '3 MB']);
+JSON.stringify(P);
+"""
+FB_SCEN = {
+ 'lost reply: the retry reuses the request id (stored once), a changed message gets a new one':
+   "REPLIES = [{ status:'throw' }, { status:201 }]; await submitFeedback(); await submitFeedback();"
+   " var a = JSON.parse(SENT[0].body).request_id, b = JSON.parse(SENT[1].body).request_id;"
+   " _fbReqId = 'old'; _fbReqSig = 'other'; ELS.fbMessage.value = 'A different message here'; REPLIES = [{ status:201 }]; await submitFeedback(); var c = JSON.parse(SENT[2].body).request_id;"
+   " return (a && a === b && c !== a && c !== 'old') || [a, b, c];",
+ 'success shows a receipt with a reference; form hidden; focus on the receipt':
+   "_fbImageData = 'data:image/jpeg;base64,AAAA'; _fbImageNote = '3 KB, resized to 10×10'; await submitFeedback();"
+   " return (ELS.fbReceipt.hidden === false && ELS.fbForm.hidden === true && /^MG-[0-9A-F]{8}$/.test(ELS.fbReceiptRef.textContent) && /Screenshot received \\(3 KB/.test(ELS.fbReceiptImg.textContent) && FOCUS === 'fbReceiptTitle') || [ELS.fbReceipt, ELS.fbReceiptRef, ELS.fbReceiptImg, FOCUS];",
+ 'a duplicate (409) is a success, not an error':
+   "REPLIES = [{ status:409, body:{ code:'23505' } }]; await submitFeedback(); return ELS.fbReceipt.hidden === false || 'no receipt';",
+ 'rate limited: friendly message, form kept, button usable, no raw text':
+   "REPLIES = [{ status:400, body:{ code:'P0001', message:'mg_rate_limited' } }]; await submitFeedback();"
+   " return (ELS.fbError.hidden === false && /few minutes/.test(ELS.fbError.textContent) && !/mg_rate/.test(ELS.fbError.textContent) && (!ELS.fbReceipt || ELS.fbReceipt.hidden !== false) && ELS.fbSubmitBtn.disabled === false && FOCUS === 'fbError') || [ELS.fbError, FOCUS];",
+ 'before feedback_limits.sql: falls back to a plain insert and still delivers':
+   "REPLIES = [{ status:400, body:{ code:'PGRST204', message:\"Could not find the 'request_id' column of 'feedback' in the schema cache\" } }, { status:201 }]; await submitFeedback();"
+   " return (SENT.length === 2 && JSON.parse(SENT[0].body).request_id && !('request_id' in JSON.parse(SENT[1].body)) && ELS.fbReceipt.hidden === false) || SENT.map(function(x){ return x.body; });",
+ 'an oversized screenshot never leaves the device':
+   "_fbImageData = 'data:image/png;base64,AAAA'; await submitFeedback(); return (SENT.length === 0 && ELS.fbError.hidden === false) || SENT.length;",
+ 'too short / too long messages are refused locally':
+   "ELS.fbMessage.value = 'short'; await submitFeedback(); var a = SENT.length; ELS.fbMessage.value = new Array(4002).join('x'); await submitFeedback(); return (a === 0 && SENT.length === 0) || [a, SENT.length];",
+ 'a second tap while sending is ignored':
+   "_fbBusy = true; await submitFeedback(); return SENT.length === 0 || SENT.length;",
+ 'logs carry status + code only':
+   "var L = []; console.warn = function(){ L.push([].slice.call(arguments)); }; REPLIES = [{ status:400, body:{ message:'secret detail' } }]; await submitFeedback();"
+   " return (JSON.stringify(L).indexOf('secret') === -1 && JSON.stringify(L).indexOf('timer skips') === -1 && L.length === 1) || L;",
+}
+
+def gate_feedback_ops(html, js, sql=None):
+    problems = []
+    fb = _feedback_src(js)
+    if not fb: problems.append('feedback functions not found')
+    else:
+        out, _ = run_jxa(fb + '\n' + FB_PURE)
+        try: problems += json.loads(out)
+        except Exception: problems.append('feedback runner errored: ' + out[:300])
+        problems += ['scenario ' + f for f in _run_jsc_scenarios(FEEDBACK_RUN + fb + '\n', FB_SCEN)]
+    hf = extract_async_decl(js, 'handleFeedbackImage') or ''
+    if hf.find('_fbImageCheck(file)') == -1 or hf.find('_fbImageCheck(file)') > hf.find('_fbCompressImage(file)'): problems.append('file type/size must be checked before the image is read')
+    if 'readAsDataURL' in hf: problems.append('screenshots must be re-encoded, never sent as picked')
+    ci = extract_async_decl(js, '_fbCompressImage') or ''
+    for need in ["toDataURL('image/jpeg', q)", '_fbDataUrlOk(url)', '_fbFitSize(w, h, side)', "fillRect(0, 0, d.w, d.h)"]:
+        if need not in ci: problems.append(f'compression must resize, re-encode as JPEG and bound the size ({need})')
+    m = re.search(r'<input type="file" id="fbImage"[^>]*>', html)
+    if not m or 'accept="image/jpeg,image/png,image/webp,image/heic,image/heif"' not in m.group(0): problems.append('the picker must offer only accepted image types')
+    if 'maxlength="4000"' not in (re.search(r'<textarea id="fbMessage"[^>]*>', html) or [''])[0]: problems.append('message length must be bounded in the form')
+    for bad in ['RLS policy blocking insert', 'run Supabase migration', "hint = errorDetail", 'Missing required field']:
+        if bad in html: problems.append(f'developer/raw error text still shown to users: {bad!r}')
+    for need in ['<div id="fbReceipt" hidden role="status"', '<h3 id="fbReceiptTitle" tabindex="-1"', '<div id="fbError" role="alert" tabindex="-1" hidden', '<div id="fbImageStatus" role="status" aria-live="polite"']:
+        if need not in html: problems.append(f'receipt / error / image status must be announced ({need[:40]})')
+    # server side
+    if sql is None:
+        pth = os.path.join(ROOT, 'supabase', 'feedback_limits.sql')
+        sql = open(pth, encoding='utf-8').read() if os.path.exists(pth) else ''
+    if not sql: problems.append('supabase/feedback_limits.sql is missing')
+    else:
+        flat = re.sub(r'\s+', ' ', re.sub(r'--[^\n]*', '', sql))
+        for need, why in [
+            ('alter table public.feedback add column if not exists request_id uuid', 'request id column'),
+            ('create unique index if not exists feedback_request_id_key on public.feedback (request_id) where request_id is not null', 'unique request id (race backstop)'),
+            ('char_length(message) between 10 and 4000', 'message bounds'),
+            ('octet_length(image_data) <= 716800 and', 'screenshot byte limit'),
+            ("image_data ~ '^data:image/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$'", 'screenshot content type'),
+            (') not valid;', 'old rows not re-checked'),
+            ('security definer set search_path = public, pg_temp', 'guard is definer with a fixed search_path'),
+            ('revoke all on function public.mg_feedback_guard() from public, anon, authenticated', 'guard not callable'),
+            ('alter table public.feedback_rate enable row level security', 'rate ledger RLS'),
+            ('revoke all on public.feedback_rate from anon, authenticated', 'rate ledger grants'),
+            ("k := 'a:' || md5(ip || ':mg-feedback')", 'only a hash of the IP is stored'),
+            ("interval '10 minutes'; if n >= 5", '5 per 10 minutes'), ("interval '1 day'; if n >= 30", '30 per day'), ("if n >= 300", 'anonymous daily cap'),
+            ('before insert on public.feedback for each row execute function public.mg_feedback_guard()', 'trigger'),
+            ("delete from public.feedback_rate where at < now() - interval '1 day'", 'ledger pruned daily'),
+        ]:
+            if need not in flat: problems.append(f'feedback_limits.sql: {why}')
+        g = flat[flat.find('create or replace function public.mg_feedback_guard'):]
+        if not (0 < g.find('return null') < g.find('feedback_rate')): problems.append('feedback_limits.sql: a retry must be dropped before it counts against the rate limit')
+        if re.search(r'insert into public\.feedback_rate \([^)]*\bip\b', flat) or 'ip text not null' in flat: problems.append('feedback_limits.sql: raw IPs must never be stored')
+        if re.search(r'create policy[^;]*feedback_rate', flat): problems.append('feedback_limits.sql: the rate ledger must have no API policies')
+    if not problems: print('  ✓ type checked before reading, re-encoded ≤600 KB (metadata stripped); request id reused for retries, deduped + rate-limited server-side (hashed IP, 5/10 min, 30/day, anon cap); receipt with reference; mapped errors; works before the SQL runs')
+    for p in problems: print('  ✗ ' + p)
+    return not problems
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/30] parse')
+    print('[1/31] parse')
     p = gate_parse(js)
-    print('[2/30] invariants')
+    print('[2/31] invariants')
     inv = gate_invariants(js)
-    print('[3/30] video map')
+    print('[3/31] video map')
     vm = gate_videomap(js)
-    print('[4/30] inline handler wiring')
+    print('[4/31] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/30] auth log hygiene')
+    print('[5/31] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/30] sign-out scrub')
+    print('[6/31] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/30] safe rendering of user text')
+    print('[7/31] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/30] sync honesty')
+    print('[8/31] sync honesty')
     sy = gate_sync(js)
-    print('[9/30] media fallback + reminder copy')
+    print('[9/31] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/30] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/31] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/30] core-journey accessibility (session + dialogs)')
+    print('[11/31] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/30] Start today (first-use flow) + shortened Path wizard')
+    print('[12/31] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/30] simplified navigation (default, reversible, one-time notice)')
+    print('[13/31] simplified navigation (default, reversible, one-time notice)')
     nv = gate_nav_v2(html, js)
-    print('[14/30] Progress weekly briefing')
+    print('[14/31] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/30] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/31] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/30] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/31] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/30] Phase 2 typed sets (preview before save)')
+    print('[17/31] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
-    print('[18/30] Phase 2 weekly AI recap + measurement')
+    print('[18/31] Phase 2 weekly AI recap + measurement')
     rc = gate_recap(html, js)
-    print('[19/30] Phase 3 offline media (download, cache versioning, fallback order)')
+    print('[19/31] Phase 3 offline media (download, cache versioning, fallback order)')
     om = gate_offline_media(html, js)
-    print('[20/30] Phase 3 programme discovery (metadata, finder, why, switch preview)')
+    print('[20/31] Phase 3 programme discovery (metadata, finder, why, switch preview)')
     dc = gate_discovery(html, js)
-    print('[21/30] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
+    print('[21/31] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
     sh = gate_sharing(html, js)
-    print('[22/30] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
+    print('[22/31] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
     lf = gate_leftovers(html, js)
-    print('[23/30] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
+    print('[23/31] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
     rm = gate_reminders(html, js)
-    print('[24/30] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
+    print('[24/31] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
     rs = gate_reminders_server(html, js)
-    print('[25/30] Profile & settings information model (flagged)')
+    print('[25/31] Profile & settings information model (flagged)')
     pv = gate_profile_v2(html, js)
-    print('[26/30] rollout registry + configuration in Data health')
+    print('[26/31] rollout registry + configuration in Data health')
     ro = gate_rollout(html, js)
-    print('[27/30] Today headline metric (context-sensitive, pinnable)')
+    print('[27/31] Today headline metric (context-sensitive, pinnable)')
     tm = gate_today_metric(html, js)
-    print('[28/30] authentication forms (Enter, password managers, errors, local data kept)')
+    print('[28/31] authentication forms (Enter, password managers, errors, local data kept)')
     af = gate_auth_forms(html, js)
-    print('[29/30] product-wide accessibility (click targets, state, dialog names)')
+    print('[29/31] product-wide accessibility (click targets, state, dialog names)')
     ax = gate_a11y_product(html, js)
-    print('[30/30] offline coverage explained (what works in the gym, what removal deletes)')
+    print('[30/31] offline coverage explained (what works in the gym, what removal deletes)')
     oc = gate_offline_coverage(html, js)
+    print('[31/31] feedback operational controls (bounded payloads, safe retries, rate limits, receipt)')
+    fo = gate_feedback_ops(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af and ax and oc:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af and ax and oc and fo:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 

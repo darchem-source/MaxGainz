@@ -5328,7 +5328,7 @@ function saveLocalFallback() { saveLocalCache(); }
 // still decide behaviour; gate 26 runs them against this registry so the two
 // can never disagree. mode: 'optIn' = on only when the key is '1';
 // 'optOut' = on unless the key is '0'. requires = another entry that must be on.
-const APP_VERSION = '2026.11.25.6';   // bump on every production push (shown in Data health)
+const APP_VERSION = '2026.11.25.7';   // bump on every production push (shown in Data health)
 const ROLLOUT_REGISTRY = [
   { id:'nav_v2', key:'maxgainz_nav_v2', mode:'optOut', label:'Simplified navigation',
     audience:'Everyone since 25 Nov 2026 (existing users get a one-time notice)', killSwitch:"Profile → Simplified navigation: Off, or 'Use classic navigation' on the notice (stores '0')",
@@ -31186,22 +31186,118 @@ async function deleteUserAccount(){
   }
 }
 
-// ── FEEDBACK ──
-let _fbImageData = null, _fbImageFilename = null, _fbAnon = false;
+// ── FEEDBACK (Priority 5: bounded payloads, safe retries, receipts) ──
+// Screenshots are checked by type BEFORE they are read, then re-encoded in the
+// browser (longest side ≤ FB_IMG_MAX_SIDE, JPEG) until they fit FB_IMG_MAX_BYTES
+// — which also strips photo metadata (location, device). Each submission
+// carries a request id that is reused for retries of the same content, so a
+// retry after a lost reply is stored once (supabase/feedback_limits.sql drops
+// the duplicate and rate-limits per account / per hashed IP). Users see a
+// receipt with a short reference; never raw backend text.
+const FB_IMG_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+const FB_IMG_MAX_INPUT = 15 * 1024 * 1024;   // refuse to even decode bigger files
+const FB_IMG_MAX_SIDE = 1280;
+const FB_IMG_MAX_BYTES = 600 * 1024;         // data-URL length sent (server allows 700 KB)
+const FB_MSG_MAX = 4000;
+let _fbImageData = null, _fbImageFilename = null, _fbAnon = false, _fbImageNote = '';
+let _fbReqId = null, _fbReqSig = null, _fbBusy = false;
+
+// Pure: why a picked file can't be used, or null.
+function _fbImageCheck(file){
+  if(!file) return 'No file selected.';
+  const t = String(file.type || '').toLowerCase();
+  if(FB_IMG_TYPES.indexOf(t) === -1) return 'Use a JPEG, PNG, WebP or HEIC screenshot.';
+  if(!(file.size > 0)) return 'That file is empty.';
+  if(file.size > FB_IMG_MAX_INPUT) return 'That image is too large (over 15 MB).';
+  return null;
+}
+// Pure: scaled size keeping the aspect ratio, longest side ≤ max.
+function _fbFitSize(w, h, max){
+  w = Math.max(1, Math.round(Number(w) || 1)); h = Math.max(1, Math.round(Number(h) || 1));
+  const k = Math.min(1, max / Math.max(w, h));
+  return { w: Math.max(1, Math.round(w * k)), h: Math.max(1, Math.round(h * k)) };
+}
+// Pure: the encode attempts, best first — sizes shrink and quality drops until it fits.
+function _fbEncodePlan(){ return [[FB_IMG_MAX_SIDE, 0.82], [FB_IMG_MAX_SIDE, 0.65], [1024, 0.6], [800, 0.55], [640, 0.5]]; }
+// Pure: a clean file name for the record (no path, no control characters, ≤ 80 chars).
+function _fbCleanName(n){
+  const base = String(n || 'screenshot').split(/[\\/]/).pop().replace(/[\u0000-\u001f\u007f<>"'`]/g, '').trim().slice(0, 60) || 'screenshot';
+  return base.replace(/\.[A-Za-z0-9]{1,5}$/, '') + '.jpg';
+}
+// Pure: a data URL the server will accept (type + length), or false.
+function _fbDataUrlOk(u){ return typeof u === 'string' && u.length <= FB_IMG_MAX_BYTES && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(u); }
+// Decode + re-encode in the browser. Resolves { dataUrl, w, h } or rejects with a user-facing message.
+async function _fbCompressImage(file){
+  let src = null, w = 0, h = 0;
+  try {
+    if(typeof createImageBitmap === 'function'){ src = await createImageBitmap(file); w = src.width; h = src.height; }
+  } catch(e){ src = null; }
+  if(!src){
+    src = await new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode')); };
+      img.src = url;
+    }).catch(() => null);
+    if(!src) throw new Error("That image couldn't be opened. Try a screenshot in JPEG or PNG.");
+    w = src.naturalWidth || src.width; h = src.naturalHeight || src.height;
+  }
+  for(const [side, q] of _fbEncodePlan()){
+    const d = _fbFitSize(w, h, side);
+    const c = document.createElement('canvas'); c.width = d.w; c.height = d.h;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, d.w, d.h);   // transparent PNGs → white, not black
+    ctx.drawImage(src, 0, 0, d.w, d.h);
+    const url = c.toDataURL('image/jpeg', q);
+    if(_fbDataUrlOk(url)){ if(src.close) try { src.close(); } catch(e){} return { dataUrl: url, w: d.w, h: d.h }; }
+  }
+  if(src.close) try { src.close(); } catch(e){}
+  throw new Error("That image is too detailed to send. Try cropping it.");
+}
+// Pure: approx. bytes of the image a data URL carries.
+function _fbDataUrlBytes(u){ const i = String(u || '').indexOf(','); return i < 0 ? 0 : Math.floor((u.length - i - 1) * 3 / 4); }
+function _fbKB(b){ return b >= 1024 * 1024 ? (Math.round(b / 104857.6) / 10) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB'; }
+// Pure: a request id that stays the same for retries of the SAME content and
+// changes when the content changes. sig = the payload without the id.
+function _fbRequestId(prevId, prevSig, sig, newId){ return prevId && prevSig === sig ? prevId : newId(); }
+function _fbNewId(){
+  try { if(typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID(); } catch(e){}
+  const r = () => Math.floor(Math.random() * 0x10000).toString(16).padStart(4, '0');
+  return r() + r() + '-' + r() + '-4' + r().slice(1) + '-' + (8 + Math.floor(Math.random() * 4)).toString(16) + r().slice(1) + '-' + r() + r() + r();
+}
+// Pure: the reply → { ok, dup?, msg (user-facing), code (safe to log) }.
+function _fbResult(status, body){
+  if(status >= 200 && status < 300) return { ok:true, code:'ok' };
+  if(status === 409) return { ok:true, dup:true, code:'duplicate' };   // the same request id was already stored
+  if(!status) return { ok:false, code:'network', msg:"Couldn't reach the server. Check your connection and send again — it won't be stored twice." };
+  const d = (body && typeof body === 'object') ? body : {};
+  const text = String(d.message || d.hint || '').toLowerCase(), code = String(d.code || '');
+  if(text.indexOf('mg_rate_limited') !== -1 || status === 429) return { ok:false, code:'rate_limit', msg:"You've sent a lot of feedback in a short time. Please try again in a few minutes." };
+  if(code === '23514' || status === 413) return { ok:false, code:'too_large', msg:'That message or screenshot is too large. Shorten it or remove the screenshot and try again.' };
+  if(status >= 500) return { ok:false, code:'server', msg:"The feedback service isn't responding. Please try again shortly." };
+  return { ok:false, code:'rejected_' + status, msg:"Your feedback couldn't be sent. Please try again later." };
+}
+// Pure: before feedback_limits.sql has run, the table has no request_id column.
+function _fbMissingIdColumn(status, body){ return status === 400 && !!body && typeof body === 'object' && body.code === 'PGRST204' && /request_id/.test(String(body.message || '')); }
 
 function openFeedbackModal(){
-  _fbImageData = null; _fbImageFilename = null; _fbAnon = false;
+  _fbImageData = null; _fbImageFilename = null; _fbAnon = false; _fbImageNote = '';
+  _fbReqId = null; _fbReqSig = null; _fbBusy = false;
   document.getElementById('fbCategory').value = 'bug';
   document.getElementById('fbLocation').value = 'general';
   document.getElementById('fbMessage').value = '';
   document.getElementById('fbImagePreview').style.display = 'none';
   document.getElementById('fbImageLabel').textContent = 'Tap to attach an image';
   document.getElementById('fbImage').value = '';
+  _fbImgStatus('');
   document.getElementById('fbAnonTog').style.background = 'var(--border)';
   document.getElementById('fbAnonTog').setAttribute('aria-checked', 'false');
   document.getElementById('fbAnonKnob').style.transform = 'translateX(0)';
   document.getElementById('fbSubmitBtn').disabled = false;
   document.getElementById('fbSubmitBtn').textContent = 'Send Feedback 📬';
+  document.getElementById('fbForm').hidden = false;
+  document.getElementById('fbReceipt').hidden = true;
+  document.getElementById('fbError').hidden = true;
   updateFbAnonUI();
   document.getElementById('feedbackMod').classList.add('open');
 }
@@ -31227,98 +31323,100 @@ function updateFbAnonUI(){
     note.textContent = email ? email + ' will be attached' : 'Sign in to attach your email';
   }
 }
+function _fbImgStatus(t){ const el = document.getElementById('fbImageStatus'); if(el) el.textContent = t || ''; }
 
-function handleFeedbackImage(input){
-  const file = input.files[0];
+async function handleFeedbackImage(input){
+  const file = input.files && input.files[0];
   if(!file) return;
-  if(file.size > 5 * 1024 * 1024){
-    showToast('⚠️ Image must be under 5MB');
-    input.value = '';
-    return;
-  }
-  const reader = new FileReader();
-  reader.onload = e => {
-    _fbImageData = e.target.result;
-    _fbImageFilename = file.name;
+  const bad = _fbImageCheck(file);
+  if(bad){ input.value = ''; _fbImgStatus(bad); return; }
+  _fbImgStatus('Preparing screenshot…');
+  try {
+    const r = await _fbCompressImage(file);
+    _fbImageData = r.dataUrl;
+    _fbImageFilename = _fbCleanName(file.name);
+    _fbImageNote = _fbKB(_fbDataUrlBytes(r.dataUrl)) + ', resized to ' + r.w + '×' + r.h;
     document.getElementById('fbImageThumb').src = _fbImageData;
     document.getElementById('fbImagePreview').style.display = 'block';
-    document.getElementById('fbImageLabel').textContent = file.name;
-  };
-  reader.readAsDataURL(file);
+    document.getElementById('fbImageLabel').textContent = _fbImageFilename;
+    _fbImgStatus('Screenshot ready (' + _fbImageNote + '). Location and camera details are removed.');
+  } catch(e){
+    _fbImageData = null; _fbImageFilename = null; _fbImageNote = ''; input.value = '';
+    _fbImgStatus(e && e.message && !/^decode$/.test(e.message) ? e.message : "That image couldn't be opened.");
+  }
 }
 
 function clearFeedbackImage(){
-  _fbImageData = null; _fbImageFilename = null;
+  _fbImageData = null; _fbImageFilename = null; _fbImageNote = '';
   document.getElementById('fbImage').value = '';
   document.getElementById('fbImagePreview').style.display = 'none';
   document.getElementById('fbImageLabel').textContent = 'Tap to attach an image';
+  _fbImgStatus('Screenshot removed.');
 }
-
-async function submitFeedback(){
-  const message = document.getElementById('fbMessage').value.trim();
-  if(message.length < 10){
-    showToast('⚠️ Message must be at least 10 characters');
-    document.getElementById('fbMessage').focus();
-    return;
-  }
-  const btn = document.getElementById('fbSubmitBtn');
-  btn.disabled = true;
-  btn.textContent = 'Sending…';
-
-  const payload = {
-    user_id:        _fbAnon ? null : (currentUser?.id    || null),
-    user_email:     _fbAnon ? null : (currentUser?.email || null),
-    category:       document.getElementById('fbCategory').value,
-    location:       document.getElementById('fbLocation').value,
-    message,
-    image_data:     _fbImageData     || null,
-    image_filename: _fbImageFilename || null,
-  };
-
-  let success = false;
-  let errorDetail = '';
+async function _fbPost(payload, token){
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), 12000);
   try {
-    const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 12000);
     const res = await fetch(SB_URL + '/rest/v1/feedback', {
       method: 'POST',
       headers: {
         'apikey':         SB_KEY,
         // Anonymous means anonymous to the backend too: no user JWT at all.
-        'Authorization':  'Bearer ' + (_fbAnon ? SB_KEY : (authToken || SB_KEY)),
+        'Authorization':  'Bearer ' + token,
         'Content-Type':   'application/json',
         'Prefer':         'return=minimal'
       },
       body: JSON.stringify(payload),
       signal: controller.signal
     });
-    clearTimeout(tid);
-    if(res.ok){
-      success = true;
-    } else {
-      const body = await res.text();
-      try { errorDetail = JSON.parse(body)?.message || body; } catch{ errorDetail = body; }
-      console.error('[Feedback] Supabase error', res.status, body);
-    }
-  } catch(e){
-    errorDetail = e.name === 'AbortError' ? 'Request timed out' : e.message;
-    console.error('[Feedback] Network error:', e);
-  }
+    let body = null;
+    if(!res.ok){ try { body = JSON.parse(await res.text()); } catch(e){ body = null; } }
+    return { status: res.status, body };
+  } catch(e){ return { status: 0, body: null }; }
+  finally { clearTimeout(tid); }
+}
 
-  btn.disabled = false;
-  btn.textContent = 'Send Feedback 📬';
-  if(success){
-    showToast('✓ Thanks for the feedback! We\'ll review it soon.');
-    closeFeedbackModal();
+async function submitFeedback(){
+  if(_fbBusy) return;
+  const message = document.getElementById('fbMessage').value.trim();
+  const errEl = document.getElementById('fbError');
+  const fail = m => { errEl.textContent = m; errEl.hidden = false; errEl.focus && errEl.focus(); };
+  errEl.hidden = true;
+  if(message.length < 10){ fail('Write at least 10 characters.'); document.getElementById('fbMessage').focus(); return; }
+  if(message.length > FB_MSG_MAX){ fail('Keep it under ' + FB_MSG_MAX + ' characters.'); document.getElementById('fbMessage').focus(); return; }
+  if(_fbImageData && !_fbDataUrlOk(_fbImageData)){ clearFeedbackImage(); fail('That screenshot is too large — attach it again.'); return; }
+  const btn = document.getElementById('fbSubmitBtn');
+  _fbBusy = true; btn.disabled = true; btn.textContent = 'Sending…';
+
+  const base = {
+    user_id:        _fbAnon ? null : (currentUser?.id    || null),
+    user_email:     _fbAnon ? null : (currentUser?.email || null),
+    category:       document.getElementById('fbCategory').value,
+    location:       document.getElementById('fbLocation').value,
+    message,
+    image_data:     _fbImageData     || null,
+    image_filename: _fbImageData ? (_fbImageFilename || 'screenshot.jpg') : null,
+  };
+  const sig = JSON.stringify(base);
+  _fbReqId = _fbRequestId(_fbReqId, _fbReqSig, sig, _fbNewId); _fbReqSig = sig;
+  const token = _fbAnon ? SB_KEY : (authToken || SB_KEY);
+  let r = await _fbPost(Object.assign({ request_id: _fbReqId }, base), token);
+  if(_fbMissingIdColumn(r.status, r.body)) r = await _fbPost(base, token);   // limits SQL not run yet: still deliver
+  const res = _fbResult(r.status, r.body);
+  console.warn('[Feedback]', res.ok ? 'sent' : 'failed', r.status, res.code);
+
+  _fbBusy = false; btn.disabled = false; btn.textContent = 'Send Feedback 📬';
+  if(res.ok){
+    const ref = 'MG-' + String(_fbReqId).replace(/-/g, '').slice(0, 8).toUpperCase();
+    document.getElementById('fbReceiptRef').textContent = ref;
+    document.getElementById('fbReceiptImg').textContent = base.image_data ? 'Screenshot received (' + _fbImageNote + ').' : 'No screenshot attached.';
+    document.getElementById('fbReceiptWho').textContent = _fbAnon || !base.user_id ? 'Sent anonymously — we can\'t reply to you.' : 'Sent with your account email so we can reply.';
+    document.getElementById('fbForm').hidden = true;
+    document.getElementById('fbReceipt').hidden = false;
+    const h = document.getElementById('fbReceiptTitle'); if(h) h.focus();
+    _fbReqId = null; _fbReqSig = null;
   } else {
-    console.warn('[Feedback] Submission failed — detail:', errorDetail);
-    let hint = 'Please try again';
-    if(errorDetail.includes('timed out'))               hint = 'Request timed out — check your connection';
-    else if(errorDetail.includes('does not exist'))      hint = 'Table not set up — run Supabase migration';
-    else if(errorDetail.includes('policy') || errorDetail.includes('permission') || errorDetail.includes('42501')) hint = 'RLS policy blocking insert — check Supabase policies';
-    else if(errorDetail.includes('23502'))               hint = 'Missing required field — ' + errorDetail;
-    else if(errorDetail.length > 0 && errorDetail.length < 120) hint = errorDetail;
-    showToast('⚠️ Feedback failed: ' + hint, 6000);
+    fail(res.msg);
   }
 }
 
@@ -31788,9 +31886,18 @@ window.addEventListener('offline', updateOnlineStatus);
     <div class="modal-handle"></div>
     <!-- Header -->
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-      <div style="font-size:18px;font-weight:800;">📬 Send Feedback</div>
+      <div id="feedbackTitle" style="font-size:18px;font-weight:800;">📬 Send Feedback</div>
       <button onclick="closeFeedbackModal()" style="background:var(--surface2);border:none;border-radius:50%;width:32px;height:32px;font-size:16px;color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>
     </div>
+    <div id="fbReceipt" hidden role="status" style="text-align:center;padding:8px 0 4px;">
+      <div style="font-size:40px;" aria-hidden="true">✅</div>
+      <h3 id="fbReceiptTitle" tabindex="-1" style="font-size:17px;font-weight:800;margin:6px 0;">Feedback received</h3>
+      <div style="font-size:13px;color:var(--text2);line-height:1.5;">Reference <strong id="fbReceiptRef" style="color:var(--text);"></strong></div>
+      <div id="fbReceiptImg" style="font-size:13px;color:var(--text2);margin-top:4px;"></div>
+      <div id="fbReceiptWho" style="font-size:12px;color:var(--text2);margin-top:4px;"></div>
+      <button type="button" class="btn-p" onclick="closeFeedbackModal()" style="width:100%;padding:13px;font-size:15px;margin-top:16px;">Done</button>
+    </div>
+    <div id="fbForm">
 
     <!-- Category -->
     <div style="margin-bottom:14px;">
@@ -31830,26 +31937,29 @@ window.addEventListener('offline', updateOnlineStatus);
     <!-- Message -->
     <div style="margin-bottom:14px;">
       <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:6px;">Message <span style="color:var(--red);">*</span></label>
-      <textarea id="fbMessage" placeholder="Tell us what's on your mind…" rows="4" style="width:100%;padding:11px 12px;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;font-size:14px;color:var(--text);resize:vertical;font-family:inherit;box-sizing:border-box;min-height:100px;"></textarea>
+      <textarea id="fbMessage" maxlength="4000" placeholder="Tell us what's on your mind…" rows="4" style="width:100%;padding:11px 12px;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;font-size:14px;color:var(--text);resize:vertical;font-family:inherit;box-sizing:border-box;min-height:100px;"></textarea>
       <div style="font-size:11px;color:var(--text2);margin-top:4px;">Minimum 10 characters</div>
     </div>
 
     <!-- Image upload -->
     <div style="margin-bottom:20px;">
-      <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:6px;">Screenshot <span style="color:var(--text2);font-weight:400;">(optional, max 5MB)</span></label>
+      <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:6px;">Screenshot <span style="color:var(--text2);font-weight:400;">(optional · JPEG, PNG, WebP or HEIC · resized before sending)</span></label>
       <label for="fbImage" style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--surface2);border:0.5px dashed var(--border);border-radius:10px;cursor:pointer;">
         <span style="font-size:18px;">📎</span>
         <span id="fbImageLabel" style="font-size:13px;color:var(--text2);">Tap to attach an image</span>
       </label>
-      <input type="file" id="fbImage" accept="image/*" onchange="handleFeedbackImage(this)" style="display:none;">
+      <input type="file" id="fbImage" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" onchange="handleFeedbackImage(this)" class="sr-only">
+      <div id="fbImageStatus" role="status" aria-live="polite" style="font-size:11px;color:var(--text2);margin-top:6px;"></div>
       <div id="fbImagePreview" style="display:none;margin-top:10px;position:relative;">
         <img id="fbImageThumb" style="width:100%;border-radius:10px;max-height:160px;object-fit:cover;">
-        <button onclick="clearFeedbackImage()" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.6);border:none;border-radius:50%;width:26px;height:26px;color:#fff;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>
+        <button type="button" aria-label="Remove screenshot" onclick="clearFeedbackImage()" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.6);border:none;border-radius:50%;width:26px;height:26px;color:#fff;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>
       </div>
     </div>
 
+    <div id="fbError" role="alert" tabindex="-1" hidden style="margin-bottom:12px;padding:10px 12px;border-radius:10px;background:rgba(255,77,106,0.1);border:0.5px solid rgba(255,77,106,0.25);color:var(--red);font-size:13px;font-weight:700;"></div>
     <!-- Submit -->
-    <button id="fbSubmitBtn" onclick="submitFeedback()" class="btn-p" style="width:100%;padding:14px;font-size:15px;">Send Feedback 📬</button>
+    <button type="button" id="fbSubmitBtn" onclick="submitFeedback()" class="btn-p" style="width:100%;padding:14px;font-size:15px;">Send Feedback 📬</button>
+    </div>
   </div>
 </div>
 
