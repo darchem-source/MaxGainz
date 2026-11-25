@@ -5041,7 +5041,10 @@ async function cloudSaveWeight(name, weight, opts) {
   if(typeof name !== 'string' || name.startsWith('__')) return null; // '__' names are reserved system rows
   const uid = getCurrentUserId();
   if(typeof weight === 'number' && isFinite(weight)){ _P().weights[name] = weight; _savePending(); }
-  const res = await sbFetch('custom_weights', {
+  // on_conflict is required: (user_id, exercise_name) is a unique index, not the
+  // primary key, so without it every re-save of an existing exercise is a 409
+  // and the change stays queued forever ("N changes waiting to sync").
+  const res = await sbFetch('custom_weights?on_conflict=user_id,exercise_name', {
     method: 'POST',
     silent: !!(opts && opts.silent),
     extraHeaders: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },

@@ -1,10 +1,11 @@
 # Release checklist: next-priorities cycle (build 2026.11.25.9)
 
-There are 9 local commits on `main`, none pushed:
+There are 11 local commits on `main`, none pushed to `main` (branch `release/2026-11-25` → PR #5 for the Deploy Preview):
 
 - Priority 0: two slices
 - Priorities 1–6: one slice each
 - Priority 7: slice 1
+- Fix: custom-weight changes stuck in the sync queue ("64 changes waiting to sync")
 
 All 33 automated gates pass. **Nothing has been tried in a real browser yet**, because the preview tool was unavailable all session. The steps below are that missing test.
 
@@ -36,6 +37,10 @@ Tip: you can push a branch and open a PR to get a Netlify **Deploy Preview**. Th
 - [ ] Profile → Data health → **Configuration · this device** shows build **2026.11.25.9**.
 - [ ] It shows the navigation mode, Profile layout, Phase 3 features, AI rollout and consent, and reminders.
 - [ ] The support code can be selected and copied.
+
+### 1b. Weights that never synced (bug fix found during testing)
+- [ ] On your **phone**, open the preview, sign in, and leave it open for about 10 seconds. Data health should go from "64 other change(s)… waiting to sync" to none: every session and change backed up.
+- [ ] On your **laptop**, reload. The custom weights you changed on the phone now show there too.
 
 ### 2. Simplified navigation (Priority 0)
 - [ ] On your phone, which uses the classic nav today, the app opens with **Today · Plan · Progress · Profile** and a **"A simpler layout"** card on Today.

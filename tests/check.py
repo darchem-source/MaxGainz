@@ -1316,7 +1316,24 @@ def _sync_module_vars(js):
     if not m: return None
     return '\n'.join(l for l in m.group(1).split('\n') if l.startswith('var '))
 
+def _custom_weights_upserts_ok(js):
+    """Every POST to custom_weights must name the conflict target: (user_id,
+    exercise_name) is a unique index, not the primary key, so a plain
+    merge-duplicates upsert 409s on every re-save and the change never syncs
+    (the "64 changes waiting to sync" bug, found 25 Nov 2026)."""
+    bad = []
+    for m in re.finditer(r"sbFetch\('custom_weights([^']*)'\s*,\s*\{", js):
+        body = js[m.end():m.end() + 200]
+        if "method: 'POST'" in body or "method:'POST'" in body:
+            if m.group(1) != '?on_conflict=user_id,exercise_name': bad.append(m.group(0) + m.group(1))
+    return bad, len(re.findall(r"sbFetch\('custom_weights\?on_conflict=user_id,exercise_name'", js))
+
 def gate_sync(js):
+    cw_bad, cw_n = _custom_weights_upserts_ok(js)
+    if cw_bad or cw_n < 3:
+        for b in cw_bad: print('  ✗ custom_weights upsert without on_conflict=user_id,exercise_name (every re-save would 409 and stay pending): ' + b)
+        if cw_n < 3: print(f'  ✗ expected the weight, profile and dashboard upserts to name their conflict target (found {cw_n})')
+        return False
     if not os.path.exists(JSC):
         print(f'  ✗ jsc not found at {JSC} — cannot run sync failure-injection tests'); return False
     vars_src = _sync_module_vars(js)
