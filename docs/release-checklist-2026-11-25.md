@@ -38,10 +38,6 @@ Tip: you can push a branch and open a PR to get a Netlify **Deploy Preview**. Th
 - [ ] It shows the navigation mode, Profile layout, Phase 3 features, AI rollout and consent, and reminders.
 - [ ] The support code can be selected and copied.
 
-### 1b. Weights that never synced (bug fix found during testing)
-- [ ] On your **phone**, open the preview, sign in, and leave it open for about 10 seconds. Data health should go from "64 other change(s)… waiting to sync" to none: every session and change backed up.
-- [ ] On your **laptop**, reload. The custom weights you changed on the phone now show there too.
-
 ### 2. Simplified navigation (Priority 0)
 - [ ] On your phone, which uses the classic nav today, the app opens with **Today · Plan · Progress · Profile** and a **"A simpler layout"** card on Today.
 - [ ] **Got it** hides the card, and it stays hidden after a reload.
@@ -102,6 +98,9 @@ Tip: you can push a branch and open a PR to get a Netlify **Deploy Preview**. Th
 
 ## C. After pushing `main`
 - [ ] On the production URL: sign in, log a set, and check Data health shows **2026.11.25.9**.
+- [ ] **Weights that never synced (bug fix).** Do this on production, because the stuck queue lives in the production app's storage, not the preview's.
+  - [ ] Open the app on your **phone** and wait about 10 seconds. Data health goes from "64 other change(s)… waiting to sync" to all green.
+  - [ ] Reload on your **laptop**. The weights you changed on the phone appear there.
 
 ## Not covered by this cycle
 - Phase 3 features (offline downloads, programme finder, share links) are **still off by default**. Turning them on is a separate decision.
