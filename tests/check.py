@@ -6056,62 +6056,176 @@ def gate_profile_v2(html, js):
     for p in problems: print('  ✗ ' + p)
     return not problems
 
+# ── Gate 26: rollout registry + configuration visibility (Priority 0) ──────
+ROLLOUT_RUN = r'''
+var store = {};
+var localStorage = { getItem: function(k){ return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; },
+  setItem: function(k, v){ store[k] = String(v); }, removeItem: function(k){ delete store[k]; } };
+var P = [];
+var FIELDS = ['id','key','mode','label','audience','killSwitch','scope','owner','removeWhen'];
+var ids = {}, keys = {};
+ROLLOUT_REGISTRY.forEach(function(e){
+  FIELDS.forEach(function(f){ if(typeof e[f] !== 'string' || !e[f].trim()) P.push('registry entry ' + (e.id || '?') + ' has no ' + f); });
+  if(e.mode !== 'optIn' && e.mode !== 'optOut') P.push(e.id + ': mode must be optIn or optOut');
+  if(ids[e.id]) P.push('duplicate registry id ' + e.id); ids[e.id] = 1;
+  if(keys[e.key]) P.push('duplicate registry key ' + e.key); keys[e.key] = 1;
+  if(e.requires && !ROLLOUT_REGISTRY.some(function(x){ return x.id === e.requires; })) P.push(e.id + ' requires unknown ' + e.requires);
+});
+// every real flag key is registered, and nothing registered is made up
+var real = [NAV_V2_KEY];
+[P3_FLAG_KEYS, P4_FLAG_KEYS, P5_FLAG_KEYS, AI_FLAG_KEYS].forEach(function(o){ Object.keys(o).forEach(function(k){ real.push(o[k]); }); });
+real.forEach(function(k){ if(!keys[k]) P.push('flag key ' + k + ' is used by the app but missing from ROLLOUT_REGISTRY'); });
+Object.keys(keys).forEach(function(k){ if(real.indexOf(k) === -1) P.push('registry key ' + k + ' is not a real flag key'); });
+// the registry agrees with the real flag functions for every stored value
+var REAL = {
+  nav_v2: function(){ return _navV2On(localStorage.getItem(NAV_V2_KEY)); },
+  p5_profile: function(){ return _p5FlagOn('profile'); }, p4_reminders: function(){ return _p4FlagOn('reminders'); },
+  p3_offline: function(){ return _p3FlagOn('offline'); }, p3_discover: function(){ return _p3FlagOn('discover'); }, p3_share: function(){ return _p3FlagOn('share'); },
+  ai_v1: function(){ return _aiFlagOn('master'); }, ai_coach: function(){ return _aiFlagOn('coach'); }, ai_nl: function(){ return _aiFlagOn('nl'); }, ai_recap: function(){ return _aiFlagOn('recap'); }
+};
+ROLLOUT_REGISTRY.forEach(function(e){ if(!REAL[e.id]) P.push('gate 26 does not know how to read ' + e.id + ' — add it to REAL'); });
+var VALS = [null, '1', '0', 'true', ''];
+ROLLOUT_REGISTRY.forEach(function(e){
+  if(!REAL[e.id]) return;
+  var req = e.requires ? ROLLOUT_REGISTRY.find(function(x){ return x.id === e.requires; }) : null;
+  (req ? VALS : [undefined]).forEach(function(rv){
+    VALS.forEach(function(v){
+      store = {};
+      if(req && rv !== null) store[req.key] = rv;
+      if(v !== null) store[e.key] = v;
+      var snap = _rolloutSnapshot(ROLLOUT_REGISTRY, function(k){ return localStorage.getItem(k); });
+      var want = REAL[e.id]();
+      if(snap[e.id].on !== want) P.push(e.id + ': registry says ' + snap[e.id].on + ' but the app says ' + want + ' for ' + JSON.stringify(v) + (req ? ' (with ' + req.id + '=' + JSON.stringify(rv) + ')' : ''));
+      if(snap[e.id].source !== (v === null ? 'default' : 'device')) P.push(e.id + ': source wrong for ' + JSON.stringify(v));
+    });
+  });
+});
+// a throwing storage (private mode) never breaks the snapshot
+var thrown = _rolloutSnapshot(ROLLOUT_REGISTRY, function(){ throw new Error('denied'); });
+if(!thrown.p5_profile || thrown.p5_profile.on !== true || thrown.nav_v2.on !== false) P.push('snapshot with blocked storage must fall back to defaults');
+// fresh device: what a new install gets (documented in docs/rollout.md)
+store = {};
+var fresh = _rolloutSnapshot(ROLLOUT_REGISTRY, function(k){ return localStorage.getItem(k); });
+var c = _configRows({ version:'2026.11.25', sw:false, snap:fresh, aiConsent:false, pushCap:'ok', pushOn:false });
+var txt = JSON.stringify(c.rows);
+['Classic — default', 'Grouped sections — default', 'offline downloads off', 'AI rollout","off on this device', 'off — nothing is sent', 'available · supported · off', 'no service worker'].forEach(function(s){ if(txt.indexOf(s) === -1) P.push('fresh-device configuration should show ' + s + ': ' + txt); });
+if(c.code !== 'mg 2026.11.25 nav:0d pf:1 p3:000 ai:0000- rem:10 sw:0') P.push('fresh support code wrong: ' + c.code);
+store = { maxgainz_nav_v2:'1', maxgainz_ai_v1:'1', maxgainz_ai_recap:'1', maxgainz_p3_share:'1', maxgainz_p5_profile:'0' };
+var s2 = _rolloutSnapshot(ROLLOUT_REGISTRY, function(k){ return localStorage.getItem(k); });
+var c2 = _configRows({ version:'X', sw:true, snap:s2, aiConsent:true, pushCap:'denied', pushOn:true });
+var t2 = JSON.stringify(c2.rows);
+['Simplified (Today · Plan · Progress · Profile) — set on this device', 'Classic list — set on this device', 'private links on', 'coach off · typed sets off · recap on', 'on for this account', 'notifications blocked', 'offline shell active'].forEach(function(s){ if(t2.indexOf(s) === -1) P.push('configured device should show ' + s + ': ' + t2); });
+if(c2.code !== 'mg X nav:1s pf:0 p3:001 ai:1001c rem:11 sw:1') P.push('configured support code wrong: ' + c2.code);
+var c3 = _configRows({ version:'v', snap:{}, pushCap:'weird' });
+if(JSON.stringify(c3.rows).indexOf('weird') === -1) P.push('unknown capability must be shown as-is (escaped by the caller)');
+JSON.stringify(P);
+'''
+
+def gate_rollout(html, js, doc=None):
+    problems = []
+    names = ['APP_VERSION', 'ROLLOUT_REGISTRY', '_rolloutOn', '_rolloutSnapshot', 'PUSH_CAP_LABELS', '_configRows', '_configHealthHtml']
+    reg = extract_const_array(js, 'ROLLOUT_REGISTRY')
+    ver = extract_const_line(js, 'APP_VERSION')
+    caps = extract_const_object(js, 'PUSH_CAP_LABELS')
+    if not reg: problems.append('ROLLOUT_REGISTRY not found')
+    if not ver or not re.search(r"APP_VERSION = '\d{4}\.\d{2}\.\d{2}[a-z0-9.-]*';", ver): problems.append('APP_VERSION must be a dated build string (YYYY.MM.DD)')
+    if not caps: problems.append('PUSH_CAP_LABELS not found')
+    else:
+        cap_fn = extract_decl(js, '_pushCapability') or ''
+        for st in set(re.findall(r"return (?:[^;]*\? )?'([a-z-]+)'", cap_fn)) | set(re.findall(r": '([a-z-]+)'", cap_fn)) | set(re.findall(r"\? '([a-z-]+)'", cap_fn)):
+            if f"'{st}'" not in caps and f"{st}:" not in caps: problems.append(f'reminder capability {st!r} has no Data health label')
+    pieces = [ver or '', reg or '', extract_decl(js, '_rolloutOn') or '', extract_decl(js, '_rolloutSnapshot') or '', caps or '', extract_decl(js, '_configRows') or '',
+              extract_const_line(js, 'NAV_V2_KEY') or '', extract_decl(js, '_navV2On') or '',
+              extract_const_line(js, 'P3_FLAG_KEYS') or '', extract_decl(js, '_p3FlagOn') or '',
+              extract_const_line(js, 'P4_FLAG_KEYS') or '', extract_decl(js, '_p4FlagOn') or '',
+              extract_const_line(js, 'P5_FLAG_KEYS') or '', extract_decl(js, '_p5FlagOn') or '',
+              extract_const_line(js, 'AI_FLAG_KEYS') or '', extract_decl(js, '_aiFlagOn') or '']
+    if all(pieces):
+        out, _ = run_jxa('\n'.join(pieces) + '\n' + ROLLOUT_RUN)
+        try: problems += json.loads(out)
+        except Exception: problems.append('rollout runner errored: ' + out[:300])
+    else:
+        problems.append('could not extract the registry or a flag function')
+    # rendered escaped, shown in Data health, never reads flags another way
+    hh = extract_decl(js, '_configHealthHtml') or ''
+    if '${esc(r[0])}' not in hh or '${esc(r[1])}' not in hh or '${esc(c.code)}' not in hh: problems.append('Configuration rows and support code must be escaped')
+    if 'ROLLOUT_REGISTRY' not in hh or '_rolloutSnapshot' not in hh: problems.append('Data health must read flags through the registry')
+    if not re.search(r"\+ _configHealthHtml\(\);\s*document\.getElementById\('dataHealthMod'\)", extract_decl(js, 'openDataHealth') or ''):
+        problems.append('Data health must show the Configuration section')
+    # documentation: every key, its default and removal condition are written down
+    if doc is None:
+        p = os.path.join(os.path.dirname(INDEX), 'docs', 'rollout.md')
+        doc = open(p, encoding='utf-8').read() if os.path.exists(p) else ''
+    if not doc: problems.append('docs/rollout.md is missing')
+    else:
+        for k in re.findall(r"key:'([a-z0-9_]+)'", reg or ''):
+            if f'`{k}`' not in doc: problems.append(f'docs/rollout.md does not document {k}')
+        for h in ['## Migration policy', '## Removing legacy paths', 'Fresh device']:
+            if h not in doc: problems.append(f'docs/rollout.md needs a "{h}" section')
+    if not problems:
+        n = len(re.findall(r"\{ id:'", reg or ''))
+        print(f'  ✓ {n} flags registered, each with default/audience/kill switch/scope/owner/removal; registry matches the real flag functions for every stored value; Data health Configuration escaped; docs/rollout.md complete')
+    for p in problems: print('  ✗ ' + p)
+    return not problems
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/25] parse')
+    print('[1/26] parse')
     p = gate_parse(js)
-    print('[2/25] invariants')
+    print('[2/26] invariants')
     inv = gate_invariants(js)
-    print('[3/25] video map')
+    print('[3/26] video map')
     vm = gate_videomap(js)
-    print('[4/25] inline handler wiring')
+    print('[4/26] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/25] auth log hygiene')
+    print('[5/26] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/25] sign-out scrub')
+    print('[6/26] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/25] safe rendering of user text')
+    print('[7/26] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/25] sync honesty')
+    print('[8/26] sync honesty')
     sy = gate_sync(js)
-    print('[9/25] media fallback + reminder copy')
+    print('[9/26] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/25] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/26] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/25] core-journey accessibility (session + dialogs)')
+    print('[11/26] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/25] Start today (first-use flow) + shortened Path wizard')
+    print('[12/26] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/25] simplified navigation (flagged)')
+    print('[13/26] simplified navigation (flagged)')
     nv = gate_nav_v2(html, js)
-    print('[14/25] Progress weekly briefing')
+    print('[14/26] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/25] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/26] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/25] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/26] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/25] Phase 2 typed sets (preview before save)')
+    print('[17/26] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
-    print('[18/25] Phase 2 weekly AI recap + measurement')
+    print('[18/26] Phase 2 weekly AI recap + measurement')
     rc = gate_recap(html, js)
-    print('[19/25] Phase 3 offline media (download, cache versioning, fallback order)')
+    print('[19/26] Phase 3 offline media (download, cache versioning, fallback order)')
     om = gate_offline_media(html, js)
-    print('[20/25] Phase 3 programme discovery (metadata, finder, why, switch preview)')
+    print('[20/26] Phase 3 programme discovery (metadata, finder, why, switch preview)')
     dc = gate_discovery(html, js)
-    print('[21/25] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
+    print('[21/26] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
     sh = gate_sharing(html, js)
-    print('[22/25] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
+    print('[22/26] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
     lf = gate_leftovers(html, js)
-    print('[23/25] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
+    print('[23/26] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
     rm = gate_reminders(html, js)
-    print('[24/25] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
+    print('[24/26] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
     rs = gate_reminders_server(html, js)
-    print('[25/25] Profile & settings information model (flagged)')
+    print('[25/26] Profile & settings information model (flagged)')
     pv = gate_profile_v2(html, js)
+    print('[26/26] rollout registry + configuration in Data health')
+    ro = gate_rollout(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 

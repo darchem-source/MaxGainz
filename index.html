@@ -5292,6 +5292,99 @@ function saveLocalCache() {
 function saveLocalFallback() { saveLocalCache(); }
 
 // ── DATA HEALTH CHECK ──
+// ── ROLLOUT REGISTRY (Priority 0) ─────────────────────────────────────────
+// One description of every device-level rollout flag: what it is, what a
+// fresh device gets, who it is for, how to switch it off, where it is stored,
+// who owns it and when it goes away. docs/rollout.md mirrors this table.
+// The flag functions (_navV2On, _p3FlagOn, _p4FlagOn, _p5FlagOn, _aiFlagOn)
+// still decide behaviour; gate 26 runs them against this registry so the two
+// can never disagree. mode: 'optIn' = on only when the key is '1';
+// 'optOut' = on unless the key is '0'. requires = another entry that must be on.
+const APP_VERSION = '2026.11.25';   // bump on every production push (shown in Data health)
+const ROLLOUT_REGISTRY = [
+  { id:'nav_v2', key:'maxgainz_nav_v2', mode:'optIn', label:'Simplified navigation',
+    audience:'New users after Start today; anyone via Profile', killSwitch:"Profile → Simplified navigation: Off (stores '0')",
+    scope:'device', owner:'Phase 1 · UX', removeWhen:'Default-on for everyone for 4 weeks with no rollback needed → delete the classic nav bar and this key' },
+  { id:'p5_profile', key:'maxgainz_p5_profile', mode:'optOut', label:'Grouped Profile layout',
+    audience:'Everyone', killSwitch:"?p5=0 (stores '0')",
+    scope:'device', owner:'Profile & settings', removeWhen:'4 weeks after rollout (25 Nov 2026) with no opt-outs → delete the old Profile layout and this key' },
+  { id:'p4_reminders', key:'maxgainz_p4_reminders', mode:'optOut', label:'Training-day reminders',
+    audience:'Everyone (the reminder itself is off until the user turns it on)', killSwitch:"?p4=0 on a device; PUSH_ENABLED unset on the server stops all sends",
+    scope:'device + account', owner:'Phase 4', removeWhen:'4 weeks after rollout (25 Nov 2026) → keep the server kill switch, delete this key' },
+  { id:'p3_offline', key:'maxgainz_p3_offline', mode:'optIn', label:'Offline downloads',
+    audience:'Beta testers via ?p3=offline', killSwitch:'?p3=0 (removes the key)',
+    scope:'device', owner:'Phase 3', removeWhen:'After Priority 4 (offline coverage) ships → default on, then delete this key' },
+  { id:'p3_discover', key:'maxgainz_p3_discover', mode:'optIn', label:'Programme finder',
+    audience:'Beta testers via ?p3=discover', killSwitch:'?p3=0 (removes the key)',
+    scope:'device', owner:'Phase 3', removeWhen:'Decide default-on once accessibility pass (Priority 3) covers the filters → then delete this key' },
+  { id:'p3_share', key:'maxgainz_p3_share', mode:'optIn', label:'Private share links',
+    audience:'Beta testers via ?p3=share', killSwitch:'?p3=0 (removes the key)',
+    scope:'device + account', owner:'Phase 3', removeWhen:'Decide default-on after 4 weeks of beta links with no privacy reports → then delete this key' },
+  { id:'ai_v1', key:'maxgainz_ai_v1', mode:'optIn', label:'AI features (master)',
+    audience:'Controlled AI beta via ?ai=', killSwitch:'?ai=0 on a device; AI_ENABLED unset on the server refuses every call',
+    scope:'device + account consent', owner:'Phase 2 · AI', removeWhen:'Priority 6 beta proves value → replace with account-level cohort, then delete this key' },
+  { id:'ai_coach', key:'maxgainz_ai_coach', mode:'optIn', requires:'ai_v1', label:'AI Today coach card',
+    audience:'Controlled AI beta', killSwitch:'?ai=0', scope:'device', owner:'Phase 2 · AI', removeWhen:'With ai_v1' },
+  { id:'ai_nl', key:'maxgainz_nl_log', mode:'optIn', requires:'ai_v1', label:'AI typed sets',
+    audience:'Controlled AI beta', killSwitch:'?ai=0', scope:'device', owner:'Phase 2 · AI', removeWhen:'With ai_v1' },
+  { id:'ai_recap', key:'maxgainz_ai_recap', mode:'optIn', requires:'ai_v1', label:'AI weekly recap',
+    audience:'Controlled AI beta', killSwitch:'?ai=0', scope:'device', owner:'Phase 2 · AI', removeWhen:'With ai_v1' }
+];
+
+// Pure: is one registry entry on, given its raw stored value and (if it has
+// one) whether the entry it requires is on? Mirrors the real flag functions.
+function _rolloutOn(entry, raw, requiredOn){
+  if(!entry) return false;
+  if(entry.requires && !requiredOn) return false;
+  return entry.mode === 'optOut' ? raw !== '0' : raw === '1';
+}
+// Pure: every entry's state. getItem(key) → stored string or null.
+// source: 'default' (nothing stored) or 'device' (this device has a value).
+function _rolloutSnapshot(reg, getItem){
+  const raw = {}, out = {};
+  reg.forEach(e => { let v = null; try { v = getItem(e.key); } catch(err){ v = null; } raw[e.id] = v === undefined ? null : v; });
+  const on = id => { const e = reg.find(x => x.id === id); return !!e && _rolloutOn(e, raw[id], e.requires ? on(e.requires) : true); };
+  reg.forEach(e => { out[e.id] = { on: on(e.id), source: raw[e.id] === null ? 'default' : 'device' }; });
+  return out;
+}
+const PUSH_CAP_LABELS = { ok:'supported', 'signed-out':'needs sign-in', denied:'notifications blocked', 'sw-old':'app update pending', checking:'checking',
+  unsupported:'not supported in this browser', 'ios-old':'needs iOS 16.4+', 'ios-install':'needs Add to Home Screen', 'ios-inapp':'open in Safari first' };
+// Pure: the Configuration rows for Data health + a one-line support code.
+// ctx: { version, sw, snap, aiConsent, pushCap, pushOn }. Plain text (caller escapes).
+function _configRows(ctx){
+  const s = ctx.snap || {}, on = id => !!(s[id] && s[id].on), src = id => (s[id] && s[id].source === 'device') ? 'set on this device' : 'default';
+  const oo = b => b ? 'on' : 'off';
+  const rows = [
+    ['App build', String(ctx.version || '?') + (ctx.sw ? ' · offline shell active' : ' · no service worker')],
+    ['Navigation', (on('nav_v2') ? 'Simplified (Today · Plan · Progress · Profile)' : 'Classic') + ' — ' + src('nav_v2')],
+    ['Profile layout', (on('p5_profile') ? 'Grouped sections' : 'Classic list') + ' — ' + src('p5_profile')],
+    ['Phase 3', 'offline downloads ' + oo(on('p3_offline')) + ' · programme finder ' + oo(on('p3_discover')) + ' · private links ' + oo(on('p3_share'))],
+    ['AI rollout', on('ai_v1') ? 'coach ' + oo(on('ai_coach')) + ' · typed sets ' + oo(on('ai_nl')) + ' · recap ' + oo(on('ai_recap')) : 'off on this device'],
+    ['AI consent', ctx.aiConsent ? 'on for this account' : 'off — nothing is sent'],
+    ['Reminders', (on('p4_reminders') ? 'available' : 'hidden') + ' · ' + (PUSH_CAP_LABELS[ctx.pushCap] || String(ctx.pushCap || 'unknown')) + ' · ' + (ctx.pushOn ? 'on for this account' : 'off')]
+  ];
+  const b = id => on(id) ? '1' : '0';
+  const code = 'mg ' + String(ctx.version || '?') + ' nav:' + b('nav_v2') + (src('nav_v2') === 'default' ? 'd' : 's')
+    + ' pf:' + b('p5_profile') + ' p3:' + b('p3_offline') + b('p3_discover') + b('p3_share')
+    + ' ai:' + b('ai_v1') + b('ai_coach') + b('ai_nl') + b('ai_recap') + (ctx.aiConsent ? 'c' : '-')
+    + ' rem:' + b('p4_reminders') + (ctx.pushOn ? '1' : '0') + ' sw:' + (ctx.sw ? '1' : '0');
+  return { rows, code };
+}
+function _configHealthHtml(){
+  let snap = {};
+  try { snap = _rolloutSnapshot(ROLLOUT_REGISTRY, k => localStorage.getItem(k)); } catch(e){}
+  let sw = false, aiConsent = false, pushCap = 'unknown', pushOn = false;
+  try { sw = !!(navigator.serviceWorker && navigator.serviceWorker.controller); } catch(e){}
+  try { aiConsent = _aiConsented(typeof userPreferences === 'object' && userPreferences ? userPreferences.ai : null); } catch(e){}
+  try { pushCap = _pushCapability(_pushEnv()); } catch(e){}
+  try { pushOn = _pushLoadPrefs().enabled; } catch(e){}
+  const c = _configRows({ version: APP_VERSION, sw, snap, aiConsent, pushCap, pushOn });
+  return `<div style="margin-top:16px;"><div style="font-size:11px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;">Configuration · this device</div>`
+    + c.rows.map(r => `<div style="display:flex;gap:10px;padding:8px 0;border-top:0.5px solid var(--border);font-size:12px;line-height:1.4;"><div style="flex:0 0 38%;color:var(--text2);">${esc(r[0])}</div><div style="flex:1;color:var(--text);">${esc(r[1])}</div></div>`).join('')
+    + `<div style="font-size:11px;color:var(--text2);margin-top:6px;">Support code (include it when you report a problem):</div>`
+    + `<code style="display:block;margin-top:4px;padding:8px;border-radius:8px;background:var(--surface2);font-size:11px;user-select:all;-webkit-user-select:all;word-break:break-all;">${esc(c.code)}</code></div>`;
+}
+
 // User-facing integrity report — builds trust that PRs/XP/streaks are right.
 function openDataHealth(){
   const checks = [];
@@ -5353,7 +5446,7 @@ function openDataHealth(){
       <div style="font-size:16px;flex-shrink:0;">${icon[st]}</div>
       <div style="font-size:13px;color:${colr[st]};line-height:1.4;">${msg}</div>
     </div>`).join('');
-  document.getElementById('dataHealthBody').innerHTML = summary + rows + (typeof _aiHealthHtml === 'function' ? _aiHealthHtml() : '') + (typeof _offlineHealthHtml === 'function' ? _offlineHealthHtml() : '');
+  document.getElementById('dataHealthBody').innerHTML = summary + rows + (typeof _aiHealthHtml === 'function' ? _aiHealthHtml() : '') + (typeof _offlineHealthHtml === 'function' ? _offlineHealthHtml() : '') + _configHealthHtml();
   document.getElementById('dataHealthMod').classList.add('open');
 }
 
