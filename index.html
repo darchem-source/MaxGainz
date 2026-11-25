@@ -1416,7 +1416,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         <div style="margin-top:20px;padding-top:20px;border-top:0.5px solid var(--border);">
           <div style="background:rgba(255,77,106,0.1);border:0.5px solid rgba(255,77,106,0.25);border-radius:10px;padding:12px;margin-bottom:12px;">
             <div style="font-size:12px;font-weight:700;color:var(--red);margin-bottom:4px;">⚠️ Delete Account</div>
-            <div style="font-size:12px;color:var(--text2);margin-bottom:12px;">This action cannot be undone. You can request your data to be emailed to you before deletion.</div>
+            <div style="font-size:12px;color:var(--text2);margin-bottom:12px;">This action cannot be undone. You can download a complete copy of your data first.</div>
             <button onclick="initiateAccountDeletion()" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;width:100%;">Delete My Account</button>
           </div>
         </div>
@@ -3697,7 +3697,10 @@ function _loadLottieScript(){
   _lottieReady = new Promise((resolve, reject) => {
     if(typeof lottie !== 'undefined'){ resolve(); return; }
     const s = document.createElement('script');
-    s.src = 'https://unpkg.com/lottie-web@5.12.2/build/player/lottie_light.min.js';
+    // Self-hosted copy of lottie-web 5.12.2 (MIT) — no third-party script runs
+    // in this origin. SRI pins the exact bytes (gate 22 recomputes it).
+    s.src = 'vendor/lottie_light-5.12.2.min.js';
+    s.integrity = 'sha384-Vtbz3QbtSBqleuQry6kQy5smig1gPZCXUoTFN7RmN9QW47xpEDsV/J1w0Pw0rDJu';
     s.async = true;
     s.onload  = () => resolve();
     s.onerror = () => reject(new Error('lottie-web load failed'));
@@ -4858,16 +4861,29 @@ async function cloudSaveProfile(opts) {
 // `order=date.asc&limit=500` used to return only the OLDEST 500 — anything newer
 // never loaded and its local copy was re-uploaded as a duplicate.) Returns null
 // if any page fails, so a partial list is never mistaken for the full history.
+// Keyset paging by id: each page starts AFTER the last id seen, so a row
+// deleted on another device mid-load cannot shift the next page and make it
+// skip a row (offset paging did). The result keeps the old date order.
 async function _fetchAllSessionRows(userId){
   const pageSize = 500, maxPages = 40;
   const rows = [];
+  let after = null;
   for(let page = 0; page < maxPages; page++){
-    const chunk = await sbFetch('sessions?user_id=eq.' + userId + '&order=date.asc,id.asc&limit=' + pageSize + '&offset=' + (page * pageSize));
+    const chunk = await sbFetch('sessions?user_id=eq.' + userId + '&order=id.asc&limit=' + pageSize
+      + (after !== null ? '&id=gt.' + encodeURIComponent(after) : ''));
     if(!Array.isArray(chunk)) return null;
     chunk.forEach(r => rows.push(r));
-    if(chunk.length < pageSize) return rows;
+    if(chunk.length < pageSize) return _sortSessionRows(rows);
+    const last = chunk[chunk.length - 1];
+    if(!last || last.id == null || String(last.id) === String(after)) return null;   // no progress: refuse a partial list
+    after = String(last.id);
   }
   return null; // > 20,000 sessions: refuse to treat a truncated list as complete
+}
+// Pure: the order the old query returned (date, then id).
+function _sortSessionRows(rows){
+  const t = r => { const v = new Date(r && r.date).getTime(); return isFinite(v) ? v : 0; };
+  return rows.slice().sort((a, b) => (t(a) - t(b)) || (String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0));
 }
 
 async function cloudLoadAll() {
@@ -5660,6 +5676,9 @@ function _buildExportPayload(){
     formGuideSeen: lsRead('maxgainz_fg_seen', []),
     onboarded:     lsReadRaw('maxgainz_onboarded') === '1',
     pathSkipped:   lsReadRaw('maxgainz_path_skipped') === '1',
+    // Also in the account's profile blob; pbLifts is read back by the importer.
+    todayProg:     typeof todayProg === 'string' ? todayProg : null,
+    pbLifts:       (typeof pbLifts !== 'undefined' && Array.isArray(pbLifts)) ? pbLifts : [],
   };
 }
 
@@ -18221,6 +18240,7 @@ function _shareSessionSnapshot(s, all, opts){
         r: _shareNum(reps[i], 0)
       }));
     }
+    if(e.sets && e.sets.every(x => x.w === null && x.r === null)) delete e.sets;   // e.g. a core circuit with nothing logged
     if(pbSet) e.pb = pbSet.has(n);
     if(o.notes && v && typeof v.note === 'string' && v.note.trim()) e.note = _shareCut(v.note.trim(), 200);
     return e;
@@ -29400,7 +29420,9 @@ function initiateAccountDeletion(){
 
 function proceedDeleteWithData(){
   document.getElementById('deleteAccountMod').classList.remove('open');
-  document.getElementById('emailConfirm').textContent = getCurrentUserEmail();
+  const st = document.getElementById('emailStatus'); if(st){ st.style.display = 'none'; st.textContent = ''; }
+  const b = document.getElementById('sendEmailBtn'); if(b){ b.disabled = false; b.textContent = '⬇️ Download my data'; }
+  const c = document.getElementById('deleteAfterDlBtn'); if(c) c.hidden = true;
   document.getElementById('emailDataMod').classList.add('open');
 }
 
@@ -29409,43 +29431,41 @@ function proceedDeleteNoData(){
   document.getElementById('finalDeleteMod').classList.add('open');
 }
 
-async function sendDataEmail(){
-  const email = getCurrentUserEmail();
+// Before deletion: download the SAME complete backup as Profile → Export
+// (importable) plus a CSV of the workouts. Nothing is sent anywhere, and the
+// user moves on to the final confirmation themselves.
+function _saveBlobFile(text, type, name){
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+function downloadDataBeforeDelete(){
   const btn = document.getElementById('sendEmailBtn');
   const status = document.getElementById('emailStatus');
-  
-  btn.disabled = true;
-  btn.textContent = 'Sending...';
-  
-  try{
-    // Create CSV export of all sessions
-    const csvContent = generateSessionsCSV();
-    
-    // In a real app, you'd call a backend function to email this
-    // For now, we'll simulate success and trigger browser download as backup
-    const blob = new Blob([csvContent], {type: 'text/csv'});
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'maxgainz_workout_data_' + new Date().toISOString().slice(0,10) + '.csv';
-    a.click();
-    window.URL.revokeObjectURL(url);
-    
+  try {
+    const payload = _buildExportPayload();
+    const day = new Date().toISOString().slice(0, 10);
+    _saveBlobFile(JSON.stringify(payload, null, 2), 'application/json', 'max-gainz-backup-' + day + '.json');
+    _saveBlobFile(generateSessionsCSV(), 'text/csv', 'max-gainz-workouts-' + day + '.csv');
     status.style.display = 'block';
-    status.textContent = '✅ Data prepared! File downloaded. Now deleting your account...';
-    
-    setTimeout(()=>{
-      document.getElementById('emailDataMod').classList.remove('open');
-      document.getElementById('finalDeleteMod').classList.add('open');
-    }, 2000);
-  }catch(e){
+    status.style.background = 'rgba(76,175,80,0.1)'; status.style.color = 'var(--green)';
+    status.textContent = '✓ Downloaded 2 files (' + payload.sessions.length + ' workouts). Check they opened before you continue.';
+    btn.textContent = '⬇️ Download again';
+    const c = document.getElementById('deleteAfterDlBtn'); if(c) c.hidden = false;
+    // Focus the result, not the destructive button (an extra Enter must not move toward deletion).
+    status.tabIndex = -1; try { status.focus(); } catch(e){}
+  } catch(e){
     status.style.display = 'block';
-    status.style.background = 'rgba(255,77,106,0.1)';
-    status.style.color = 'var(--red)';
-    status.textContent = '❌ Error: ' + e.message;
-    btn.disabled = false;
-    btn.textContent = 'Send Email & Delete Account';
+    status.style.background = 'rgba(255,77,106,0.1)'; status.style.color = 'var(--red)';
+    status.textContent = '❌ Couldn\'t create the download — nothing was deleted.';
   }
+}
+function continueDeleteAfterDownload(){
+  document.getElementById('emailDataMod').classList.remove('open');
+  document.getElementById('finalDeleteMod').classList.add('open');
 }
 
 function generateSessionsCSV(){
@@ -29627,7 +29647,8 @@ async function submitFeedback(){
       method: 'POST',
       headers: {
         'apikey':         SB_KEY,
-        'Authorization':  'Bearer ' + (authToken || SB_KEY),
+        // Anonymous means anonymous to the backend too: no user JWT at all.
+        'Authorization':  'Bearer ' + (_fbAnon ? SB_KEY : (authToken || SB_KEY)),
         'Content-Type':   'application/json',
         'Prefer':         'return=minimal'
       },
@@ -30079,24 +30100,24 @@ window.addEventListener('offline', updateOnlineStatus);
   <div class="modal">
     <div class="modal-handle"></div>
     <div style="font-size:18px;font-weight:800;margin-bottom:8px;">Delete Account</div>
-    <div style="font-size:13px;color:var(--text2);margin-bottom:20px;">Would you like us to email your workout data before we delete your account?</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:20px;">Download a complete copy of your data before your account is deleted?</div>
     <div style="display:flex;gap:10px;margin-bottom:16px;">
-      <button class="btn-p" style="flex:1;" onclick="proceedDeleteWithData()">📧 Email Data & Delete</button>
-      <button style="flex:1;background:var(--surface2);border:0.5px solid var(--border);color:var(--red);border-radius:10px;padding:14px;font-size:13px;font-weight:700;cursor:pointer;" onclick="proceedDeleteNoData()">Delete Without Email</button>
+      <button class="btn-p" style="flex:1;" onclick="proceedDeleteWithData()">⬇️ Download data &amp; delete</button>
+      <button style="flex:1;background:var(--surface2);border:0.5px solid var(--border);color:var(--red);border-radius:10px;padding:14px;font-size:13px;font-weight:700;cursor:pointer;" onclick="proceedDeleteNoData()">Delete without downloading</button>
     </div>
     <button onclick="this.closest('.modal-ov').classList.remove('open')" style="width:100%;background:transparent;border:0.5px solid var(--border);color:var(--text2);border-radius:8px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;">Cancel</button>
   </div>
 </div>
 
-<!-- EMAIL DATA CONFIRMATION MODAL -->
+<!-- DOWNLOAD DATA BEFORE DELETION -->
 <div class="modal-ov" id="emailDataMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal">
     <div class="modal-handle"></div>
-    <div style="font-size:18px;font-weight:800;margin-bottom:8px;">Email Your Data</div>
-    <div style="font-size:13px;color:var(--text2);margin-bottom:12px;">We'll send your complete workout history to your email address:</div>
-    <div style="background:var(--surface);border:0.5px solid var(--border);border-radius:8px;padding:12px;margin-bottom:20px;font-size:13px;font-weight:700;" id="emailConfirm">your@email.com</div>
-    <div id="emailStatus" style="display:none;margin-bottom:16px;padding:12px;background:rgba(76,175,80,0.1);border:0.5px solid rgba(76,175,80,0.25);border-radius:8px;color:var(--green);font-size:13px;font-weight:700;text-align:center;"></div>
-    <button class="btn-p" style="width:100%;margin-bottom:8px;" id="sendEmailBtn" onclick="sendDataEmail()">Send Email & Delete Account</button>
+    <div style="font-size:18px;font-weight:800;margin-bottom:8px;">Download your data</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.5;">Saves two files to this device: a complete backup (workouts, weights, programmes, profile, body-weight and measurement logs, notes, Paths) that Max Gainz can import, and a CSV of your workouts for spreadsheets. Nothing is emailed or sent anywhere.</div>
+    <div id="emailStatus" role="status" style="display:none;margin-bottom:16px;padding:12px;background:rgba(76,175,80,0.1);border:0.5px solid rgba(76,175,80,0.25);border-radius:8px;color:var(--green);font-size:13px;font-weight:700;"></div>
+    <button class="btn-p" style="width:100%;margin-bottom:8px;" id="sendEmailBtn" onclick="downloadDataBeforeDelete()">⬇️ Download my data</button>
+    <button id="deleteAfterDlBtn" hidden style="width:100%;margin-bottom:8px;background:var(--surface2);border:0.5px solid var(--border);color:var(--red);border-radius:10px;padding:14px;font-size:13px;font-weight:700;cursor:pointer;" onclick="continueDeleteAfterDownload()">Continue to delete my account</button>
     <button onclick="this.closest('.modal-ov').classList.remove('open')" style="width:100%;background:transparent;border:0.5px solid var(--border);color:var(--text2);border-radius:8px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;">Cancel</button>
   </div>
 </div>
