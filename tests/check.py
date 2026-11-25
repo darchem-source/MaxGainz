@@ -7151,19 +7151,19 @@ def _top_decls(src):
         names.update(re.findall(r'(?:^(?:var|let|const)\s+|,\s*)([A-Za-z_$][A-Za-z0-9_$]*)\s*=', re.sub(r'//.*$', '', line)))
     return names
 
-def gate_sync_module(html, js, root=None):
-    root = root or ROOT
+def _module_bundle_problems(html, m, root):
+    """Shared checks for an extracted module: listed in MODULES, region ==
+    file, nothing it declares is declared again in index.html, no UI.
+    Returns (problems, src or None)."""
     problems = []
     sys.path.insert(0, os.path.join(root, 'tools'))
     try:
         import importlib; bundle = importlib.import_module('bundle'); importlib.reload(bundle)
     except Exception as e:
-        print('  ✗ tools/bundle.py not importable: ' + str(e)); return False
-    m = 'app/sync.js'
+        return ['tools/bundle.py not importable: ' + str(e)], None
     pth = os.path.join(root, m)
     if m not in bundle.MODULES: problems.append(f'{m} is not in tools/bundle.py MODULES')
-    if not os.path.exists(pth):
-        print(f'  ✗ {m} missing'); return False
+    if not os.path.exists(pth): return problems + [f'{m} missing'], None
     src = open(pth, encoding='utf-8').read()
     r = bundle.region_re(m).search(html)
     if not r: problems.append(f'{m}: no BEGIN/END region in index.html')
@@ -7173,16 +7173,22 @@ def gate_sync_module(html, js, root=None):
         for n in sorted(_top_decls(src)):
             if re.search(r'^(?:var|let|const)\s+' + re.escape(n) + r'\b|^(?:async\s+)?function\s+' + re.escape(n) + r'\s*\(', outside, re.M):
                 problems.append(f'{n} is declared both in {m} and in index.html')
-    # the engine only: nothing that renders or toasts
+    # logic only: nothing that renders or toasts
     code = re.sub(r'//[^\n]*', '', src)
     for pat, what in [(r'\bdocument\b|\bwindow\.', 'touches the DOM'), (r'\bshowToast\s*\(', 'shows a toast'), (r'\binnerHTML\b|\.classList\b', 'renders')]:
         if re.search(pat, code): problems.append(f'{m} {what} — keep UI in index.html')
-    if not os.path.exists(JSC):
-        problems.append(f'jsc not found at {JSC}')
-    else:
+    if not os.path.exists(JSC): problems.append(f'jsc not found at {JSC}')
+    return problems, src
+
+JSC_CONSOLE = 'var console = { log(){}, warn(){}, error(){}, info(){} };\n'
+
+def gate_sync_module(html, js, root=None):
+    m = 'app/sync.js'
+    problems, src = _module_bundle_problems(html, m, root or ROOT)
+    if src is not None and os.path.exists(JSC):
         # load time must not call into index.html: the bare file with ONLY
         # browser stubs (no sbFetch, no ls helpers, no app state) has to load.
-        bare = _run_jsc_scenarios('var console = { log(){}, warn(){}, error(){}, info(){} };\n' + src + '\n',
+        bare = _run_jsc_scenarios(JSC_CONSOLE + src + '\n',
                                   {'loads with no index.html globals': 'return typeof flushPending === "function" && _pending === null && _sessUploading.size === 0;'})
         problems += ['standalone ' + f for f in bare]
         problems += ['standalone ' + f for f in _run_jsc_scenarios(SYNC_MODULE_STUBS + src + '\n', SYNC_MODULE_SCENARIOS)]
@@ -7192,80 +7198,168 @@ def gate_sync_module(html, js, root=None):
     for p in problems: print('  ✗ ' + p)
     return not problems
 
+# ── GATE 35: app/session.js (Priority 7, slice 3 — pure parts only) ────────
+# The running workout's state declarations and the session logic that needs no
+# page. Loaded ON ITS OWN in jsc with nothing but a console stub (the one
+# typeof-guarded run-time dependency, getSplits, is defined by its scenario) —
+# no HTML parsing.
+SESSION_MODULE_SCENARIOS = {
+    'workout state is declared with its empty shape at load': r"""
+      return sessDay === null && Array.isArray(sessExs) && sessExs.length === 0 && curIdx === 0
+        && JSON.stringify([setsDone, repsLogged, rpeLogged, supersets, warmupShown, warmupDone, setTimestamps, equipOverride, setWeights]) === '[{},{},{},{},{},{},{},{},{}]'
+        && _pendingRPE === null && pendingRepSetIdx === -1 && totalSets === 0 && sessTimeSec === 0 && restSec === 0
+        && sessInterval === null && restInterval === null && exSetTimerInterval === null
+        && sessStartTime === null && sessProgKey === null && _activeSessionOwner === null;
+    """,
+    'last time = newest non-manual session with any alias; per-set weights, bad reps → null': r"""
+      const sessions = [
+        { date: '2026-11-01T10:00:00Z', setLog: { 'Bench': { reps: [8, 8], setWeights: [80, 82.5], weight: 82.5 } } },
+        { date: '2026-11-10T10:00:00Z', setLog: { 'Bench Press': { reps: [6, 'x'], weight: 85 } } },
+        { date: '2026-11-20T10:00:00Z', manualActivity: true, setLog: { 'Bench': { reps: [1] } } },
+        { date: '2026-11-21T10:00:00Z', setLog: { 'Squat': { reps: [5] } } } ];
+      const r = getLastSessionSets(sessions, ['Bench', 'Bench Press']);
+      const old = _lastSetsFromLog(sessions[0].setLog.Bench);
+      return r && r.date === '2026-11-10T10:00:00Z' && JSON.stringify(r.sets) === '[{"w":85,"r":6},{"w":85,"r":null}]' && r.bw === false
+        && JSON.stringify(old) === '[{"w":80,"r":8},{"w":82.5,"r":8}]'
+        && getLastSessionSets([], ['Bench']) === null && getLastSessionSets(sessions, ['Row']) === null;
+    """,
+    'set delta: up, down, same, mixed, timed, new': r"""
+      const up = _setDeltaText({ w: 82.5, r: 8 }, { w: 80, r: 8 });
+      const down = _setDeltaText({ w: 80, r: 6 }, { w: 80, r: 8 });
+      const same = _setDeltaText({ w: 80, r: 8 }, { w: 80, r: 8 });
+      const mixed = _setDeltaText({ w: 85, r: 6 }, { w: 80, r: 8 });
+      const timed = _setDeltaText({ w: 0, r: 45 }, { w: 0, r: 40 }, { timed: true });
+      return up.dir === 'up' && up.text === '+2.5 kg vs last time'
+        && down.dir === 'down' && down.text === '−2 reps vs last time'
+        && same.dir === 'same' && same.text === 'Matched last time (80 kg × 8)'
+        && mixed.dir === 'mixed' && mixed.text === '+5 kg, −2 reps vs last time'
+        && timed.dir === 'up' && timed.text === '+5 s vs last time'
+        && _setDeltaText({ w: 80, r: 8 }, null).dir === 'new' && _setDeltaText(null, { w: 80, r: 8 }).text === '';
+    """,
+    'next open set and repeat-set values': r"""
+      const s = _repeatSetValues(2, { 0: 8, 1: 7 }, { 0: 80 }, null, 75, false);
+      const l = _repeatSetValues(0, {}, {}, [{ w: 80, r: 8 }], 75, false);
+      return _nextOpenSetIdx([0, 2], 4) === 1 && _nextOpenSetIdx([0, 1, 2], 3) === -1 && _nextOpenSetIdx(null, 2) === 0
+        && JSON.stringify(s) === '{"r":7,"w":75,"src":"session","from":1}'
+        && JSON.stringify(l) === '{"r":8,"w":80,"src":"last","from":0}'
+        && _repeatSetValues(0, {}, {}, [], 75, false) === null;
+    """,
+    'next-step text and Epley 1RM': r"""
+      return _nextStepText({ nextSetNo: 2, totalSets: 3, w: 80, reps: 8, restSecs: 90, suggestW: 82.5 }) === 'Next: set 2 of 3 · 80 kg × 8 (or try 82.5 kg) after 90 s rest'
+        && _nextStepText({ nextSetNo: 3, totalSets: 3, w: 10, reps: 12, bw: true }) === 'Next: set 3 of 3 · BW +10 kg × 12'
+        && _nextStepText({ nextExName: 'Row' }) === 'Exercise done · Next: Row'
+        && _nextStepText({}) === 'All exercises done · Finish when ready'
+        && Math.abs(calc1RM(100, 10) - 133.3333) < 0.001 && calc1RM(100, 0) === 100 && calc1RM(0, 5) === 0;
+    """,
+    'cooldown follows trained volume, unique and deterministic': r"""
+      const lib = ['a','b','c'].map(x => ({ slug: 'p' + x, groups: ['push'] })).concat(['a','b','c','d'].map(x => ({ slug: 'l' + x, groups: ['legs'] })));
+      const r = _buildCooldown(['push', 'legs'], 0, lib, 4, { legs: 3, push: 1 });
+      const legs = r.filter(x => x.groups[0] === 'legs').length;
+      const again = _buildCooldown(['push', 'legs'], 0, lib, 4, { legs: 3, push: 1 });
+      const full = _buildCooldown(['push'], 0, lib, 6);
+      return r.length === 4 && legs === 3 && new Set(r.map(x => x.slug)).size === 4 && JSON.stringify(r) === JSON.stringify(again)
+        && full.length === 6 && new Set(full.map(x => x.slug)).size === 6 && _buildCooldown(['push'], 0, [], 6).length === 0;
+    """,
+    'trained groups: logged exercises only, else every planned one': r"""
+      globalThis.getSplits = n => ({ Squat: [{ cat: 'legs', f: 1 }], Bench: [{ cat: 'push', f: 0.7 }, { cat: 'core', f: 0.1 }] })[n] || null;
+      sessExs = [{ name: 'Squat' }, { name: 'Bench' }];
+      setsDone = { 0: [0, 1] };
+      const logged = _sessionTrainedGroups();
+      setsDone = {};
+      const planned = _sessionTrainedGroups();
+      return JSON.stringify(logged) === '{"groups":["legs"],"weights":{"legs":1}}'
+        && JSON.stringify(planned.groups.sort()) === '["legs","push"]' && planned.weights.push === 0.7;
+    """,
+}
+
+def gate_session_module(html, js, root=None):
+    m = 'app/session.js'
+    problems, src = _module_bundle_problems(html, m, root or ROOT)
+    if src is not None and os.path.exists(JSC):
+        # nothing but a console: the file must load and every scenario must run
+        problems += ['standalone ' + f for f in _run_jsc_scenarios(JSC_CONSOLE + src + '\n', SESSION_MODULE_SCENARIOS)]
+    if not problems:
+        print(f'  ✓ {m} bundled verbatim right after app/sync.js; no declaration duplicated in index.html; no DOM; '
+              f'loads on its own and passes {len(SESSION_MODULE_SCENARIOS)} standalone scenarios (state shape, last time, set delta, repeat set, next step, 1RM, cooldown, trained groups)')
+    for p in problems: print('  ✗ ' + p)
+    return not problems
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/34] parse')
+    print('[1/35] parse')
     p = gate_parse(js)
-    print('[2/34] invariants')
+    print('[2/35] invariants')
     inv = gate_invariants(js)
-    print('[3/34] video map')
+    print('[3/35] video map')
     vm = gate_videomap(js)
-    print('[4/34] inline handler wiring')
+    print('[4/35] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/34] auth log hygiene')
+    print('[5/35] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/34] sign-out scrub')
+    print('[6/35] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/34] safe rendering of user text')
+    print('[7/35] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/34] sync honesty')
+    print('[8/35] sync honesty')
     sy = gate_sync(js)
-    print('[9/34] media fallback + reminder copy')
+    print('[9/35] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/34] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/35] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/34] core-journey accessibility (session + dialogs)')
+    print('[11/35] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/34] Start today (first-use flow) + shortened Path wizard')
+    print('[12/35] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/34] simplified navigation (default, reversible, one-time notice)')
+    print('[13/35] simplified navigation (default, reversible, one-time notice)')
     nv = gate_nav_v2(html, js)
-    print('[14/34] Progress weekly briefing')
+    print('[14/35] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/34] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/35] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/34] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/35] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/34] Phase 2 typed sets (preview before save)')
+    print('[17/35] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
-    print('[18/34] Phase 2 weekly AI recap + measurement')
+    print('[18/35] Phase 2 weekly AI recap + measurement')
     rc = gate_recap(html, js)
-    print('[19/34] Phase 3 offline media (download, cache versioning, fallback order)')
+    print('[19/35] Phase 3 offline media (download, cache versioning, fallback order)')
     om = gate_offline_media(html, js)
-    print('[20/34] Phase 3 programme discovery (metadata, finder, why, switch preview)')
+    print('[20/35] Phase 3 programme discovery (metadata, finder, why, switch preview)')
     dc = gate_discovery(html, js)
-    print('[21/34] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
+    print('[21/35] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
     sh = gate_sharing(html, js)
-    print('[22/34] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
+    print('[22/35] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
     lf = gate_leftovers(html, js)
-    print('[23/34] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
+    print('[23/35] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
     rm = gate_reminders(html, js)
-    print('[24/34] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
+    print('[24/35] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
     rs = gate_reminders_server(html, js)
-    print('[25/34] Profile & settings information model (flagged)')
+    print('[25/35] Profile & settings information model (flagged)')
     pv = gate_profile_v2(html, js)
-    print('[26/34] rollout registry + configuration in Data health')
+    print('[26/35] rollout registry + configuration in Data health')
     ro = gate_rollout(html, js)
-    print('[27/34] Today headline metric (context-sensitive, pinnable)')
+    print('[27/35] Today headline metric (context-sensitive, pinnable)')
     tm = gate_today_metric(html, js)
-    print('[28/34] authentication forms (Enter, password managers, errors, local data kept)')
+    print('[28/35] authentication forms (Enter, password managers, errors, local data kept)')
     af = gate_auth_forms(html, js)
-    print('[29/34] product-wide accessibility (click targets, state, dialog names)')
+    print('[29/35] product-wide accessibility (click targets, state, dialog names)')
     ax = gate_a11y_product(html, js)
-    print('[30/34] offline coverage explained (what works in the gym, what removal deletes)')
+    print('[30/35] offline coverage explained (what works in the gym, what removal deletes)')
     oc = gate_offline_coverage(html, js)
-    print('[31/34] feedback operational controls (bounded payloads, safe retries, rate limits, receipt)')
+    print('[31/35] feedback operational controls (bounded payloads, safe retries, rate limits, receipt)')
     fo = gate_feedback_ops(html, js)
-    print('[32/34] controlled AI beta (cohort, explanations, outcomes, failure review)')
+    print('[32/35] controlled AI beta (cohort, explanations, outcomes, failure review)')
     ab = gate_ai_beta(html, js)
-    print('[33/34] extracted modules (app/rollout.js: verbatim bundle, works standalone, one source of truth)')
+    print('[33/35] extracted modules (app/rollout.js: verbatim bundle, works standalone, one source of truth)')
     md = gate_modules(html, js)
-    print('[34/34] sync module (app/sync.js: verbatim bundle, no duplicate declarations, works standalone)')
+    print('[34/35] sync module (app/sync.js: verbatim bundle, no duplicate declarations, works standalone)')
     sm = gate_sync_module(html, js)
+    print('[35/35] session module (app/session.js: state declarations + pure session logic, works standalone)')
+    ss = gate_session_module(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af and ax and oc and fo and ab and md and sm:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af and ax and oc and fo and ab and md and sm and ss:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 
