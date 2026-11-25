@@ -7284,82 +7284,314 @@ def gate_session_module(html, js, root=None):
     for p in problems: print('  ✗ ' + p)
     return not problems
 
+# ── GATE 36: app/ai-validators.js + app/ai.js (Priority 7, slice 4) ────────
+# The validators are ONE file bundled into index.html and core.mjs; the client
+# (consent, gate, the one network path, audit, metrics, beta enrolment) is
+# app/ai.js. Both load ON THEIR OWN in jsc — no HTML parsing: the validators
+# with nothing but a console, the client with app/rollout.js (its documented
+# earlier-module dependency), the validators, and hand-written stubs.
+AI_COACH_FACTS_JS = r"""
+var COACH = { ex:'{EX}', unit:'kg', last:{ daysAgo:3, weight:80, reps:[8,8,8], rpe:null }, target:{ sets:3, reps:'8–10' },
+  decision:{ action:'increase', rule:'double_prog', from:80, to:82.5, confidence:'high' }, guard:{ rpeCeiling:null, fallbackWeight:null }, note:null };
+var NL = { text:'bench 80 kg x 5', exercises:[{ id:'E1', name:'Bench Press' }], unit:'kg' };
+function clone(o){ return JSON.parse(JSON.stringify(o)); }
+"""
+
+AI_VALIDATOR_SCENARIOS = {
+    'numbers: separators, ranges, minus, words; placeholders ignored; fractions never grounded': r"""
+      const n = _aiNumbersIn('1,200 kg, 6–8 reps, eighty-eight, −12 and {EX} L1 E2');
+      const want = [1200, 6, 8, -12, 88];
+      return want.every(w => n.indexOf(w) !== -1) && n.indexOf(1) === -1 && n.indexOf(2) === -1 && n.length === 5
+        && _aiNumbersIn('½ a plate').some(x => Number.isNaN(x)) && _aiGrounded('Add 2.5 kg', [80, 82.5, 2.5]).ok
+        && JSON.stringify(_aiGrounded('Add 5 kg', [80]).bad) === '[5]';
+    """,
+    'facts: exact shape only, no markup in notes, pain refused': r"""
+      const a = clone(COACH); a.extra = 1;
+      const b = clone(COACH); b.note = '<b>hi</b>';
+      const c = clone(COACH); c.note = 'shoulder hurts';
+      const d = clone(NL); d.text = 'squat 100 x 5 knee pain';
+      return _aiValidateFacts('coach', COACH) === '' && _aiValidateFacts('coach', a) === 'coach shape'
+        && _aiValidateFacts('coach', b) === 'coach note' && _aiValidateFacts('coach', c) === 'coach note'
+        && _aiValidateFacts('nl', NL) === '' && _aiValidateFacts('nl', d) === 'pain' && _aiValidateFacts('x', {}) === 'task';
+    """,
+    'coach answer: grounded, placeholder, target stated, no medical advice': r"""
+      const ok = _aiCheckOutput('coach', { text:'Try {EX} at 82.5 kg for 3 sets of 8.' }, COACH);
+      return ok.ok === true
+        && _aiCheckOutput('coach', { text:'Try {EX} at 90 kg.' }, COACH).reason === 'ungrounded'
+        && _aiCheckOutput('coach', { text:'Try bench at 82.5 kg.' }, COACH).reason === 'placeholder'
+        && _aiCheckOutput('coach', { text:'Go heavier on {EX} next time.' }, COACH).reason === 'missing target'
+        && _aiCheckOutput('coach', { text:'Ask a doctor before {EX} at 82.5 kg.' }, COACH).reason === 'medical'
+        && _aiCheckOutput('coach', { text:'x', extra:1 }, COACH).reason === 'schema';
+    """,
+    'typed set: only numbers the user typed, only listed exercises': r"""
+      const set = w => ({ sets:[Object.assign({ ex:'E1', weight:80, unit:'kg', reps:5, rpe:null }, w)], clarify:null });
+      return _aiCheckOutput('nl', set({}), NL).ok === true
+        && _aiCheckOutput('nl', set({ reps:6 }), NL).reason === 'ungrounded'
+        && _aiCheckOutput('nl', set({ ex:'E2' }), NL).reason === 'exercise'
+        && _aiCheckOutput('nl', set({ unit:'lb' }), NL).reason === 'unit'
+        && _aiCheckOutput('nl', { sets:[], clarify:null }, NL).reason === 'empty';
+    """,
+}
+
+AI_CLIENT_STUBS = r"""
+var console = { log(){}, warn(){}, error(){}, info(){} };
+var __ls = {};
+var localStorage = { getItem(k){ return Object.prototype.hasOwnProperty.call(__ls,k) ? __ls[k] : null; },
+  setItem(k,v){ __ls[k] = String(v); }, removeItem(k){ delete __ls[k]; } };
+var location = { search:'', pathname:'/', hash:'' };
+var history = { replaceState(){} };
+var navigator = { onLine: true };
+var __fireTimers = false;
+function setTimeout(f, ms){ if (__fireTimers) f(); return 1; }
+function clearTimeout(){}
+// run-time dependencies on index.html (see the header of app/ai.js)
+var __st = { auth: true, uid: 'userA' };
+function isAuthenticated(){ return __st.auth; }
+function getCurrentUserId(){ return __st.auth ? __st.uid : null; }
+var authToken = 'tok';
+var __refreshed = 0;
+async function refreshAuthToken(){ __refreshed++; return true; }
+var __posts = [];
+var __reply = n => ({ status: 200, body: { ok: true, out: { text: 'Try {EX} at 82.5 kg for 3 sets of 8.' }, model: 'claude-haiku-5-5', prompt: 'coach-1', costMicroUsd: 40 } });
+async function fetch(url, o){ __posts.push({ url: url, auth: o.headers.Authorization, body: JSON.parse(o.body) }); const r = __reply(__posts.length);
+  return { ok: r.status >= 200 && r.status < 300, status: r.status, json: async () => r.body }; }
+var __sb = [];
+var __sbReply = p => ({ ok: true });
+async function sbFetch(p, o){ __sb.push({ p: p, body: o && o.body }); return __sbReply(p); }
+var userPreferences = { ai: null };
+var __saved = 0, __rendered = 0;
+function cloudSaveProfile(){ __saved++; }
+function _renderAiSettings(){ __rendered++; }
+function renderToday(){}
+function flags(){ Object.keys(AI_FLAG_KEYS).forEach(k => localStorage.setItem(AI_FLAG_KEYS[k], '1')); }
+function consent(notes){ userPreferences.ai = { on: true, v: AI_CONSENT_VERSION, notes: !!notes, at: 1, changedAt: 1 }; }
+function audit(){ return _aiStoreGet(AI_AUDIT_KEY, 'audit').entries; }
+function metric(n){ return (_aiStoreGet(AI_METRICS_KEY, 'metrics').days[_aiDayKey(Date.now())] || {})[n] || 0; }
+""" + AI_COACH_FACTS_JS
+
+AI_CLIENT_SCENARIOS = {
+    'feature not rolled out: nothing sent, nothing recorded': r"""
+      consent(false);
+      const r = await _aiCall('coach', COACH);
+      return r.ok === false && r.reason === 'flag' && __posts.length === 0 && localStorage.getItem(AI_AUDIT_KEY) === null;
+    """,
+    'no consent / signed out / offline / capped: own text, audited, nothing sent': r"""
+      flags();
+      const off = await _aiCall('coach', COACH);
+      consent(false); __st.auth = false;
+      const so = await _aiCall('coach', COACH);
+      __st.auth = true; navigator.onLine = false;
+      const of = await _aiCall('coach', COACH);
+      navigator.onLine = true; _aiMetricBump('calls', AI_CLIENT_DAILY_CALLS);
+      const cap = await _aiCall('coach', COACH);
+      return off.reason === 'off' && so.reason === 'signed_out' && of.reason === 'offline' && cap.reason === 'cap'
+        // the local stores hold one account at a time: the signed-out write started a fresh one
+        && __posts.length === 0 && audit().length === 2 && audit().every(e => e.source === 'deterministic') && metric('fallback_cap') === 1;
+    """,
+    'valid answer is used, audited as AI and counted; one request with the user token': r"""
+      flags(); consent(false);
+      const r = await _aiCall('coach', COACH);
+      const e = audit()[0];
+      return r.ok === true && r.out.text.indexOf('82.5') !== -1 && __posts.length === 1 && __posts[0].url === '/api/ai'
+        && __posts[0].auth === 'Bearer tok' && __posts[0].body.task === 'coach' && e.source === 'ai' && e.model === 'claude-haiku-5-5'
+        && metric('calls') === 1 && metric('ai_ok') === 1 && metric('cost_micro_usd') === 40;
+    """,
+    'ungrounded answer from the server is never shown': r"""
+      flags(); consent(false);
+      __reply = () => ({ status: 200, body: { ok: true, out: { text: 'Try {EX} at 90 kg.' } } });
+      const r = await _aiCall('coach', COACH);
+      return r.ok === false && r.reason === 'invalid' && audit()[0].out === null && audit()[0].check === 'ungrounded' && metric('valfail_coach') === 1;
+    """,
+    'notes go out only with the notes consent': r"""
+      flags(); consent(false);
+      const f = clone(COACH); f.note = 'felt easy';
+      await _aiCall('coach', f);
+      consent(true);
+      await _aiCall('coach', f);
+      return __posts[0].body.facts.note === null && __posts[1].body.facts.note === 'felt easy';
+    """,
+    'pain in a typed set never leaves the device': r"""
+      flags(); consent(false);
+      const f = clone(NL); f.text = 'squat 100 x 5 knee pain';
+      const r = await _aiCall('nl', f);
+      return r.reason === 'pain' && __posts.length === 0;
+    """,
+    'expired token: refreshed once, retried once': r"""
+      flags(); consent(false);
+      const ok = __reply;
+      __reply = n => n === 1 ? { status: 401, body: { ok: false, reason: 'auth' } } : ok(n);
+      const r = await _aiCall('coach', COACH);
+      return r.ok === true && __refreshed === 1 && __posts.length === 2;
+    """,
+    'timeout falls back to the app text': r"""
+      flags(); consent(false); __fireTimers = true;
+      const r = await _aiCall('coach', COACH);
+      return r.ok === false && r.reason === 'timeout';
+    """,
+    'server says consent is off: this device follows': r"""
+      flags(); consent(false);
+      __reply = () => ({ status: 403, body: { ok: false, reason: 'consent_off' } });
+      const r = await _aiCall('coach', COACH);
+      const stored = JSON.parse(localStorage.getItem(AI_PREFS_KEY));
+      return r.reason === 'off' && userPreferences.ai.on === false && stored.on === false && __saved === 1;
+    """,
+    'beta: enrol for members, leave for non-members, never after ?ai=0': r"""
+      __sbReply = () => ({ ok: true, member: true });
+      await _aiBetaSync();
+      const enrolled = _aiFlagOn('coach') && localStorage.getItem(AI_COHORT_KEY) === 'beta';
+      __sbReply = () => ({ ok: true, member: false });
+      await _aiBetaSync();
+      const left = !_aiFlagOn('master') && localStorage.getItem(AI_COHORT_KEY) === null;
+      localStorage.setItem(AI_FLAG_KEYS.master, '0');
+      __sbReply = () => ({ ok: true, member: true });
+      await _aiBetaSync();
+      return enrolled && left && localStorage.getItem(AI_FLAG_KEYS.master) === '0' && localStorage.getItem(AI_COHORT_KEY) === null;
+    """,
+    'consent merge: newest change wins, a tie turns AI off, old versions are off': r"""
+      const on = { on: true, v: AI_CONSENT_VERSION, changedAt: 5 }, off = { on: false, changedAt: 5 };
+      return _aiPrefsMerge(on, off).on === false && _aiPrefsMerge(off, on).on === false
+        && _aiPrefsMerge({ on: true, v: AI_CONSENT_VERSION, changedAt: 9 }, off).on === true
+        && _aiPrefsNormalize({ on: true, v: AI_CONSENT_VERSION + 1 }).on === false && _aiPrefsNormalize('x').on === false;
+    """,
+    'local stores: other accounts and old entries dropped; failure export carries codes only': r"""
+      const now = Date.parse('2026-11-25T12:00:00Z');
+      const mine = { v: 1, uid: 'userA', entries: [{ id: 'a_1', t: now - 864e5, kind: 'coach', fallback: 'invalid', check: 'ungrounded', facts: COACH, out: { text: 'secret' } },
+        { id: 'a_2', t: now - 200 * 864e5 }, { id: 'bad id', t: now }] };
+      const a = _aiStoreLoad(JSON.stringify(mine), 'userA', 'audit', now);
+      const b = _aiStoreLoad(JSON.stringify(mine), 'userB', 'audit', now);
+      const ex = JSON.stringify(_aiFailureExport(a.entries));
+      return a.entries.length === 1 && b.entries.length === 0 && ex.indexOf('secret') === -1 && ex.indexOf('{EX}') === -1
+        && ex.indexOf('"reason":"invalid"') !== -1 && ex.indexOf('"check":"ungrounded"') !== -1;
+    """,
+    'queued consent switch-off is retried only for its own account': r"""
+      localStorage.setItem(AI_CONSENT_SYNC_KEY, JSON.stringify({ uid: 'userB', on: false, notes: false }));
+      await _aiRetryConsentSync();
+      const other = __sb.length === 0 && localStorage.getItem(AI_CONSENT_SYNC_KEY) !== null;
+      localStorage.setItem(AI_CONSENT_SYNC_KEY, JSON.stringify({ uid: 'userA', on: false, notes: false }));
+      await _aiRetryConsentSync();
+      return other && __sb.length === 1 && __sb[0].p === 'rpc/ai_set_consent' && JSON.parse(__sb[0].body).p_enabled === false
+        && localStorage.getItem(AI_CONSENT_SYNC_KEY) === null;
+    """,
+}
+
+def gate_ai_module(html, js, root=None):
+    root = root or ROOT
+    problems = []
+    srcs = {}
+    for m in ['app/ai-validators.js', 'app/ai.js']:
+        p, s = _module_bundle_problems(html, m, root)
+        problems += p; srcs[m] = s
+    # the server copy: region == file, and no validator declared again outside it
+    core_p = os.path.join(root, 'netlify/functions/ai/core.mjs')
+    v = srcs.get('app/ai-validators.js')
+    if v is not None and os.path.exists(core_p):
+        sys.path.insert(0, os.path.join(root, 'tools'))
+        import importlib; bundle = importlib.import_module('bundle'); importlib.reload(bundle)
+        core = open(core_p, encoding='utf-8').read()
+        r = bundle.region_re('app/ai-validators.js').search(core)
+        if not r: problems.append('core.mjs has no app/ai-validators.js region')
+        elif r.group(1) != (v if v.endswith('\n') else v + '\n'): problems.append('core.mjs validators differ from app/ai-validators.js — run python3 tools/bundle.py')
+        if r:
+            outside = core[:r.start()] + core[r.end():]
+            for n in sorted(_top_decls(v)):
+                if re.search(r'^(?:var|let|const)\s+' + re.escape(n) + r'\b|^(?:async\s+)?function\s+' + re.escape(n) + r'\s*\(', outside, re.M):
+                    problems.append(f'{n} is declared both in app/ai-validators.js and in core.mjs')
+    elif v is not None: problems.append('netlify/functions/ai/core.mjs missing')
+    if v is not None and re.search(r'\blocalStorage\b|\bfetch\s*\(|\bsbFetch\b|\bDate\.now\b', re.sub(r'//[^\n]*', '', v)):
+        problems.append('app/ai-validators.js must stay pure (it runs on the server too)')
+    rollout_p = os.path.join(root, 'app', 'rollout.js')
+    a = srcs.get('app/ai.js')
+    if v is not None and a is not None and os.path.exists(JSC) and os.path.exists(rollout_p):
+        rollout = open(rollout_p, encoding='utf-8').read()
+        problems += ['validators ' + f for f in _run_jsc_scenarios(JSC_CONSOLE + v + '\n' + AI_COACH_FACTS_JS, AI_VALIDATOR_SCENARIOS)]
+        # load time: the three files with nothing but a console (rollout.js reads storage only when called)
+        problems += ['client ' + f for f in _run_jsc_scenarios(JSC_CONSOLE + rollout + '\n' + v + '\n' + a + '\n',
+            {'loads with no index.html globals': 'return typeof _aiCall === "function" && AI_BETA_SURFACES.length === 3;'})]
+        problems += ['client ' + f for f in _run_jsc_scenarios(AI_CLIENT_STUBS + rollout + '\n' + v + '\n' + a + '\n', AI_CLIENT_SCENARIOS)]
+    if not problems:
+        print(f'  ✓ app/ai-validators.js is the one source for index.html and core.mjs; app/ai.js bundled verbatim; no duplicate declarations; no DOM; '
+              f'both run on their own ({len(AI_VALIDATOR_SCENARIOS)} validator + {len(AI_CLIENT_SCENARIOS)} client scenarios: gate order, consent, notes, pain, grounding, retry, timeout, server consent-off, beta enrolment, local stores)')
+    for p in problems: print('  ✗ ' + p)
+    return not problems
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/35] parse')
+    print('[1/36] parse')
     p = gate_parse(js)
-    print('[2/35] invariants')
+    print('[2/36] invariants')
     inv = gate_invariants(js)
-    print('[3/35] video map')
+    print('[3/36] video map')
     vm = gate_videomap(js)
-    print('[4/35] inline handler wiring')
+    print('[4/36] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/35] auth log hygiene')
+    print('[5/36] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/35] sign-out scrub')
+    print('[6/36] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/35] safe rendering of user text')
+    print('[7/36] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/35] sync honesty')
+    print('[8/36] sync honesty')
     sy = gate_sync(js)
-    print('[9/35] media fallback + reminder copy')
+    print('[9/36] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/35] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/36] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/35] core-journey accessibility (session + dialogs)')
+    print('[11/36] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/35] Start today (first-use flow) + shortened Path wizard')
+    print('[12/36] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/35] simplified navigation (default, reversible, one-time notice)')
+    print('[13/36] simplified navigation (default, reversible, one-time notice)')
     nv = gate_nav_v2(html, js)
-    print('[14/35] Progress weekly briefing')
+    print('[14/36] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/35] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/36] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/35] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/36] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/35] Phase 2 typed sets (preview before save)')
+    print('[17/36] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
-    print('[18/35] Phase 2 weekly AI recap + measurement')
+    print('[18/36] Phase 2 weekly AI recap + measurement')
     rc = gate_recap(html, js)
-    print('[19/35] Phase 3 offline media (download, cache versioning, fallback order)')
+    print('[19/36] Phase 3 offline media (download, cache versioning, fallback order)')
     om = gate_offline_media(html, js)
-    print('[20/35] Phase 3 programme discovery (metadata, finder, why, switch preview)')
+    print('[20/36] Phase 3 programme discovery (metadata, finder, why, switch preview)')
     dc = gate_discovery(html, js)
-    print('[21/35] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
+    print('[21/36] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
     sh = gate_sharing(html, js)
-    print('[22/35] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
+    print('[22/36] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
     lf = gate_leftovers(html, js)
-    print('[23/35] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
+    print('[23/36] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
     rm = gate_reminders(html, js)
-    print('[24/35] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
+    print('[24/36] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
     rs = gate_reminders_server(html, js)
-    print('[25/35] Profile & settings information model (flagged)')
+    print('[25/36] Profile & settings information model (flagged)')
     pv = gate_profile_v2(html, js)
-    print('[26/35] rollout registry + configuration in Data health')
+    print('[26/36] rollout registry + configuration in Data health')
     ro = gate_rollout(html, js)
-    print('[27/35] Today headline metric (context-sensitive, pinnable)')
+    print('[27/36] Today headline metric (context-sensitive, pinnable)')
     tm = gate_today_metric(html, js)
-    print('[28/35] authentication forms (Enter, password managers, errors, local data kept)')
+    print('[28/36] authentication forms (Enter, password managers, errors, local data kept)')
     af = gate_auth_forms(html, js)
-    print('[29/35] product-wide accessibility (click targets, state, dialog names)')
+    print('[29/36] product-wide accessibility (click targets, state, dialog names)')
     ax = gate_a11y_product(html, js)
-    print('[30/35] offline coverage explained (what works in the gym, what removal deletes)')
+    print('[30/36] offline coverage explained (what works in the gym, what removal deletes)')
     oc = gate_offline_coverage(html, js)
-    print('[31/35] feedback operational controls (bounded payloads, safe retries, rate limits, receipt)')
+    print('[31/36] feedback operational controls (bounded payloads, safe retries, rate limits, receipt)')
     fo = gate_feedback_ops(html, js)
-    print('[32/35] controlled AI beta (cohort, explanations, outcomes, failure review)')
+    print('[32/36] controlled AI beta (cohort, explanations, outcomes, failure review)')
     ab = gate_ai_beta(html, js)
-    print('[33/35] extracted modules (app/rollout.js: verbatim bundle, works standalone, one source of truth)')
+    print('[33/36] extracted modules (app/rollout.js: verbatim bundle, works standalone, one source of truth)')
     md = gate_modules(html, js)
-    print('[34/35] sync module (app/sync.js: verbatim bundle, no duplicate declarations, works standalone)')
+    print('[34/36] sync module (app/sync.js: verbatim bundle, no duplicate declarations, works standalone)')
     sm = gate_sync_module(html, js)
-    print('[35/35] session module (app/session.js: state declarations + pure session logic, works standalone)')
+    print('[35/36] session module (app/session.js: state declarations + pure session logic, works standalone)')
     ss = gate_session_module(html, js)
+    print('[36/36] AI modules (app/ai-validators.js one source for app + server; app/ai.js client works standalone)')
+    am = gate_ai_module(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af and ax and oc and fo and ab and md and sm and ss:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af and ax and oc and fo and ab and md and sm and ss and am:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 

@@ -29,6 +29,10 @@ So code moves out **for editing and testing**, not for loading.
 
 5. **Gate 35 checks `app/session.js`** the same way (region, no duplicate declarations, no DOM), then loads it in `jsc` with nothing but a console stub and runs its scenarios: the state's empty shape at load, last-time sets, set delta, repeat-set, next-step text, Epley 1RM, the cooldown picker and trained groups.
 
+6. **Gate 36 checks the AI modules:** both `app/ai-validators.js` regions (in `index.html` and in `core.mjs`) equal the file, no validator is declared again in either host, the validators stay pure (they run on the server), and `app/ai.js` has no DOM. The validators then run on their own with only a console; `app/ai.js` runs with `app/rollout.js` (its documented earlier-module dependency), the validators and stubs for the gate order, consent and notes, pain, grounding, the 401 retry, timeout, server consent-off, beta enrolment and the local stores.
+
+A module listed in `ALSO_INTO` is copied into a marked region of each named file as well. Editing that region by hand fails gate 33 (drift) and gate 36.
+
 ### Run-time vs load-time dependencies
 
 A module may call functions or read state that still live in `index.html` **when its functions run**, never while the script loads. Every such dependency is listed in the module's header comment; the standalone test stubs exactly those.
@@ -45,7 +49,7 @@ Never edit inside a region by hand. Gate 33 fails, and the next `bundle.py` run 
 | 2 | Sync and pending-operation queue: `app/sync.js` (pending queue `maxgainz_pending_v1`, `_P`, `flushPending`, retry/backoff, `_uploadSession`, stash, `cloudSave*`/`cloudDeleteSession`/`cloudLoadAll`, keyset paging, `_sessionKey` + `_mergeSessions`). UI that drives it (`retrySync`, `confirmSignOut`, re-auth, save toasts, the status line) stays in `index.html`. Run-time dependencies on `index.html` are listed at the top of the file | **Done**, build 2026.11.25.10 |
 | 3 | Active-session state, pure parts: `app/session.js` (declarations of the running workout's state; last-time sets, set delta, repeat-set, next-step text, `calc1RM`, `_buildCooldown`, `_sessionTrainedGroups`) | **Done (pure parts)**, build 2026.11.25.11 |
 | 3b | Active-session transitions and renderers (`startSession*`, set logging, `finishSession`, `cancelSession`, `_teardownActiveSession`). They change state and update the page in the same functions, so they cannot move verbatim: this needs a refactor that splits state changes from rendering, with its own manual test pass of the workout flow | Not started (needs a decision on the refactor) |
-| 4 | AI consent, validation and client (next): share validators with `netlify/functions/ai/core.mjs` from one file instead of keeping two byte-identical copies | |
+| 4 | AI validation and client: `app/ai-validators.js` is the **one source** of the validators, bundled into both `index.html` and `netlify/functions/ai/core.mjs` (`ALSO_INTO` in `tools/bundle.py`); `app/ai.js` holds consent merge, the call gate, `_aiCall` / `_aiPost`, the local audit and metrics stores, beta enrolment and the server consent sync. UI stays in `index.html` (consent toggles, intro cards, AI health HTML, every AI surface) | **Done**, build 2026.11.25.12 |
 | 5 | Data contracts and pure training rules: progression, rotation, PB and XP derivation | |
 | 6 | Lower-priority screens and media manifests: these are the candidates for loading later, once a service-worker change makes extra files safe | |
 
