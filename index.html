@@ -5668,7 +5668,9 @@ function _pushPrefsNormalize(o){
   o = (o && typeof o === 'object') ? o : {};
   const hour = Number.isInteger(o.hour) && o.hour >= 0 && o.hour <= 23 ? o.hour : PUSH_DEFAULT_HOUR;
   const days = Array.isArray(o.days) ? [...new Set(o.days.filter(d => Number.isInteger(d) && d >= 1 && d <= 7))].sort() : [];
-  return { v:1, enabled: o.enabled === true, hour, daysMode: o.daysMode === 'custom' ? 'custom' : 'path', days };
+  const endpoint = typeof o.endpoint === 'string' && o.endpoint.length <= 1024 ? o.endpoint : '';
+  const tz = typeof o.tz === 'string' && /^[A-Za-z0-9_+\-\/]{1,64}$/.test(o.tz) ? o.tz : '';   // the ACCOUNT's time zone once on
+  return { v:1, enabled: o.enabled === true, hour, daysMode: o.daysMode === 'custom' ? 'custom' : 'path', days, endpoint, dirty: o.dirty === true, tz };
 }
 function _pushLoadPrefs(){
   try { return _pushPrefsNormalize(JSON.parse(localStorage.getItem(PUSH_PREFS_KEY) || 'null')); } catch(e){ return _pushPrefsNormalize(null); }
@@ -5855,8 +5857,10 @@ function _pushCardHtml(st){
       ${mode}
       <div style="display:flex;gap:4px;margin-top:8px;" role="group" aria-label="Reminder days">${chips}</div>
       ${!days.length ? `<div style="font-size:11px;color:${p.enabled ? 'var(--red)' : 'var(--text2)'};margin-top:6px;">${p.enabled ? 'No days picked, so no reminders will be sent.' : 'Pick the days you want a reminder.'}</div>` : ''}
-      <div style="font-size:11px;color:var(--text2);margin-top:8px;">Times are in ${esc(st.tz || 'this device\'s time zone')} (from this device).</div>
+      <div style="font-size:11px;color:var(--text2);margin-top:8px;">Times are in ${esc(p.tz || st.tz || 'this device\'s time zone')}${p.tz && p.tz !== st.tz ? ' (your account\'s time zone)' : ' (from this device)'}.</div>
+      ${on && p.tz && st.tz && p.tz !== st.tz ? `<button type="button" id="pushUseTzBtn" onclick="pushUseDeviceTz()" style="margin-top:6px;background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;color:var(--text);cursor:pointer;">Use this device's time zone (${esc(st.tz)})</button>` : ''}
       ${on ? `<button type="button" id="pushTestBtn" onclick="pushSendTest()" ${st.busy ? 'disabled' : ''} style="width:100%;margin-top:10px;background:transparent;border:1px solid var(--border);border-radius:10px;padding:9px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;">Send a test notification</button>` : ''}
+      ${on ? `<button type="button" id="pushOffAllBtn" onclick="pushDisableAllDevices()" ${st.busy ? 'disabled' : ''} style="width:100%;margin-top:6px;background:transparent;border:none;padding:6px;font-size:11px;font-weight:700;color:var(--text2);cursor:pointer;text-decoration:underline;">Turn off on all my devices</button>` : ''}
       <div id="pushMetricsLine" style="font-size:10px;color:var(--text2);margin-top:8px;">${_pushMetricsText(m)}</div>`;
   return head + promise + settings + `<div id="pushStatus" role="status" aria-live="polite" style="font-size:11px;color:var(--text2);margin-top:6px;"></div>`;
 }
@@ -5884,12 +5888,14 @@ function renderRemindersCard(){
     _pushCheckSw().then(ok => { if(ok !== before) renderRemindersCard(); });
   }
   const path = _pushActivePath();
+  const cap = _pushCapability(_pushEnv());
+  if(cap === 'ok' && !prefs.enabled && typeof _pushGetVapidKey === 'function') _pushGetVapidKey();   // ready before the tap (iOS)
   // Keep keyboard focus on the control the user just used (the card is redrawn).
   const ae = document.activeElement;
   const fk = ae && el.contains(ae) ? (ae.id ? '#' + ae.id : (ae.getAttribute('aria-label') ? '[aria-label="' + ae.getAttribute('aria-label') + '"]' : null)) : null;
   el.hidden = false;
   el.style.cssText = 'background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:14px;margin-bottom:10px;';
-  el.innerHTML = _pushCardHtml({ cap:_pushCapability(_pushEnv()), prefs, pathDays:_pushPathDays(path), pathDaysPath:path, tz:_pushTz(), metrics:_pushMetricsCache, busy:_pushBusy });
+  el.innerHTML = _pushCardHtml({ cap, prefs, pathDays:_pushPathDays(path), pathDaysPath:path, tz:_pushTz(), metrics:_pushMetricsCache, busy:_pushBusy });
   if(fk){ try { const f = el.querySelector(fk); if(f) f.focus(); } catch(e){} }
 }
 
@@ -5897,7 +5903,7 @@ function renderRemindersCard(){
 function pushSetHour(v){
   const h = parseInt(v, 10);
   if(!(h >= 0 && h <= 23)) return;
-  const p = _pushLoadPrefs(); p.hour = h; _pushSavePrefs(p);
+  const p = _pushLoadPrefs(); p.hour = h; if(p.enabled) p.dirty = true; _pushSavePrefs(p);
   _pushPrefsChanged();
 }
 function pushSetDaysMode(mode){
@@ -5907,7 +5913,14 @@ function pushSetDaysMode(mode){
     p.days = _pushEffectiveDays(p, _pushActivePath());
   }
   p.daysMode = mode === 'custom' ? 'custom' : 'path';
+  if(p.enabled) p.dirty = true;
   _pushSavePrefs(p);
+  _pushPrefsChanged();
+}
+function pushUseDeviceTz(){
+  const tz = _pushTz();
+  if(!tz) return;
+  const p = _pushLoadPrefs(); p.tz = tz; if(p.enabled) p.dirty = true; _pushSavePrefs(p);
   _pushPrefsChanged();
 }
 function pushToggleDay(d){
@@ -5917,17 +5930,426 @@ function pushToggleDay(d){
   p.daysMode = 'custom';
   const i = p.days.indexOf(d);
   if(i === -1) p.days.push(d); else p.days.splice(i, 1);
+  if(p.enabled) p.dirty = true;
   _pushSavePrefs(p);
   _pushPrefsChanged();
 }
-// Settings changed: redraw now; the server copy follows (slice 2).
+// Settings changed: redraw now, then update the account's copy (if on).
 function _pushPrefsChanged(){
   renderRemindersCard();
+  if(_pushLoadPrefs().enabled) _pushScheduleSync(800);
 }
+// Known browser push services. Must equal PUSH_HOST_RE in the push function core
+// and push_endpoint_ok() in supabase/push_reminders.sql (gate 24).
+const PUSH_HOST_RE = /^(fcm\.googleapis\.com|android\.googleapis\.com|updates\.push\.services\.mozilla\.com|web\.push\.apple\.com|[a-z0-9-]+\.notify\.windows\.com)$/;
+const PUSH_FORGET_KEY = 'maxgainz_push_forget';   // device-level: an endpoint whose sign-out cleanup never reached the server
+function _pushEndpointOk(e){
+  if(typeof e !== 'string' || e.length > 1024) return false;
+  const m = /^https:\/\/([^\/?#:@]+)(?::\d{1,5})?\//.exec(e);
+  return !!m && PUSH_HOST_RE.test(m[1]);
+}
+// Pure: weekday bitmask (Mon = 1 … Sun = 64) from ISO days, and back.
+function _pushDaysMask(days){
+  return (days || []).reduce((m, d) => (Number.isInteger(d) && d >= 1 && d <= 7) ? (m | (1 << (d - 1))) : m, 0);
+}
+function _pushMaskDays(mask){
+  const out = [];
+  for(let d = 1; d <= 7; d++) if(Number.isInteger(mask) && (mask & (1 << (d - 1)))) out.push(d);
+  return out;
+}
+// Pure: the label for each weekday's NEXT occurrence (index 0 = Monday), from
+// the Path's rotation. Only words from PUSH_LABELS — never a workout name.
+function _pushDayLabels(path, now, cycle, nextPick){
+  const out = ['train','train','train','train','train','train','train'];
+  if(!path || typeof path !== 'object') return out;
+  const core = path.coreSchedule && Array.isArray(path.coreSchedule.preferredDays) ? path.coreSchedule.preferredDays : [];
+  const addOns = Array.isArray(path.addOns) ? path.addOns : [];
+  cycle = Array.isArray(cycle) ? cycle : [];
+  let k = 0;
+  const start = Math.max(0, cycle.indexOf(nextPick));
+  for(let i = 0; i < 7; i++){
+    const d = new Date(now); d.setDate(d.getDate() + i);
+    const iso = ((d.getDay() + 6) % 7) + 1;
+    const name = PUSH_WEEKDAYS[iso - 1];
+    if(core.indexOf(name) !== -1){
+      out[iso - 1] = cycle.length ? _pushLabelFor(cycle[(start + k++) % cycle.length]) : _pushLabelFor(path.programme);
+    } else {
+      const a = addOns.find(x => x && Array.isArray(x.preferredDays) && x.preferredDays.indexOf(name) !== -1);
+      if(a) out[iso - 1] = _pushLabelFor(a.type);
+    }
+  }
+  return out.map(l => PUSH_LABELS.indexOf(l) !== -1 ? l : 'train');
+}
+// Pure: the exact schedule sent to the server — hour, weekday mask, whether the
+// days follow the Path, labels, time zone. Nothing else.
+function _pushServerPrefs(p, path, now, tz, cycle, nextPick, sp){
+  // Days follow the Path only on a device that has it; otherwise this device's
+  // own pick, else the account's. Never 0 (that would stop the whole account).
+  let days = _pushDaysMask(_pushEffectiveDays(p, path));
+  if(!days && sp && Number.isInteger(sp.days) && sp.days > 0) days = sp.days;
+  const labels = path ? _pushDayLabels(path, now, cycle, nextPick)
+               : (sp && Array.isArray(sp.labels) && sp.labels.length === 7 && sp.labels.every(l => PUSH_LABELS.indexOf(l) !== -1) ? sp.labels.slice() : _pushDayLabels(null, now));
+  return { p_hour: p.hour, p_days: days, p_follow_path: p.daysMode === 'path', p_labels: labels, p_tz: p.tz || tz };
+}
+// Pure: local settings after adopting the account's schedule from the server.
+function _pushAdoptServer(p, sp){
+  const q = Object.assign({}, p);
+  if(!sp || typeof sp !== 'object') return q;
+  if(Number.isInteger(sp.hour) && sp.hour >= 0 && sp.hour <= 23) q.hour = sp.hour;
+  q.daysMode = sp.follow_path === true ? 'path' : 'custom';
+  if(Number.isInteger(sp.days) && sp.days > 0) q.days = _pushMaskDays(sp.days);
+  if(typeof sp.tz === 'string') q.tz = sp.tz;
+  return _pushPrefsNormalize(q);
+}
+function _pushPathRotation(path){
+  if(!path) return { cycle: [], pick: null };
+  try {
+    const cycle = typeof _pathCycleDays === 'function' ? (_pathCycleDays(path.programme) || []) : [];
+    const pick = typeof getNextPathDay === 'function' ? getNextPathDay(path.programme) : null;
+    return { cycle, pick };
+  } catch(e){ return { cycle: [], pick: null }; }
+}
+function _pushPrefsBody(p, sp){
+  const path = _pushActivePath();
+  const rot = _pushPathRotation(path);
+  return _pushServerPrefs(p, path, new Date(), _pushTz(), rot.cycle, rot.pick, sp);
+}
+
+function _pushB64ToBytes(b64){
+  const s = String(b64 || '').replace(/-/g, '+').replace(/_/g, '/');
+  const pad = s + '='.repeat((4 - s.length % 4) % 4);
+  const raw = atob(pad);
+  const out = new Uint8Array(raw.length);
+  for(let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+function _pushSameKey(sub, key){
+  try {
+    const have = sub && sub.options && sub.options.applicationServerKey ? new Uint8Array(sub.options.applicationServerKey) : null;
+    if(!have) return true;   // browser doesn't say: assume unchanged
+    const want = _pushB64ToBytes(key);
+    return have.length === want.length && have.every((b, i) => b === want[i]);
+  } catch(e){ return true; }
+}
+let _pushVapid = null, _pushVapidStatus = 0, _pushVapidFailAt = 0;
+// Every reminder action and sync runs one at a time, in order (no stale writes).
+let _pushQ = Promise.resolve();
+function _pushExclusive(fn){
+  const r = _pushQ.then(fn, fn);
+  _pushQ = r.catch(() => {});
+  return r;
+}
+async function _pushGetVapidKey(){
+  if(_pushVapid) return _pushVapid;
+  if(Date.now() - _pushVapidFailAt < 60000) return null;   // a failure is remembered for a minute
+  try {
+    const r = await fetch('/api/push/key', { cache: 'no-store' });
+    _pushVapidStatus = r.status;
+    if(r.ok){
+      const j = await r.json();
+      if(j && typeof j.key === 'string' && /^[A-Za-z0-9_-]{80,100}$/.test(j.key)) _pushVapid = j.key;
+    }
+  } catch(e){ _pushVapidStatus = 0; }
+  if(!_pushVapid) _pushVapidFailAt = Date.now();
+  return _pushVapid;
+}
+async function _pushCurrentSub(){
+  try {
+    const sw = typeof navigator !== 'undefined' ? navigator.serviceWorker : null;
+    if(!sw || typeof PushManager === 'undefined') return null;
+    const reg = await sw.getRegistration();
+    return reg && reg.pushManager ? await reg.pushManager.getSubscription() : null;
+  } catch(e){ return null; }
+}
+// RPC helper: { ok, res, missing } — missing = the SQL hasn't been installed yet.
+async function _pushRpc(name, body){
+  let st = 0, tx = '';
+  const res = await sbFetch('rpc/' + name, { method: 'POST', silent: true, body: JSON.stringify(body || {}), onError: (s, t) => { st = s; tx = String(t || ''); } });
+  return { ok: !!(res && res.ok === true), res, missing: res === null && st === 404 && /PGRST202/.test(tx) };
+}
+
+// Subscribe this device and register it together with the account's schedule.
+// Permission must already be granted. If the account already has reminders on
+// another device, its schedule is adopted (one schedule per account).
+async function _pushSubscribe(p){
+  await _pushFlushForget();   // a leftover from an earlier sign-out on this device goes first
+  const key = await _pushGetVapidKey();
+  if(!key) return { ok: false, reason: _pushVapidStatus === 503 ? 'unavailable' : 'server' };
+  let sub = null, created = false;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    sub = await reg.pushManager.getSubscription();
+    if(sub && !_pushSameKey(sub, key)){ try { await sub.unsubscribe(); } catch(e){} sub = null; }
+    if(!sub){ sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: _pushB64ToBytes(key) }); created = true; }
+  } catch(e){ return { ok: false, reason: 'browser' }; }
+  const j = sub.toJSON ? sub.toJSON() : {};
+  const undo = async () => { if(created){ try { await sub.unsubscribe(); } catch(e){} } };
+  if(!_pushEndpointOk(j.endpoint) || !j.keys || !j.keys.p256dh || !j.keys.auth){ await undo(); return { ok: false, reason: 'service' }; }
+  let adopted = false, sp = null;
+  const g = await _pushRpc('push_get_prefs', { p_endpoint: j.endpoint });
+  if(g.missing){ await undo(); return { ok: false, reason: 'missing' }; }
+  if(g.res && g.res.ok === true && g.res.prefs){
+    sp = g.res.prefs;
+    // The account already has a schedule (another device): use it, unless the
+    // user changed settings on THIS device and hasn't synced them yet.
+    if(!p.dirty){ p = _pushAdoptServer(p, sp); adopted = g.res.devices > (g.res.this_device ? 1 : 0); }
+  }
+  if(!p.tz) p.tz = _pushTz();
+  const body = _pushPrefsBody(p, sp);
+  if(!body.p_days){ await undo(); return { ok: false, reason: 'days' }; }
+  if(!body.p_tz){ await undo(); return { ok: false, reason: 'tz' }; }
+  const r = await _pushRpc('push_subscribe', Object.assign({ p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_origin: location.origin }, body));
+  if(!r.ok){ await undo(); return { ok: false, reason: r.missing ? 'missing' : ((r.res && r.res.reason === 'tz') ? 'tz' : 'sync') }; }
+  // Keep any edit the user made while this was running.
+  const cur = _pushLoadPrefs();
+  const saved = cur.dirty ? cur : p;
+  saved.enabled = true; saved.endpoint = j.endpoint; saved.tz = p.tz;
+  if(JSON.stringify(_pushPrefsBody(saved, sp)) === JSON.stringify(body)) saved.dirty = false;
+  _pushSavePrefs(saved);
+  _pushLastSync = JSON.stringify(body); _pushCheckedAt = Date.now();
+  return { ok: true, adopted, prefs: saved };
+}
+
+function _pushStatus(t){ const el = document.getElementById('pushStatus'); if(el) el.textContent = t || ''; }
+const _PUSH_FAIL_COPY = {
+  server: 'Couldn\'t reach Max Gainz to set up reminders. Check your connection and try again.',
+  unavailable: 'Reminders aren\'t available right now. Nothing was changed.',
+  browser: 'This browser didn\'t let Max Gainz set up notifications. Try again, or check notification settings.',
+  service: 'This browser uses a push service Max Gainz doesn\'t support yet.',
+  missing: 'Reminders aren\'t available on the server yet. Nothing was changed.',
+  days: 'Pick at least one day first.',
+  tz: 'This device\'s time zone isn\'t recognised, so reminders can\'t be timed. Nothing was changed.',
+  sync: 'Couldn\'t save your reminder settings to your account. Check your connection and try again.'
+};
+
 async function pushToggleReminders(){
-  showToast('Training-day reminders aren\'t switched on for delivery yet', { duration: 3000 });
+  if(_pushBusy) return;
+  const p0 = _pushLoadPrefs();
+  if(p0.enabled) return pushDisableReminders();
+  if(_pushCapability(_pushEnv()) !== 'ok'){ renderRemindersCard(); return; }
+  // Ask in the tap itself — iOS only shows the prompt from a user gesture.
+  let permP;
+  try { permP = Notification.permission === 'granted' ? Promise.resolve('granted') : Notification.requestPermission(); }
+  catch(e){ permP = Promise.resolve('default'); }
+  _pushBusy = true; renderRemindersCard(); _pushStatus('Turning on…');
+  try {
+    const perm = await permP;
+    if(perm !== 'granted'){ showToast('Notifications weren\'t allowed, so reminders stay off', { duration: 3000 }); return; }
+    const r = await _pushExclusive(() => _pushSubscribe(_pushLoadPrefs()));
+    if(r.ok){
+      const q = r.prefs, when = _pushHourLabel(q.hour) + ' on ' + _pushDaysText(_pushEffectiveDays(q, _pushActivePath()));
+      showToast(r.adopted ? '⏰ Reminders on · using your account\'s settings from your other device: ' + when : '⏰ Reminders on · ' + when, { duration: r.adopted ? 5000 : 3500 });
+    }
+    else showToast('⚠️ ' + (_PUSH_FAIL_COPY[r.reason] || _PUSH_FAIL_COPY.sync), { tone: 'warning', duration: 4500 });
+  } finally {
+    _pushBusy = false; renderRemindersCard();
+  }
 }
-async function pushSendTest(){}
+
+// Turn off on THIS device: the server row goes first; the browser subscription
+// is removed either way, which kills the endpoint — a row the server still holds
+// then gets "gone" on its next send and is deleted.
+async function pushDisableReminders(){
+  if(_pushBusy) return;
+  return _pushExclusive(() => _pushDisableRemindersNow());
+}
+async function _pushDisableRemindersNow(){
+  _pushBusy = true; renderRemindersCard(); _pushStatus('Turning off…');
+  try {
+    const p = _pushLoadPrefs();
+    const sub = await _pushCurrentSub();
+    const ep = (sub && sub.endpoint) || p.endpoint;
+    let serverOk = true;
+    if(ep && isAuthenticated()){ const r = await _pushRpc('push_unsubscribe', { p_endpoint: ep }); serverOk = r.ok || r.missing; }
+    try { if(sub) await sub.unsubscribe(); } catch(e){}
+    p.enabled = false; p.endpoint = ''; p.dirty = false;
+    _pushSavePrefs(p);
+    showToast(serverOk ? 'Reminders off on this device' : 'Reminders off on this device. Your account\'s copy is removed automatically when the next one would have been sent.', { duration: serverOk ? 2500 : 5000 });
+  } finally {
+    _pushBusy = false; renderRemindersCard();
+  }
+}
+// Turn off everywhere. Server first: if it can't be reached, nothing changes here
+// either, so the button stays and the user can simply try again.
+async function pushDisableAllDevices(){
+  if(_pushBusy) return;
+  if(!confirm('Turn off training-day reminders on every device signed in to this account?')) return;
+  return _pushExclusive(() => _pushDisableAllDevicesNow());
+}
+async function _pushDisableAllDevicesNow(){
+  _pushBusy = true; renderRemindersCard(); _pushStatus('Turning off everywhere…');
+  try {
+    const r = await _pushRpc('push_unsubscribe_all', { p_forget: false });
+    if(!r.ok && !r.missing){
+      showToast('⚠️ Couldn\'t reach your account, so nothing was turned off. Check your connection and try again.', { tone: 'warning', duration: 5000 });
+      return;
+    }
+    const sub = await _pushCurrentSub();
+    try { if(sub) await sub.unsubscribe(); } catch(e){}
+    const p = _pushLoadPrefs(); p.enabled = false; p.endpoint = ''; p.dirty = false; _pushSavePrefs(p);
+    showToast('Reminders off on all your devices', { duration: 2500 });
+  } finally {
+    _pushBusy = false; renderRemindersCard();
+  }
+}
+async function _pushPostTest(){
+  try {
+    const r = await fetch('/api/push/test', { method: 'POST', headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' }, body: '{}' });
+    let j = null; try { j = await r.json(); } catch(e){}
+    return { status: r.status, j };
+  } catch(e){ return { status: 0, j: null }; }
+}
+async function pushSendTest(){
+  if(_pushBusy) return;
+  return _pushExclusive(() => _pushSendTestNow());
+}
+async function _pushSendTestNow(){
+  if(!isAuthenticated()) return;
+  _pushBusy = true; renderRemindersCard(); _pushStatus('Sending…');
+  try {
+    let r = await _pushPostTest();
+    // An expired session token: refresh once and retry once.
+    if(r.status === 401 && typeof refreshAuthToken === 'function'){
+      const ok = await Promise.race([refreshAuthToken(), new Promise(res => setTimeout(() => res(false), 5000))]);
+      if(ok === true) r = await _pushPostTest();
+    }
+    const j = r.j;
+    if(j && j.ok) showToast('Test sent to ' + j.sent + (j.sent === 1 ? ' device' : ' devices') + ' — it should arrive within a minute', { duration: 3500 });
+    else if(r.status === 401) showToast('Your sign-in has expired. Sign out and back in, then try again.', { tone: 'warning', duration: 4000 });
+    else if(j && j.reason === 'rate') showToast('That\'s enough tests for today — try again tomorrow', { duration: 3000 });
+    else if(j && j.reason === 'none') showToast('No device is registered for reminders. Turn them off and on again.', { tone: 'warning', duration: 4000 });
+    else if(r.status === 503) showToast('Reminders aren\'t available right now.', { tone: 'warning', duration: 3500 });
+    else showToast('⚠️ Couldn\'t send a test. Check your connection and try again.', { tone: 'warning', duration: 3500 });
+  } finally {
+    _pushBusy = false; renderRemindersCard();
+  }
+}
+
+// Keep this device and the account's schedule in step. The account's schedule
+// (server) is the source of truth; a change the user made on THIS device
+// (p.dirty) is pushed first. Cheap when nothing changed.
+let _pushLastSync = '', _pushSyncTimer = null, _pushCheckedAt = 0;
+function _pushScheduleSync(ms){
+  clearTimeout(_pushSyncTimer);
+  _pushSyncTimer = setTimeout(() => { _pushSyncPrefs(); }, ms || 800);
+}
+function _pushTurnedOffHere(){ const p = _pushLoadPrefs(); p.enabled = false; p.endpoint = ''; p.dirty = false; _pushSavePrefs(p); renderRemindersCard(); }
+function _pushSyncPrefs(){ return _pushExclusive(_pushSyncPrefsNow); }
+async function _pushSyncPrefsNow(){
+  if(!isAuthenticated() || (typeof navigator !== 'undefined' && navigator.onLine === false)) return;
+  try {
+    await _pushFlushForget();
+    let p = _pushLoadPrefs();
+    if(!p.enabled) return;
+    const sub = await _pushCurrentSub();
+    let perm = 'default'; try { perm = Notification.permission; } catch(e){}
+    if(perm !== 'granted'){
+      // Permission revoked in the browser: stop, and tell the server.
+      if(p.endpoint) await _pushRpc('push_unsubscribe', { p_endpoint: p.endpoint });
+      try { if(sub) await sub.unsubscribe(); } catch(e){}
+      return _pushTurnedOffHere();
+    }
+    // The browser dropped or rotated the subscription, or the app's key changed:
+    // register again (permission is already granted, no prompt). Only with the
+    // key in hand, so an outage doesn't churn the server.
+    const key = await _pushGetVapidKey();
+    if(!key) return;
+    if(!sub || sub.endpoint !== p.endpoint || !_pushSameKey(sub, key)){
+      if(p.endpoint && (!sub || sub.endpoint !== p.endpoint)) await _pushRpc('push_unsubscribe', { p_endpoint: p.endpoint });
+      const r = await _pushSubscribe(p);
+      if(!r.ok && ['browser', 'service', 'tz', 'days'].indexOf(r.reason) !== -1) _pushTurnedOffHere();
+      else renderRemindersCard();
+      return;
+    }
+    // The account's copy, at most every 30 minutes (or right after a local change).
+    if(!p.dirty && Date.now() - _pushCheckedAt < 30 * 60 * 1000) return;
+    const g = await _pushRpc('push_get_prefs', { p_endpoint: p.endpoint });
+    if(!g.res || g.res.ok !== true) return;
+    _pushCheckedAt = Date.now();
+    if(g.res.this_device === false || !g.res.prefs){
+      // Turned off elsewhere ("all devices"), or the server dropped this device.
+      try { await sub.unsubscribe(); } catch(e){}
+      return _pushTurnedOffHere();
+    }
+    const sp = g.res.prefs;
+    // The account's schedule is the truth; this device's unsynced edit goes first.
+    p = _pushLoadPrefs();
+    if(!p.enabled) return;
+    if(!p.dirty){
+      const q = _pushAdoptServer(p, sp);
+      if(q.hour !== p.hour || q.daysMode !== p.daysMode || q.days.join() !== p.days.join() || q.tz !== p.tz){ _pushSavePrefs(q); p = q; renderRemindersCard(); }
+    }
+    const body = _pushPrefsBody(p, sp);
+    const same = sp.hour === body.p_hour && sp.days === body.p_days && sp.follow_path === body.p_follow_path && sp.tz === body.p_tz
+              && Array.isArray(sp.labels) && sp.labels.join() === body.p_labels.join();
+    let ok = same;
+    if(!same){
+      const r = await _pushRpc('push_set_prefs', body);
+      ok = r.ok;
+      if(!r.ok && r.res && r.res.reason === 'none') return _pushTurnedOffHere();
+    }
+    if(ok){
+      _pushLastSync = JSON.stringify(body);
+      // Clear "unsynced" only if nothing changed while we were saving.
+      const cur = _pushLoadPrefs();
+      if(cur.enabled && cur.dirty && JSON.stringify(_pushPrefsBody(cur, sp)) === JSON.stringify(body)){ cur.dirty = false; _pushSavePrefs(cur); }
+      else if(cur.dirty) _pushScheduleSync(800);
+    }
+  } catch(e){}
+}
+
+// A sign-out whose cleanup never reached the server left this device's endpoint
+// behind: remove it with whichever account is signed in now.
+async function _pushFlushForget(){
+  let ep = null; try { ep = localStorage.getItem(PUSH_FORGET_KEY); } catch(e){}
+  if(!ep) return;
+  if(!_pushEndpointOk(ep)){ try { localStorage.removeItem(PUSH_FORGET_KEY); } catch(e){} return; }
+  const r = await _pushRpc('push_forget_endpoint', { p_endpoint: ep });
+  if(r.ok || r.missing){ try { localStorage.removeItem(PUSH_FORGET_KEY); } catch(e){} }
+}
+
+// Sign-out: remove THIS device's subscription with the tokens that are about to
+// be cleared (refreshing once if the access token has expired), and kill the
+// endpoint in the browser either way. If the server still can't be reached, the
+// endpoint is remembered on this device and removed at the next sign-in.
+function _pushSignOutCleanup(){
+  let p = null; try { p = _pushLoadPrefs(); } catch(e){}
+  const tok = typeof authToken !== 'undefined' ? authToken : null;
+  const rtok = typeof authRefreshToken !== 'undefined' ? authRefreshToken : null;
+  const known = p && p.endpoint;
+  return (async () => {
+    // Kill the endpoint in this browser FIRST, so the next account on this
+    // device can never pick up the old subscription.
+    const sub = await _pushCurrentSub();
+    const ep = (sub && sub.endpoint) || known;
+    try { if(sub) await sub.unsubscribe(); } catch(e){}
+    if(!ep) return;
+    const del = async (t) => {
+      try {
+        const r = await fetch(SB_URL + '/rest/v1/rpc/push_unsubscribe', { method: 'POST', keepalive: true,
+          headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + t, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ p_endpoint: ep }) });
+        return r.status;
+      } catch(e){ return 0; }
+    };
+    let st = tok ? await del(tok) : 401;
+    if(st === 401 && rtok){
+      try {
+        const rr = await fetch(SB_URL + '/auth/v1/token?grant_type=refresh_token', { method: 'POST',
+          headers: { 'apikey': SB_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token: rtok }) });
+        const jj = rr.ok ? await rr.json() : null;
+        if(jj && jj.access_token){
+          st = await del(jj.access_token);
+          // That refresh started a new session: end it again.
+          fetch(SB_URL + '/auth/v1/logout', { method: 'POST', keepalive: true, headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + jj.access_token } }).catch(() => {});
+        }
+      } catch(e){}
+    }
+    const done = (st >= 200 && st < 300) || st === 404;   // 404: the reminder SQL isn't installed, nothing to remove
+    if(!done && _pushEndpointOk(ep)){ try { localStorage.setItem(PUSH_FORGET_KEY, ep); } catch(e){} }
+  })();
+}
+
 
 // Notification tap (sw.js) → Today, in either navigation.
 function _pushOpenToday(){
@@ -8268,6 +8690,11 @@ function _renderGreeting(){
 }
 
 function renderToday(){
+  // Reminder labels follow the Path's rotation: keep the account's copy current (cheap when unchanged).
+  try {
+    if(typeof _pushScheduleSync === 'function' && isAuthenticated()
+       && (_pushLoadPrefs().enabled || localStorage.getItem(PUSH_FORGET_KEY))) _pushScheduleSync(3000);
+  } catch(e){}
   if(_isColdSyncing()){ _renderTodaySkeleton(); return; }
   _renderGreeting();
   if(typeof renderTrainingReminder === 'function') renderTrainingReminder();
@@ -29578,6 +30005,8 @@ async function authLogin(){
 
 // Logout
 function authLogout(opts){
+  // This device's reminder subscription goes first, while the token still exists.
+  if(typeof _pushSignOutCleanup === 'function') { try { _pushSignOutCleanup(); } catch(e){} }
   // Unsynced work the user chose to keep goes to a per-account stash first.
   if(opts && opts.keepUnsynced) _stashUnsynced();
   // An unfinished workout lives only in memory. Keep it so the SAME account can
@@ -29892,12 +30321,19 @@ async function deleteUserAccount(){
     const shareRes  = await sbFetch('rpc/share_revoke_all', {method: 'POST', silent: true, body: '{}', onError: (st, tx) => { shareErr = st; shareErrText = String(tx || ''); }});
     const shareNone = shareRes === null && shareErr === 404 && /PGRST202/.test(shareErrText);
     const shareOk   = shareNone || (shareRes && shareRes.ok === true);
+    // Training-day reminders: every device's subscription and the schedule. If the
+    // reminder functions were never installed there is nothing to delete.
+    let pushErr = 0, pushErrText = '';
+    const pushRes  = await sbFetch('rpc/push_unsubscribe_all', {method: 'POST', silent: true, body: JSON.stringify({ p_forget: true }), onError: (st, tx) => { pushErr = st; pushErrText = String(tx || ''); }});
+    const pushNone = pushRes === null && pushErr === 404 && /PGRST202/.test(pushErrText);
+    const pushOk   = pushNone || (pushRes && pushRes.ok === true);
     const sessRes   = await sbFetch('sessions?user_id=eq.' + userId, {method: 'DELETE'});
     const weightRes = await sbFetch('custom_weights?user_id=eq.' + userId, {method: 'DELETE'});
 
-    if(sessRes === null || weightRes === null || !shareOk){
+    if(sessRes === null || weightRes === null || !shareOk || !pushOk){
       const stillThere = [];
       if(!shareOk)           stillThere.push('shared links');
+      if(!pushOk)            stillThere.push('reminder subscriptions');
       if(sessRes === null)   stillThere.push('workout history');
       if(weightRes === null) stillThere.push('profile and saved weights');
       // Nothing local is touched, so the account stays usable and the user can
@@ -29930,6 +30366,7 @@ async function deleteUserAccount(){
     // The offline demo download goes too (its record is in localStorage).
     try { if(typeof caches !== 'undefined') await caches.delete(MEDIA_CACHE_NAME); } catch(e){}
     try { if(typeof caches !== 'undefined') await caches.delete(PUSH_META_CACHE); } catch(e){}
+    try { const _ps = await _pushCurrentSub(); if(_ps) await _ps.unsubscribe(); } catch(e){}
     localStorage.clear();
     location.reload();
   }catch(e){
