@@ -5668,7 +5668,8 @@ function _pushPrefsNormalize(o){
   o = (o && typeof o === 'object') ? o : {};
   const hour = Number.isInteger(o.hour) && o.hour >= 0 && o.hour <= 23 ? o.hour : PUSH_DEFAULT_HOUR;
   const days = Array.isArray(o.days) ? [...new Set(o.days.filter(d => Number.isInteger(d) && d >= 1 && d <= 7))].sort() : [];
-  return { v:1, enabled: o.enabled === true, hour, daysMode: o.daysMode === 'custom' ? 'custom' : 'path', days };
+  const endpoint = typeof o.endpoint === 'string' && o.endpoint.length <= 1024 ? o.endpoint : '';
+  return { v:1, enabled: o.enabled === true, hour, daysMode: o.daysMode === 'custom' ? 'custom' : 'path', days, endpoint };
 }
 function _pushLoadPrefs(){
   try { return _pushPrefsNormalize(JSON.parse(localStorage.getItem(PUSH_PREFS_KEY) || 'null')); } catch(e){ return _pushPrefsNormalize(null); }
@@ -5857,6 +5858,7 @@ function _pushCardHtml(st){
       ${!days.length ? `<div style="font-size:11px;color:${p.enabled ? 'var(--red)' : 'var(--text2)'};margin-top:6px;">${p.enabled ? 'No days picked, so no reminders will be sent.' : 'Pick the days you want a reminder.'}</div>` : ''}
       <div style="font-size:11px;color:var(--text2);margin-top:8px;">Times are in ${esc(st.tz || 'this device\'s time zone')} (from this device).</div>
       ${on ? `<button type="button" id="pushTestBtn" onclick="pushSendTest()" ${st.busy ? 'disabled' : ''} style="width:100%;margin-top:10px;background:transparent;border:1px solid var(--border);border-radius:10px;padding:9px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;">Send a test notification</button>` : ''}
+      ${on ? `<button type="button" id="pushOffAllBtn" onclick="pushDisableAllDevices()" ${st.busy ? 'disabled' : ''} style="width:100%;margin-top:6px;background:transparent;border:none;padding:6px;font-size:11px;font-weight:700;color:var(--text2);cursor:pointer;text-decoration:underline;">Turn off on all my devices</button>` : ''}
       <div id="pushMetricsLine" style="font-size:10px;color:var(--text2);margin-top:8px;">${_pushMetricsText(m)}</div>`;
   return head + promise + settings + `<div id="pushStatus" role="status" aria-live="polite" style="font-size:11px;color:var(--text2);margin-top:6px;"></div>`;
 }
@@ -5920,14 +5922,276 @@ function pushToggleDay(d){
   _pushSavePrefs(p);
   _pushPrefsChanged();
 }
-// Settings changed: redraw now; the server copy follows (slice 2).
+// Settings changed: redraw now, then update the account's copy (if on).
 function _pushPrefsChanged(){
   renderRemindersCard();
+  if(_pushLoadPrefs().enabled) _pushScheduleSync(800);
 }
+// Known browser push services. Must equal PUSH_HOST_RE in the push function core
+// and push_endpoint_ok() in supabase/push_reminders.sql (gate 23).
+const PUSH_HOST_RE = /^(fcm\.googleapis\.com|android\.googleapis\.com|updates\.push\.services\.mozilla\.com|web\.push\.apple\.com|[a-z0-9-]+\.notify\.windows\.com)$/;
+function _pushEndpointOk(e){
+  if(typeof e !== 'string' || e.length > 1024) return false;
+  const m = /^https:\/\/([^\/?#:]+)(?::\d+)?\//.exec(e);
+  return !!m && PUSH_HOST_RE.test(m[1]);
+}
+// Pure: weekday bitmask (Mon = 1 … Sun = 64) from ISO days.
+function _pushDaysMask(days){
+  return (days || []).reduce((m, d) => (Number.isInteger(d) && d >= 1 && d <= 7) ? (m | (1 << (d - 1))) : m, 0);
+}
+// Pure: the label for each weekday's NEXT occurrence (index 0 = Monday), from
+// the Path's rotation. Only words from PUSH_LABELS — never a workout name.
+function _pushDayLabels(path, now, cycle, nextPick){
+  const out = ['train','train','train','train','train','train','train'];
+  if(!path || typeof path !== 'object') return out;
+  const core = path.coreSchedule && Array.isArray(path.coreSchedule.preferredDays) ? path.coreSchedule.preferredDays : [];
+  const addOns = Array.isArray(path.addOns) ? path.addOns : [];
+  cycle = Array.isArray(cycle) ? cycle : [];
+  let k = 0;
+  const start = Math.max(0, cycle.indexOf(nextPick));
+  for(let i = 0; i < 7; i++){
+    const d = new Date(now); d.setDate(d.getDate() + i);
+    const iso = ((d.getDay() + 6) % 7) + 1;
+    const name = PUSH_WEEKDAYS[iso - 1];
+    if(core.indexOf(name) !== -1){
+      out[iso - 1] = cycle.length ? _pushLabelFor(cycle[(start + k++) % cycle.length]) : _pushLabelFor(path.programme);
+    } else {
+      const a = addOns.find(x => x && Array.isArray(x.preferredDays) && x.preferredDays.indexOf(name) !== -1);
+      if(a) out[iso - 1] = _pushLabelFor(a.type);
+    }
+  }
+  return out.map(l => PUSH_LABELS.indexOf(l) !== -1 ? l : 'train');
+}
+// Pure: the exact body sent to push_set_prefs — hour, weekday mask, labels, time zone. Nothing else.
+function _pushServerPrefs(p, path, now, tz, cycle, nextPick){
+  return { p_hour: p.hour, p_days: _pushDaysMask(_pushEffectiveDays(p, path)), p_labels: _pushDayLabels(path, now, cycle, nextPick), p_tz: tz };
+}
+function _pushPathRotation(path){
+  if(!path) return { cycle: [], pick: null };
+  try {
+    const cycle = typeof _pathCycleDays === 'function' ? (_pathCycleDays(path.programme) || []) : [];
+    const pick = typeof getNextPathDay === 'function' ? getNextPathDay(path.programme) : null;
+    return { cycle, pick };
+  } catch(e){ return { cycle: [], pick: null }; }
+}
+function _pushPrefsBody(p){
+  const path = _pushActivePath();
+  const rot = _pushPathRotation(path);
+  return _pushServerPrefs(p, path, new Date(), _pushTz(), rot.cycle, rot.pick);
+}
+
+function _pushB64ToBytes(b64){
+  const s = String(b64 || '').replace(/-/g, '+').replace(/_/g, '/');
+  const pad = s + '='.repeat((4 - s.length % 4) % 4);
+  const raw = atob(pad);
+  const out = new Uint8Array(raw.length);
+  for(let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+let _pushVapid = null;
+async function _pushGetVapidKey(){
+  if(_pushVapid) return _pushVapid;
+  try {
+    const r = await fetch('/api/push/key', { cache: 'no-store' });
+    if(!r.ok) return null;
+    const j = await r.json();
+    if(j && typeof j.key === 'string' && /^[A-Za-z0-9_-]{80,100}$/.test(j.key)) _pushVapid = j.key;
+  } catch(e){}
+  return _pushVapid;
+}
+async function _pushCurrentSub(){
+  try {
+    const sw = typeof navigator !== 'undefined' ? navigator.serviceWorker : null;
+    if(!sw || typeof PushManager === 'undefined') return null;
+    const reg = await sw.getRegistration();
+    return reg && reg.pushManager ? await reg.pushManager.getSubscription() : null;
+  } catch(e){ return null; }
+}
+// RPC helper: { ok, res, missing } — missing = the SQL hasn't been installed yet.
+async function _pushRpc(name, body){
+  let st = 0, tx = '';
+  const res = await sbFetch('rpc/' + name, { method: 'POST', silent: true, body: JSON.stringify(body || {}), onError: (s, t) => { st = s; tx = String(t || ''); } });
+  return { ok: !!(res && res.ok === true), res, missing: res === null && st === 404 && /PGRST202/.test(tx) };
+}
+
+// Subscribe this device and register it. Permission must already be granted.
+async function _pushSubscribe(p){
+  const key = await _pushGetVapidKey();
+  if(!key) return { ok: false, reason: 'server' };
+  let sub = null, created = false;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    sub = await reg.pushManager.getSubscription();
+    const want = _pushB64ToBytes(key);
+    if(sub && sub.options && sub.options.applicationServerKey){
+      const have = new Uint8Array(sub.options.applicationServerKey);
+      if(have.length !== want.length || have.some((b, i) => b !== want[i])){ try { await sub.unsubscribe(); } catch(e){} sub = null; }
+    }
+    if(!sub){ sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: want }); created = true; }
+  } catch(e){ return { ok: false, reason: 'browser' }; }
+  const j = sub.toJSON ? sub.toJSON() : {};
+  const undo = async () => { if(created){ try { await sub.unsubscribe(); } catch(e){} } };
+  if(!_pushEndpointOk(j.endpoint) || !j.keys || !j.keys.p256dh || !j.keys.auth){ await undo(); return { ok: false, reason: 'service' }; }
+  const r1 = await _pushRpc('push_set_prefs', _pushPrefsBody(p));
+  if(!r1.ok){ await undo(); return { ok: false, reason: r1.missing ? 'missing' : 'sync' }; }
+  const r2 = await _pushRpc('push_subscribe', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_origin: location.origin });
+  if(!r2.ok){ await undo(); return { ok: false, reason: r2.missing ? 'missing' : 'sync' }; }
+  p.enabled = true; p.endpoint = j.endpoint;
+  _pushSavePrefs(p);
+  _pushLastSync = JSON.stringify(_pushPrefsBody(p)); _pushLastSyncAt = Date.now();
+  return { ok: true };
+}
+
+function _pushStatus(t){ const el = document.getElementById('pushStatus'); if(el) el.textContent = t || ''; }
+const _PUSH_FAIL_COPY = {
+  server: 'Couldn\'t reach Max Gainz to set up reminders. Check your connection and try again.',
+  browser: 'This browser didn\'t let Max Gainz set up notifications. Try again, or check notification settings.',
+  service: 'This browser uses a push service Max Gainz doesn\'t support yet.',
+  missing: 'Reminders aren\'t available on the server yet.',
+  sync: 'Couldn\'t save your reminder settings to your account. Check your connection and try again.'
+};
+
 async function pushToggleReminders(){
-  showToast('Training-day reminders aren\'t switched on for delivery yet', { duration: 3000 });
+  if(_pushBusy) return;
+  const p = _pushLoadPrefs();
+  if(p.enabled) return pushDisableReminders();
+  if(_pushCapability(_pushEnv()) !== 'ok'){ renderRemindersCard(); return; }
+  if(!_pushEffectiveDays(p, _pushActivePath()).length){ showToast('Pick at least one day first', { tone: 'warning', duration: 2500 }); return; }
+  // Ask in the tap itself — iOS only shows the prompt from a user gesture.
+  let permP;
+  try { permP = Notification.permission === 'granted' ? Promise.resolve('granted') : Notification.requestPermission(); }
+  catch(e){ permP = Promise.resolve('default'); }
+  _pushBusy = true; renderRemindersCard(); _pushStatus('Turning on…');
+  try {
+    const perm = await permP;
+    if(perm !== 'granted'){ showToast('Notifications weren\'t allowed, so reminders stay off', { duration: 3000 }); return; }
+    const r = await _pushSubscribe(p);
+    if(r.ok) showToast('⏰ Reminders on · ' + _pushHourLabel(p.hour) + ' on ' + _pushDaysText(_pushEffectiveDays(p, _pushActivePath())), { duration: 3500 });
+    else showToast('⚠️ ' + (_PUSH_FAIL_COPY[r.reason] || _PUSH_FAIL_COPY.sync), { tone: 'warning', duration: 4500 });
+  } finally {
+    _pushBusy = false; renderRemindersCard();
+  }
 }
-async function pushSendTest(){}
+
+// Turn off on THIS device: the server row goes first; the browser subscription
+// is removed either way, which kills the endpoint — a row the server still holds
+// then gets "gone" on its next send and is deleted.
+async function pushDisableReminders(){
+  if(_pushBusy) return;
+  _pushBusy = true; renderRemindersCard(); _pushStatus('Turning off…');
+  try {
+    const p = _pushLoadPrefs();
+    const sub = await _pushCurrentSub();
+    const ep = (sub && sub.endpoint) || p.endpoint;
+    let serverOk = true;
+    if(ep && isAuthenticated()){ const r = await _pushRpc('push_unsubscribe', { p_endpoint: ep }); serverOk = r.ok || r.missing; }
+    try { if(sub) await sub.unsubscribe(); } catch(e){}
+    p.enabled = false; p.endpoint = '';
+    _pushSavePrefs(p);
+    showToast(serverOk ? 'Reminders off on this device' : 'Reminders off on this device. Your account\'s copy is removed automatically when the next one would have been sent.', { duration: serverOk ? 2500 : 5000 });
+  } finally {
+    _pushBusy = false; renderRemindersCard();
+  }
+}
+async function pushDisableAllDevices(){
+  if(_pushBusy) return;
+  if(!confirm('Turn off training-day reminders on every device signed in to this account?')) return;
+  _pushBusy = true; renderRemindersCard(); _pushStatus('Turning off everywhere…');
+  try {
+    const r = await _pushRpc('push_unsubscribe_all', {});
+    const sub = await _pushCurrentSub();
+    try { if(sub) await sub.unsubscribe(); } catch(e){}
+    const p = _pushLoadPrefs(); p.enabled = false; p.endpoint = ''; _pushSavePrefs(p);
+    if(r.ok || r.missing) showToast('Reminders off on all your devices', { duration: 2500 });
+    else showToast('⚠️ Reminders are off on this device, but other devices couldn\'t be reached. Check your connection and try again.', { tone: 'warning', duration: 5000 });
+  } finally {
+    _pushBusy = false; renderRemindersCard();
+  }
+}
+async function pushSendTest(){
+  if(_pushBusy || !isAuthenticated()) return;
+  _pushBusy = true; renderRemindersCard(); _pushStatus('Sending…');
+  try {
+    let j = null;
+    try {
+      const r = await fetch('/api/push/test', { method: 'POST', headers: { 'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json' }, body: '{}' });
+      j = await r.json();
+    } catch(e){ j = null; }
+    if(j && j.ok) showToast('Test sent to ' + j.sent + (j.sent === 1 ? ' device' : ' devices') + ' — it should arrive within a minute', { duration: 3500 });
+    else if(j && j.reason === 'rate') showToast('That\'s enough tests for today — try again tomorrow', { duration: 3000 });
+    else if(j && j.reason === 'none') showToast('No device is registered for reminders. Turn them off and on again.', { tone: 'warning', duration: 4000 });
+    else showToast('⚠️ Couldn\'t send a test. Check your connection and try again.', { tone: 'warning', duration: 3500 });
+  } finally {
+    _pushBusy = false; renderRemindersCard();
+  }
+}
+
+// Keep the account's copy current: settings, the Path's days and labels, and
+// this device's subscription. Cheap when nothing changed.
+let _pushLastSync = '', _pushLastSyncAt = 0, _pushSyncTimer = null, _pushSyncing = false, _pushCheckedAt = 0;
+function _pushScheduleSync(ms){
+  clearTimeout(_pushSyncTimer);
+  _pushSyncTimer = setTimeout(() => { _pushSyncPrefs(); }, ms || 800);
+}
+async function _pushSyncPrefs(){
+  if(_pushSyncing) return;
+  const p = _pushLoadPrefs();
+  if(!p.enabled || !isAuthenticated() || (typeof navigator !== 'undefined' && navigator.onLine === false)) return;
+  _pushSyncing = true;
+  try {
+    // Permission revoked or the browser dropped the subscription: re-register or stop.
+    const sub = await _pushCurrentSub();
+    let perm = 'default'; try { perm = Notification.permission; } catch(e){}
+    if(perm !== 'granted'){
+      if(p.endpoint) await _pushRpc('push_unsubscribe', { p_endpoint: p.endpoint });
+      try { if(sub) await sub.unsubscribe(); } catch(e){}
+      p.enabled = false; p.endpoint = ''; _pushSavePrefs(p); renderRemindersCard();
+      return;
+    }
+    if(!sub || sub.endpoint !== p.endpoint){
+      if(p.endpoint && (!sub || sub.endpoint !== p.endpoint)) await _pushRpc('push_unsubscribe', { p_endpoint: p.endpoint });
+      const r = await _pushSubscribe(p);
+      if(!r.ok && r.reason !== 'server' && r.reason !== 'sync'){ p.enabled = false; p.endpoint = ''; _pushSavePrefs(p); }
+      renderRemindersCard();
+      return;
+    }
+    // Turned off elsewhere ("all devices", or the server dropped this endpoint)?
+    // Asked at most every 30 minutes.
+    const g = Date.now() - _pushCheckedAt > 30 * 60 * 1000 ? await _pushRpc('push_get_prefs', { p_endpoint: p.endpoint }) : { res: null };
+    if(g.res) _pushCheckedAt = Date.now();
+    if(g.res && g.res.ok === true && g.res.this_device === false){
+      try { await sub.unsubscribe(); } catch(e){}
+      p.enabled = false; p.endpoint = ''; _pushSavePrefs(p); renderRemindersCard();
+      return;
+    }
+    const body = JSON.stringify(_pushPrefsBody(p));
+    if(body === _pushLastSync && Date.now() - _pushLastSyncAt < 6 * 3600 * 1000) return;
+    const r = await _pushRpc('push_set_prefs', JSON.parse(body));
+    if(r.ok){ _pushLastSync = body; _pushLastSyncAt = Date.now(); }
+  } catch(e){
+  } finally { _pushSyncing = false; }
+}
+
+// Sign-out: remove THIS device's subscription with the token that is about to be
+// cleared, and kill the endpoint in the browser either way.
+function _pushSignOutCleanup(){
+  let p = null; try { p = _pushLoadPrefs(); } catch(e){}
+  const tok = typeof authToken !== 'undefined' ? authToken : null;
+  const known = p && p.endpoint;
+  return (async () => {
+    const sub = await _pushCurrentSub();
+    const ep = (sub && sub.endpoint) || known;
+    if(ep && tok){
+      try {
+        await fetch(SB_URL + '/rest/v1/rpc/push_unsubscribe', { method: 'POST', keepalive: true,
+          headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + tok, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ p_endpoint: ep }) });
+      } catch(e){}
+    }
+    try { if(sub) await sub.unsubscribe(); } catch(e){}
+  })();
+}
+
 
 // Notification tap (sw.js) → Today, in either navigation.
 function _pushOpenToday(){
@@ -8268,6 +8532,8 @@ function _renderGreeting(){
 }
 
 function renderToday(){
+  // Reminder labels follow the Path's rotation: keep the account's copy current (cheap when unchanged).
+  try { if(typeof _pushScheduleSync === 'function' && _pushLoadPrefs().enabled) _pushScheduleSync(3000); } catch(e){}
   if(_isColdSyncing()){ _renderTodaySkeleton(); return; }
   _renderGreeting();
   if(typeof renderTrainingReminder === 'function') renderTrainingReminder();
@@ -29578,6 +29844,8 @@ async function authLogin(){
 
 // Logout
 function authLogout(opts){
+  // This device's reminder subscription goes first, while the token still exists.
+  if(typeof _pushSignOutCleanup === 'function') { try { _pushSignOutCleanup(); } catch(e){} }
   // Unsynced work the user chose to keep goes to a per-account stash first.
   if(opts && opts.keepUnsynced) _stashUnsynced();
   // An unfinished workout lives only in memory. Keep it so the SAME account can
@@ -29892,12 +30160,19 @@ async function deleteUserAccount(){
     const shareRes  = await sbFetch('rpc/share_revoke_all', {method: 'POST', silent: true, body: '{}', onError: (st, tx) => { shareErr = st; shareErrText = String(tx || ''); }});
     const shareNone = shareRes === null && shareErr === 404 && /PGRST202/.test(shareErrText);
     const shareOk   = shareNone || (shareRes && shareRes.ok === true);
+    // Training-day reminders: every device's subscription and the schedule. If the
+    // reminder functions were never installed there is nothing to delete.
+    let pushErr = 0, pushErrText = '';
+    const pushRes  = await sbFetch('rpc/push_unsubscribe_all', {method: 'POST', silent: true, body: '{}', onError: (st, tx) => { pushErr = st; pushErrText = String(tx || ''); }});
+    const pushNone = pushRes === null && pushErr === 404 && /PGRST202/.test(pushErrText);
+    const pushOk   = pushNone || (pushRes && pushRes.ok === true);
     const sessRes   = await sbFetch('sessions?user_id=eq.' + userId, {method: 'DELETE'});
     const weightRes = await sbFetch('custom_weights?user_id=eq.' + userId, {method: 'DELETE'});
 
-    if(sessRes === null || weightRes === null || !shareOk){
+    if(sessRes === null || weightRes === null || !shareOk || !pushOk){
       const stillThere = [];
       if(!shareOk)           stillThere.push('shared links');
+      if(!pushOk)            stillThere.push('reminder subscriptions');
       if(sessRes === null)   stillThere.push('workout history');
       if(weightRes === null) stillThere.push('profile and saved weights');
       // Nothing local is touched, so the account stays usable and the user can
@@ -29930,6 +30205,7 @@ async function deleteUserAccount(){
     // The offline demo download goes too (its record is in localStorage).
     try { if(typeof caches !== 'undefined') await caches.delete(MEDIA_CACHE_NAME); } catch(e){}
     try { if(typeof caches !== 'undefined') await caches.delete(PUSH_META_CACHE); } catch(e){}
+    try { const _ps = await _pushCurrentSub(); if(_ps) await _ps.unsubscribe(); } catch(e){}
     localStorage.clear();
     location.reload();
   }catch(e){
