@@ -245,6 +245,9 @@ button.chip { font-family:inherit; }
 .stat-card { flex:1; background:var(--surface); border-radius:14px; padding:14px 12px; border:0.5px solid var(--border); }
 .stat-val { font-size:22px; font-weight:800; }
 .stat-lbl { font-size:11px; color:var(--text2); margin-top:2px; }
+.stat-card.today-metric { display:block; font:inherit; color:inherit; text-align:left; cursor:pointer; min-width:0; }
+.stat-card.today-metric[hidden] { display:none; }
+.today-metric > span { display:block; }
 .s-dot { width:28px; height:28px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:700; }
 .s-dot.done { background:var(--accent); color:#000; }
 .s-dot.rest { background:var(--surface3); color:var(--text2); }
@@ -685,7 +688,7 @@ details.pf-sec:not([open]){gap:0;}
       </div>
       <div class="stat-row">
         <div class="stat-card"><div class="stat-val" id="weekSessCount">0</div><div class="stat-lbl">Sessions this week</div></div>
-        <div class="stat-card"><div class="stat-val" style="color:var(--accent);" id="todayBenchPB">–</div><div class="stat-lbl">Bench PB (kg)</div></div>
+        <button type="button" class="stat-card today-metric" id="todayMetric" onclick="openTodayMetricPicker()" hidden></button>
       </div>
     </div>
 
@@ -1924,6 +1927,17 @@ details.pf-sec:not([open]){gap:0;}
     <div id="ladderModSub" style="font-size:13px;color:var(--text2);margin-bottom:14px;"></div>
     <div id="ladderModBody"></div>
     <button onclick="closeLadderModal()" style="width:100%;margin-top:10px;background:transparent;border:0.5px solid var(--border);border-radius:12px;padding:13px;font-size:14px;font-weight:700;color:var(--text2);cursor:pointer;">Close</button>
+  </div>
+</div>
+
+<!-- TODAY HEADLINE PICKER -->
+<div class="modal-ov" id="todayMetricMod" style="z-index:400;" onclick="if(event.target===this)closeTodayMetricPicker()">
+  <div class="modal" style="max-height:86vh;overflow-y:auto;" aria-labelledby="todayMetricTitle">
+    <div class="modal-handle"></div>
+    <h2 id="todayMetricTitle" style="font-size:19px;font-weight:800;margin:0 0 4px;">What shows on Today</h2>
+    <p style="font-size:13px;color:var(--text2);margin:0 0 12px;line-height:1.4;">Automatic picks the most useful number from your goal, plan and recent training. Or pin a lift to always see it.</p>
+    <div id="todayMetricOpts"></div>
+    <button type="button" onclick="closeTodayMetricPicker()" style="width:100%;margin-top:12px;background:transparent;border:0.5px solid var(--border);border-radius:12px;padding:13px;font-size:14px;font-weight:700;color:var(--text2);cursor:pointer;">Close</button>
   </div>
 </div>
 
@@ -5306,7 +5320,7 @@ function saveLocalFallback() { saveLocalCache(); }
 // still decide behaviour; gate 26 runs them against this registry so the two
 // can never disagree. mode: 'optIn' = on only when the key is '1';
 // 'optOut' = on unless the key is '0'. requires = another entry that must be on.
-const APP_VERSION = '2026.11.25.2';   // bump on every production push (shown in Data health)
+const APP_VERSION = '2026.11.25.3';   // bump on every production push (shown in Data health)
 const ROLLOUT_REGISTRY = [
   { id:'nav_v2', key:'maxgainz_nav_v2', mode:'optOut', label:'Simplified navigation',
     audience:'Everyone since 25 Nov 2026 (existing users get a one-time notice)', killSwitch:"Profile → Simplified navigation: Off, or 'Use classic navigation' on the notice (stores '0')",
@@ -8864,6 +8878,7 @@ function renderToday(){
   if(_isColdSyncing()){ _renderTodaySkeleton(); return; }
   _renderGreeting();
   renderNavNotice();
+  renderTodayMetric();
   if(typeof renderTrainingReminder === 'function') renderTrainingReminder();
   if(isPathActive()){ renderTodayWithPath(); return; }
   renderTodayLegacy();
@@ -17575,11 +17590,176 @@ function renderPBCards(){
     html+=`<div style="padding:0 16px 10px;"><button onclick="addPBTile()" style="width:100%;background:var(--surface);border:0.5px dashed var(--border);border-radius:14px;padding:12px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;">+ Add lift (${pbLifts.length}/8)</button></div>`;
   }
   el.innerHTML = html;
-  // Update bench PB in today card if shown
-  const benchEl=document.getElementById('todayBenchPB');
-  if(benchEl){const b=getPBForLabel('Bench Press');benchEl.textContent=b!==null?b:'–';
-    // Don't advertise a Bench PB card to someone who has never benched.
-    const _bc=benchEl.closest('.stat-card'); if(_bc) _bc.style.display = b!==null ? '' : 'none';}
+  renderTodayMetric();   // the Today headline reads the same lift history
+}
+
+// ── TODAY HEADLINE METRIC (Priority 1) ─────────────────────────────────────
+// One context-sensitive number next to "Sessions this week", replacing the
+// fixed Bench PB card. Order: pinned lift → first-session prompt → cardio/HIIT
+// minutes (cardio users) → strongest recent improvement → plan adherence /
+// next custom day → most-trained lift → sessions in 4 weeks. Read-only: it
+// never changes history, PBs or Progress. Pin lives in userProfile.todayPin
+// (synced with the profile, cleared on sign-out with the rest of userProfile).
+const TODAY_WINDOW_DAYS = 28;
+// Pure: cleaned pin (a lift name) or null (= Automatic). Old/garbage values → null.
+function _todayPinClean(v){
+  if(typeof v !== 'string') return null;
+  const t = v.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 120);
+  return t || null;
+}
+// Pure: lift names that have a weighted entry, most recently used first.
+function _todayLiftNames(sessions){
+  const seen = new Map();
+  (Array.isArray(sessions) ? sessions : []).forEach(x => {
+    if(!x || x.manualActivity) return;
+    const t = new Date(x.date).getTime(); if(!isFinite(t)) return;
+    const add = n => { if(typeof n === 'string' && n && (!seen.has(n) || seen.get(n) < t)) seen.set(n, t); };
+    Object.keys(x.setLog || {}).forEach(n => { if(x.setLog[n] && Number(x.setLog[n].weight) > 0) add(n); });
+    (x.topLifts || []).forEach(l => { if(l && Number(l.weight) > 0) add(l.name); });
+  });
+  return [...seen.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]);
+}
+// Pure. ctx: { nowMs, sessions, isCardio(s), liftHistory(name) → [{date, weight}] ascending,
+//   pin, goal, plan: null | { kind:'path', name, perWeek, startMs } | { kind:'custom', name, days:[...] } }
+// Returns { kind, label, value (string|null), unit, headline (when value is null), sub }.
+// All strings are plain text; the caller escapes.
+function _todayHeadline(ctx){
+  const now = ctx.nowMs, from = now - TODAY_WINDOW_DAYS * 864e5;
+  const all = (Array.isArray(ctx.sessions) ? ctx.sessions : []).filter(x => x && isFinite(new Date(x.date).getTime()) && new Date(x.date).getTime() <= now);
+  const gym = all.filter(x => !x.manualActivity);
+  const hist = n => { try { return (ctx.liftHistory(n) || []).filter(p => p && Number(p.weight) > 0 && new Date(p.date).getTime() <= now); } catch(e){ return []; } };
+  const fmt = w => String(Math.round(Number(w) * 10) / 10);
+  const day = ms => new Date(ms).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+  // 1) pinned lift (always wins; useful even before there is data)
+  const pin = _todayPinClean(ctx.pin);
+  if(pin){
+    const h = hist(pin);
+    if(!h.length) return { kind:'pinned-empty', label:pin, value:null, unit:'', headline:'No data yet', sub:'Log it in a workout to set your baseline' };
+    const best = Math.max(...h.map(p => Number(p.weight))), last = h[h.length - 1];
+    return { kind:'pinned', label:pin + ' best', value:fmt(best), unit:'kg', headline:'', sub:'Last ' + fmt(last.weight) + ' kg · ' + day(new Date(last.date).getTime()) };
+  }
+  // 2) nothing logged yet
+  if(!all.length){
+    const p = ctx.plan;
+    return { kind:'new', label:p && p.name ? p.name : 'Your first session', value:null, unit:'',
+      headline:p && p.name ? 'Ready to start' : 'Start here', sub:'Log your first workout and your progress shows up here' };
+  }
+  const isC = x => { try { return !!ctx.isCardio(x); } catch(e){ return false; } };
+  const recent = all.slice().sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 10);
+  const cardioShare = recent.filter(isC).length / recent.length;
+  const anyCardio = all.some(isC);
+  // 3) cardio / HIIT users: minutes over the last 4 weeks
+  if(cardioShare >= 0.5 || (ctx.goal === 'endurance' && anyCardio && cardioShare > 0)){
+    const win = all.filter(x => isC(x) && new Date(x.date).getTime() >= from);
+    const mins = win.reduce((a, x) => a + (Number(x.durationMin) > 0 ? Number(x.durationMin) : 0), 0);
+    return { kind:'cardio', label:'Cardio & HIIT minutes', value:String(Math.round(mins)), unit:'min', headline:'',
+      sub: win.length ? win.length + ' session' + (win.length === 1 ? '' : 's') + ' · last 4 weeks' : 'None in the last 4 weeks' };
+  }
+  // 4) strongest recent improvement (a real PB: beats an earlier best)
+  const names = _todayLiftNames(gym);
+  if(ctx.goal !== 'endurance'){
+    let top = null;
+    names.forEach(n => {
+      const h = hist(n);
+      const before = h.filter(p => new Date(p.date).getTime() < from), inWin = h.filter(p => new Date(p.date).getTime() >= from);
+      if(!before.length || !inWin.length) return;
+      const b0 = Math.max(...before.map(p => Number(p.weight))), b1 = Math.max(...inWin.map(p => Number(p.weight)));
+      if(b1 <= b0) return;
+      const rel = (b1 - b0) / b0;
+      if(!top || rel > top.rel) top = { n, b0, b1, rel };
+    });
+    if(top) return { kind:'improved', label:top.n + ' — new best', value:fmt(top.b1), unit:'kg', headline:'', sub:'+' + fmt(top.b1 - top.b0) + ' kg on your previous best' };
+  }
+  // 5) programme users: plan adherence (Path) or next day (custom programme)
+  const p = ctx.plan;
+  if(p && p.kind === 'path' && p.perWeek > 0){
+    const start = Math.max(from, isFinite(p.startMs) ? p.startMs : from);
+    const days = (now - start) / 864e5;
+    if(days < 7) return { kind:'plan-new', label:p.name || 'Your plan', value:null, unit:'', headline:'Week 1', sub:'Adherence shows after your first full week' };
+    const planned = Math.max(1, Math.round(p.perWeek * days / 7));
+    const done = gym.filter(x => new Date(x.date).getTime() >= start).length;
+    const wk = Math.round(days / 7);
+    return { kind:'plan', label:'Plan adherence', value:String(Math.min(100, Math.round(done / planned * 100))), unit:'%', headline:'',
+      sub: done + ' of ' + planned + ' planned · last ' + wk + ' week' + (wk === 1 ? '' : 's') };
+  }
+  if(p && p.kind === 'custom' && Array.isArray(p.days) && p.days.length){
+    const last = gym.slice().sort((a, b) => new Date(b.date) - new Date(a.date)).find(x => p.days.indexOf(x.day) !== -1);
+    const next = last ? p.days[(p.days.indexOf(last.day) + 1) % p.days.length] : p.days[0];
+    return { kind:'custom-next', label:'Next in ' + (p.name || 'your programme'), value:null, unit:'', headline:String(next), sub: last ? 'After ' + last.day : 'First day of your programme' };
+  }
+  // 6) most-trained lift over the last 8 weeks
+  const from8 = now - 56 * 864e5, count = {};
+  gym.filter(x => new Date(x.date).getTime() >= from8).forEach(x => {
+    names.forEach(n => { if((x.setLog && x.setLog[n] && Number(x.setLog[n].weight) > 0) || (x.topLifts || []).some(l => l && l.name === n && Number(l.weight) > 0)) count[n] = (count[n] || 0) + 1; });
+  });
+  const most = Object.keys(count).sort((a, b) => count[b] - count[a] || names.indexOf(a) - names.indexOf(b))[0];
+  if(most){
+    const h = hist(most);
+    if(h.length) return { kind:'top-lift', label:most + ' best', value:fmt(Math.max(...h.map(q => Number(q.weight)))), unit:'kg', headline:'', sub:'Your most-trained lift' };
+  }
+  // 7) anything else: sessions in 4 weeks
+  const n4 = all.filter(x => new Date(x.date).getTime() >= from).length;
+  return { kind:'sessions', label:'Sessions · last 4 weeks', value:String(n4), unit:'', headline:'', sub: n4 ? '' : 'Last one ' + day(Math.max(...all.map(x => new Date(x.date).getTime()))) };
+}
+function _todayIsCardio(x){
+  if(!x) return false;
+  if(x.manualActivity) return x.activityType !== 'mobility';
+  if(typeof HIIT !== 'undefined' && HIIT.some(h => h.name === x.day)) return true;
+  if(typeof HIIT_SERIES_NAMES !== 'undefined' && HIIT_SERIES_NAMES.has(x.day)) return true;
+  return typeof customHIITs !== 'undefined' && Array.isArray(customHIITs) && customHIITs.some(h => h && h.name === x.day);
+}
+function _todayPlanCtx(){
+  if(typeof isPathActive === 'function' && isPathActive() && userPath){
+    let name = ''; try { name = getPathDisplayName(userPath); } catch(e){}
+    return { kind:'path', name, perWeek:_plannedPerWeek(userPath), startMs:new Date(userPath.startDate + 'T00:00:00').getTime() };
+  }
+  const cw = (typeof customWorkouts !== 'undefined' && Array.isArray(customWorkouts)) ? customWorkouts.find(w => w && w.name === todayProg) : null;
+  if(cw && Array.isArray(cw.subcategories)) return { kind:'custom', name:cw.name, days:cw.subcategories.map(d => d && d.name).filter(Boolean) };
+  return null;
+}
+function _todayMetricCtx(){
+  const onb = (userProfile && userProfile.onboarding) || {};
+  return { nowMs:Date.now(), sessions:completedSessions, isCardio:_todayIsCardio, liftHistory:getLiftHistoryByName,
+    pin:userProfile ? userProfile.todayPin : null, goal:onb.trainingGoal || null, plan:_todayPlanCtx() };
+}
+function renderTodayMetric(){
+  const el = document.getElementById('todayMetric');
+  if(!el) return;
+  let m = null;
+  try { m = _todayHeadline(_todayMetricCtx()); } catch(e){ m = null; }
+  if(!m){ el.hidden = true; return; }
+  const big = m.value !== null
+    ? `<span class="stat-val" style="color:var(--accent);">${esc(m.value)}${m.unit ? `<span style="font-size:12px;font-weight:500;color:var(--text2);"> ${esc(m.unit)}</span>` : ''}</span>`
+    : `<span style="font-size:15px;font-weight:800;color:var(--accent);line-height:1.25;overflow-wrap:anywhere;">${esc(m.headline)}</span>`;
+  el.innerHTML = big + `<span class="stat-lbl" style="overflow-wrap:anywhere;">${esc(m.label)}</span>`
+    + (m.sub ? `<span style="font-size:10px;color:var(--text2);margin-top:3px;line-height:1.3;">${esc(m.sub)}</span>` : '');
+  el.setAttribute('aria-label', [m.value !== null ? m.value + (m.unit ? ' ' + m.unit : '') : m.headline, m.label, m.sub].filter(Boolean).join(', ') + '. Change what shows here');
+  el.dataset.kind = m.kind;
+  el.hidden = false;
+}
+let _tmOptions = [];   // lift names exactly as the picker last drew them (buttons pass an index)
+function openTodayMetricPicker(){
+  const pin = _todayPinClean(userProfile && userProfile.todayPin);
+  _tmOptions = _todayLiftNames(completedSessions).slice(0, 12);
+  if(pin && _tmOptions.indexOf(pin) === -1) _tmOptions.unshift(pin);
+  const opt = (i, text, on) => `<button type="button" class="st-secondary" aria-pressed="${on}" onclick="pickTodayMetric(${i})" style="text-align:left;${on ? 'border-color:var(--accent);color:var(--accent);' : ''}">${on ? '✓ ' : ''}${esc(text)}</button>`;
+  document.getElementById('todayMetricOpts').innerHTML = opt(-1, 'Automatic (recommended)', !pin)
+    + (_tmOptions.length ? _tmOptions.map((n, i) => opt(i, n, n === pin)).join('') : `<p style="font-size:12px;color:var(--text2);margin:10px 0 0;">Log a weighted lift and you can pin it here.</p>`);
+  document.getElementById('todayMetricMod').classList.add('open');
+}
+function closeTodayMetricPicker(){
+  document.getElementById('todayMetricMod').classList.remove('open');
+  const c = document.getElementById('todayMetric'); if(c && !c.hidden) c.focus({ preventScroll:true });
+}
+function pickTodayMetric(i){
+  const name = i >= 0 ? _tmOptions[i] : null;
+  if(i >= 0 && !name) return;
+  if(name) userProfile.todayPin = name; else delete userProfile.todayPin;
+  saveLocalCache();
+  if(typeof cloudSaveProfile === 'function') cloudSaveProfile();
+  renderTodayMetric();
+  closeTodayMetricPicker();
+  showToast(name ? '📌 Today shows ' + name : '✨ Today picks the most useful number for you');
 }
 
 function openChangePB(idx){

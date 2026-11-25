@@ -2597,7 +2597,8 @@ def gate_briefing(html, js):
     if '_withPB' not in pb or 'pb-empty' not in pb: lint.append('PB tiles with no data are still rendered as "– kg" cards')
     if not re.search(r'_noPB\.map\([^`]*`<button type="button"[^>]*onclick="openChangePB\(\$\{x\.j\}\)"', pb):
         lint.append('no-data PB lifts have no control to change/remove them (8-lift cap can lock)')
-    if ".style.display = b!==null ? '' : 'none'" not in pb: lint.append("Today's Bench PB card still shows for someone who never benched")
+    # Priority 1 replaced the fixed Bench PB card with a context-sensitive headline (gate 27).
+    if 'todayBenchPB' in html or 'renderTodayMetric();' not in pb: lint.append("Today still has a fixed Bench PB card (or the headline isn't refreshed with the PB tiles)")
     hm = extract_decl(js, 'renderMuscleHeatmap') or ''
     m = re.search(r'if\(data\.total === 0\)\{[\s\S]*?return;', hm)
     if not m or '${svg}' in m.group(0): lint.append('empty heatmap still draws the all-red body')
@@ -6198,64 +6199,173 @@ def gate_rollout(html, js, doc=None):
     for p in problems: print('  ✗ ' + p)
     return not problems
 
+# ── Gate 27: Today headline metric (Priority 1) ───────────────────────────
+TODAY_RUN = r"""
+var P = [];
+function eq(l, g, w){ if(JSON.stringify(g) !== JSON.stringify(w)) P.push(l + ' — got ' + JSON.stringify(g) + ', want ' + JSON.stringify(w)); }
+function ok(l, c){ if(!c) P.push(l); }
+var NOW = Date.UTC(2026, 10, 25, 12), D = 864e5;
+function G(daysAgo, lifts, extra){ var s = { date:new Date(NOW - daysAgo * D).toISOString(), day:'Upper', setLog:{} };
+  (lifts || []).forEach(function(l){ s.setLog[l[0]] = { weight:l[1] }; }); if(extra) for(var k in extra) s[k] = extra[k]; return s; }
+function hist(sessions){ return function(n){ return sessions.filter(function(s){ return !s.manualActivity && s.setLog && s.setLog[n] && s.setLog[n].weight > 0; })
+  .map(function(s){ return { date:s.date, weight:s.setLog[n].weight }; }).sort(function(a, b){ return new Date(a.date) - new Date(b.date); }); }; }
+var HIITN = { 'Tabata Blast':1 };
+function isC(s){ return s.manualActivity ? s.activityType !== 'mobility' : !!HIITN[s.day]; }
+function H(sessions, o){ o = o || {}; return _todayHeadline({ nowMs:NOW, sessions:sessions, isCardio:isC, liftHistory:hist(sessions), pin:o.pin, goal:o.goal || null, plan:o.plan || null }); }
+function txt(m){ return [m.label, m.value, m.headline, m.sub].join(' | '); }
+
+// no history: a prompt, never an empty PB card
+var n0 = H([]);
+eq('no history → first-session prompt', [n0.kind, n0.value], ['new', null]);
+ok('no history never mentions Bench', !/bench/i.test(txt(n0)) && /first workout/.test(n0.sub));
+eq('no history with a plan names the plan', H([], { plan:{ kind:'path', name:'PHUL', perWeek:4, startMs:NOW - 3 * D } }).label, 'PHUL');
+// strength user with bench data → strongest real improvement (not first-ever lifts)
+var S1 = [G(60, [['Bench Press', 60], ['Squat', 100]]), G(40, [['Bench Press', 62.5], ['Squat', 100]]), G(5, [['Bench Press', 70], ['Squat', 105], ['Curl', 20]])];
+var m1 = H(S1, { goal:'strength' });
+eq('strength + bench data → biggest relative improvement', [m1.kind, m1.label, m1.value, m1.unit], ['improved', 'Bench Press — new best', '70', 'kg']);
+eq('improvement is measured against the earlier best', m1.sub, '+7.5 kg on your previous best');
+// strength user without bench data → their own lift, never Bench
+var S2 = [G(50, [['Deadlift', 120]]), G(20, [['Deadlift', 120], ['Row', 60]]), G(3, [['Deadlift', 115], ['Row', 60]])];
+var m2 = H(S2, { goal:'strength' });
+eq('strength, no bench, no improvement → most-trained lift', [m2.kind, m2.label, m2.value], ['top-lift', 'Deadlift best', '120']);
+ok('no-bench user never sees Bench', !/bench/i.test(txt(m2)));
+// HIIT-only user → minutes
+var S3 = [G(2, [], { day:'Tabata Blast', durationMin:20 }), G(9, [], { day:'Tabata Blast', durationMin:25 }), G(40, [], { day:'Tabata Blast', durationMin:30 }), G(4, [], { manualActivity:true, activityType:'run', durationMin:30 })];
+var m3 = H(S3);
+eq('HIIT-only → cardio minutes over 4 weeks', [m3.kind, m3.value, m3.unit, m3.sub], ['cardio', '75', 'min', '3 sessions · last 4 weeks']);
+eq('mobility is not cardio (mostly-mobility history still shows the lift)', H([G(1, [], { manualActivity:true, activityType:'mobility', durationMin:10 }), G(2, [], { manualActivity:true, activityType:'mobility', durationMin:10 }), G(3, [['Squat', 80]])]).kind, 'top-lift');
+eq('endurance goal with some cardio prefers minutes', H([G(1, [['Squat', 80]]), G(2, [['Squat', 80]]), G(3, [['Squat', 80]]), G(4, [], { day:'Tabata Blast', durationMin:15 })], { goal:'endurance' }).kind, 'cardio');
+// Path user → adherence
+var S4 = [G(1, [['Squat', 80]]), G(3, [['Squat', 80]]), G(8, [['Squat', 80]]), G(10, [['Squat', 80]]), G(15, [['Squat', 80]]), G(17, [['Squat', 80]])];
+var m4 = H(S4, { plan:{ kind:'path', name:'PHUL', perWeek:4, startMs:NOW - 21 * D } });
+eq('Path → adherence since the Path started (max 4 weeks)', [m4.kind, m4.value, m4.unit, m4.sub], ['plan', '50', '%', '6 of 12 planned · last 3 weeks']);
+eq('Path in week 1 → no premature percentage', [H(S4, { plan:{ kind:'path', name:'PHUL', perWeek:4, startMs:NOW - 2 * D } }).kind], ['plan-new']);
+eq('adherence capped at 100', H(S4, { plan:{ kind:'path', name:'X', perWeek:1, startMs:NOW - 28 * D } }).value, '100');
+// custom programme → next day; names stay plain text (escaped by the renderer)
+var EV = '<img src=x onerror=alert(1)>';
+var S5 = [G(9, [], { day:'Day A' }), G(2, [], { day:EV })];
+var m5 = H(S5, { plan:{ kind:'custom', name:'My "Split" ' + EV, days:['Day A', EV, 'Day C'] } });
+eq('custom programme → next day in its rotation', [m5.kind, m5.headline, m5.label], ['custom-next', 'Day C', 'Next in My "Split" ' + EV]);
+eq('custom programme with nothing logged → first day', H([G(1, [], { day:'Other' })], { plan:{ kind:'custom', name:'P', days:['D1', 'D2'] } }).headline, 'D1');
+// pinned lift: wins, persists, survives junk
+var m6 = H(S1, { pin:'Squat', goal:'strength' });
+eq('pinned lift wins over everything', [m6.kind, m6.label, m6.value], ['pinned', 'Squat best', '105']);
+eq('pinned lift with no data → useful empty state', [H(S2, { pin:'Bench Press' }).kind, H(S2, { pin:'Bench Press' }).headline], ['pinned-empty', 'No data yet']);
+eq('pin cleaning (legacy/garbage → Automatic)', [_todayPinClean(undefined), _todayPinClean(42), _todayPinClean('  '), _todayPinClean({}), _todayPinClean(' Squat\u0007 ')], [null, null, null, null, 'Squat']);
+eq('a garbage pin falls back to Automatic', H(S1, { pin:{ x:1 }, goal:'strength' }).kind, 'improved');
+eq('pin is capped at 120 chars', _todayPinClean(new Array(300).join('a')).length, 120);
+// robustness
+eq('future and undated sessions ignored', H([G(-3, [['Squat', 200]]), { date:'nope', setLog:{} }]).kind, 'new');
+eq('a throwing history reader never breaks Today', _todayHeadline({ nowMs:NOW, sessions:S2, isCardio:isC, liftHistory:function(){ throw 1; }, pin:null, goal:null, plan:null }).kind, 'sessions');
+var HIIT = [{ name:'Tabata Blast' }], HIIT_SERIES_NAMES = new Set(['Series W1']), customHIITs = [{ name:'My Circuit' }];
+eq('app cardio rule: run/HIIT/series/custom HIIT yes; mobility and lifting no',
+  [{ manualActivity:true, activityType:'run' }, { manualActivity:true, activityType:'mobility' }, { day:'Tabata Blast' }, { day:'Series W1' }, { day:'My Circuit' }, { day:'Upper' }, null].map(_todayIsCardio),
+  [true, false, true, true, true, false, false]);
+eq('lift options: weighted only, most recent first', _todayLiftNames(S1.concat([G(1, [['Plank', 0]])])), ['Bench Press', 'Squat', 'Curl']);
+JSON.stringify(P);
+"""
+
+def gate_today_metric(html, js):
+    problems = []
+    fns = ['_todayPinClean', '_todayLiftNames', '_todayHeadline', '_todayIsCardio']
+    pieces = [extract_const_line(js, 'TODAY_WINDOW_DAYS') or ''] + [extract_decl(js, f) or '' for f in fns]
+    if not all(pieces): problems.append('could not extract the Today headline functions')
+    else:
+        out, _ = run_jxa('\n'.join(pieces) + '\n' + TODAY_RUN)
+        try: problems += json.loads(out)
+        except Exception: problems.append('headline runner errored: ' + out[:300])
+    # markup: a real button, hidden until drawn; no fixed Bench label anywhere on Today
+    m = re.search(r'<div class="screen active" id="s-today">([\s\S]*?)<!-- PATH TAB -->', html)
+    today = m.group(1) if m else ''
+    if not today: problems.append('Today screen markup not found')
+    if 'Bench PB' in today: problems.append('Today still has a hard-coded Bench PB label')
+    if '<button type="button" class="stat-card today-metric" id="todayMetric" onclick="openTodayMetricPicker()" hidden></button>' not in today:
+        problems.append('the headline must be a real button (keyboard/screen reader) that opens the picker')
+    if '.stat-card.today-metric[hidden] { display:none; }' not in html: problems.append('display:block on the card would beat [hidden]')
+    rt = extract_decl(js, 'renderTodayMetric') or ''
+    for need in ['${esc(m.value)}', '${esc(m.unit)}', '${esc(m.headline)}', '${esc(m.label)}', '${esc(m.sub)}', "setAttribute('aria-label'", 'catch(e){ m = null; }']:
+        if need not in rt: problems.append(f'renderTodayMetric must escape every field / label the button / never throw ({need})')
+    if 'renderTodayMetric();' not in (extract_decl(js, 'renderToday') or ''): problems.append('Today does not draw the headline')
+    # picker: index-based buttons with pressed state; Automatic first; saves to the synced profile
+    op = extract_decl(js, 'openTodayMetricPicker') or ''
+    if 'aria-pressed="${on}"' not in op or 'onclick="pickTodayMetric(${i})"' not in op or "opt(-1, 'Automatic (recommended)', !pin)" not in op or '${esc(text)}' not in op:
+        problems.append('picker options must be escaped, index-based buttons with aria-pressed, Automatic first')
+    pk = extract_decl(js, 'pickTodayMetric') or ''
+    for need in ['userProfile.todayPin = name', 'delete userProfile.todayPin', 'saveLocalCache()', 'cloudSaveProfile()', 'closeTodayMetricPicker()']:
+        if need not in pk: problems.append(f'pickTodayMetric must persist locally and to the account ({need})')
+    if 'c.focus(' not in (extract_decl(js, 'closeTodayMetricPicker') or ''): problems.append('closing the picker must return focus to the card')
+    mod = re.search(r'<div class="modal-ov" id="todayMetricMod"[\s\S]*?\n</div>', html)
+    if not mod or 'aria-labelledby="todayMetricTitle"' not in mod.group(0) or 'id="todayMetricTitle"' not in mod.group(0):
+        problems.append('the picker dialog needs a labelled title')
+    # read-only: never touches history/PB state
+    for f in ['_todayHeadline', 'renderTodayMetric', '_todayMetricCtx']:
+        src = extract_decl(js, f) or ''
+        if re.search(r'completedSessions\s*(=|\.push|\.splice)|pbLifts\s*(=|\.push|\.splice)|_savePBLifts|customWeights\[', src):
+            problems.append(f'{f} must not change history, PB tiles or weights')
+    if not problems: print('  ✓ no-history/strength±bench/HIIT/Path/custom/pinned scenarios; no fixed Bench label; escaped real button + labelled picker; pin synced via the profile; read-only')
+    for p in problems: print('  ✗ ' + p)
+    return not problems
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/26] parse')
+    print('[1/27] parse')
     p = gate_parse(js)
-    print('[2/26] invariants')
+    print('[2/27] invariants')
     inv = gate_invariants(js)
-    print('[3/26] video map')
+    print('[3/27] video map')
     vm = gate_videomap(js)
-    print('[4/26] inline handler wiring')
+    print('[4/27] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/26] auth log hygiene')
+    print('[5/27] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/26] sign-out scrub')
+    print('[6/27] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/26] safe rendering of user text')
+    print('[7/27] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/26] sync honesty')
+    print('[8/27] sync honesty')
     sy = gate_sync(js)
-    print('[9/26] media fallback + reminder copy')
+    print('[9/27] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/26] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/27] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/26] core-journey accessibility (session + dialogs)')
+    print('[11/27] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/26] Start today (first-use flow) + shortened Path wizard')
+    print('[12/27] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/26] simplified navigation (default, reversible, one-time notice)')
+    print('[13/27] simplified navigation (default, reversible, one-time notice)')
     nv = gate_nav_v2(html, js)
-    print('[14/26] Progress weekly briefing')
+    print('[14/27] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/26] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/27] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/26] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/27] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/26] Phase 2 typed sets (preview before save)')
+    print('[17/27] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
-    print('[18/26] Phase 2 weekly AI recap + measurement')
+    print('[18/27] Phase 2 weekly AI recap + measurement')
     rc = gate_recap(html, js)
-    print('[19/26] Phase 3 offline media (download, cache versioning, fallback order)')
+    print('[19/27] Phase 3 offline media (download, cache versioning, fallback order)')
     om = gate_offline_media(html, js)
-    print('[20/26] Phase 3 programme discovery (metadata, finder, why, switch preview)')
+    print('[20/27] Phase 3 programme discovery (metadata, finder, why, switch preview)')
     dc = gate_discovery(html, js)
-    print('[21/26] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
+    print('[21/27] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
     sh = gate_sharing(html, js)
-    print('[22/26] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
+    print('[22/27] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
     lf = gate_leftovers(html, js)
-    print('[23/26] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
+    print('[23/27] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
     rm = gate_reminders(html, js)
-    print('[24/26] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
+    print('[24/27] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
     rs = gate_reminders_server(html, js)
-    print('[25/26] Profile & settings information model (flagged)')
+    print('[25/27] Profile & settings information model (flagged)')
     pv = gate_profile_v2(html, js)
-    print('[26/26] rollout registry + configuration in Data health')
+    print('[26/27] rollout registry + configuration in Data health')
     ro = gate_rollout(html, js)
+    print('[27/27] Today headline metric (context-sensitive, pinnable)')
+    tm = gate_today_metric(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 
