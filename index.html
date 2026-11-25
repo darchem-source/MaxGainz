@@ -605,6 +605,21 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
 .recap-head{font-size:16px;font-weight:800;color:var(--text);margin:0 0 6px;line-height:1.3;}
 .recap-head strong,.recap-card .coach-text strong{color:var(--accent2);}
 .recap-src{font-size:11px;color:var(--text2);margin:8px 0 0;}
+/* Profile layout v2 (flag ?p5=profile) */
+.pf-v2{padding:8px 16px 16px;display:flex;flex-direction:column;gap:14px;max-width:500px;}
+.pf-sec{background:var(--surface);border:0.5px solid var(--border);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:12px;}
+.pf-h{font-size:12px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:1.4px;margin:0;}
+details.pf-sec > summary.pf-sum{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;min-height:44px;margin:-10px 0;}
+details.pf-sec > summary.pf-sum::-webkit-details-marker{display:none;}
+.pf-chev{font-size:14px;color:var(--text2);transition:transform .15s;}
+details.pf-sec:not([open]) .pf-chev{transform:rotate(-90deg);}
+.pf-status:empty{display:none;}
+details.pf-sec:not([open]){gap:0;}
+.pf-caption{font-size:12px;font-weight:700;color:var(--accent);margin:4px 0 -6px;}
+.pf-note{font-size:11px;color:var(--text2);line-height:1.5;margin:-4px 0 0;}
+.pf-sec > *{margin-bottom:0 !important;}
+.pf-sec > [data-pb="data-backup"], .pf-sec > [data-pb="data-delete"], .pf-sec > [data-pb="data-shares"]{margin-top:0 !important;border-top:none !important;padding-top:0 !important;}
+.pf-sec > [data-pb="data-delete"] > div{margin-bottom:0 !important;}
 </style>
 </head>
 <body>
@@ -1086,7 +1101,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         <div style="font-size:13px;color:var(--text2);margin-top:2px;" id="profileSubtitle">Complete your info to personalise your workouts</div>
       </div>
       <!-- Cloud Sync Status -->
-      <div style="padding:16px;padding-bottom:8px;">
+      <div data-pb="account-cloud" style="padding:16px;padding-bottom:8px;">
         <div style="background:var(--surface2);border-radius:10px;padding:12px;display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
           <div style="display:flex;align-items:center;gap:8px;flex:1;">
             <span style="font-size:16px;">☁️</span>
@@ -1103,9 +1118,9 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
           <button id="cloudToggle" style="padding:6px 12px;background:var(--accent);color:#000;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">Sign In</button>
         </div>
       </div>
-      <div style="padding:16px;display:flex;flex-direction:column;gap:12px;max-width:500px;">
+      <div data-pbc="main" style="padding:16px;display:flex;flex-direction:column;gap:12px;max-width:500px;">
         <!-- Avatar Selection -->
-        <div>
+        <div data-pb="account-icon">
           <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:10px;">Choose Your Icon</label>
           <div id="avatarGrid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px;"></div>
           <input type="file" id="profilePhotoInput" accept="image/*" style="display:none;" onchange="handlePhotoUpload(event)">
@@ -1117,7 +1132,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
         
         <!-- First Name & Last Name -->
-        <div style="display:flex;gap:8px;">
+        <div data-pb="names" style="display:flex;gap:8px;">
           <div style="flex:1;">
             <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">First Name</label>
             <input type="text" id="profileFirstName" placeholder="Max" style="width:100%;padding:10px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:14px;color:var(--text);">
@@ -1129,19 +1144,19 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
         
         <!-- Email -->
-        <div>
+        <div data-pb="email">
           <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">Email</label>
           <input type="email" id="profileEmail" placeholder="max@example.com" style="width:100%;padding:10px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:14px;color:var(--text);">
         </div>
         
         <!-- Preferred Name (from signup) -->
-        <div>
+        <div data-pb="prefname">
           <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">Preferred Name <span style="color:var(--text2);font-weight:400;">(from signup)</span></label>
           <input type="text" id="profilePreferredName" placeholder="Your display name" style="width:100%;padding:10px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:14px;color:var(--text);">
         </div>
         
         <!-- Gender -->
-        <div>
+        <div data-pb="about-gender">
           <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">Gender</label>
           <select id="profileGender" style="width:100%;padding:10px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:14px;color:var(--text);">
             <option value="">Select gender</option>
@@ -1152,13 +1167,13 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
         
         <!-- Date of Birth -->
-        <div>
+        <div data-pb="about-dob">
           <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">Date of Birth</label>
           <input type="date" id="profileDOB" style="width:100%;padding:10px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:14px;color:var(--text);">
         </div>
         
         <!-- Height -->
-        <div style="display:flex;gap:8px;">
+        <div data-pb="about-height" style="display:flex;gap:8px;">
           <div style="flex:1;">
             <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">Height</label>
             <div style="display:flex;gap:4px;">
@@ -1169,7 +1184,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
         
         <!-- Weight (for BW exercises) -->
-        <div style="display:flex;gap:8px;">
+        <div data-pb="body-weight" style="display:flex;gap:8px;">
           <div style="flex:1;">
             <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">Current Weight</label>
             <div style="display:flex;gap:4px;">
@@ -1180,7 +1195,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
 
         <!-- Body Weight Tracker (history chart) -->
-        <div>
+        <div data-pb="body-history">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
             <label style="font-size:12px;font-weight:700;color:var(--text2);">Weight History</label>
             <button onclick="openBWLog()" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer;">+ Log weight</button>
@@ -1211,7 +1226,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
 
         <!-- Body Measurements -->
-        <div style="margin-top:14px;">
+        <div data-pb="body-measure" style="margin-top:14px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
             <label style="font-size:12px;font-weight:700;color:var(--text2);">Measurements <span style="font-weight:400;opacity:0.6;">(cm)</span></label>
             <button onclick="openMeasureLog()" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer;">+ Log measurements</button>
@@ -1220,13 +1235,13 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
 
         <!-- Appearance / Colour Theme -->
-        <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;">
+        <div data-pb="pref-theme" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;">
           <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:12px;">🎨 App Theme</div>
           <div id="themeSwatches" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;"></div>
         </div>
 
         <!-- Audio Settings Section -->
-        <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;">
+        <div data-pb="pref-sound" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;">
           <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:12px;">🔊 Sound & Feedback</div>
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;">
             <div style="flex:1;">
@@ -1241,11 +1256,11 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
 
         <!-- Garry's Settings Section -->
-        <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;">
+        <div data-pb="garry" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;">
           <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:12px;">🏃 Garry's Workout Settings</div>
 
           <!-- Runner Level -->
-          <div style="margin-bottom:12px;">
+          <div data-pb="train-runner" style="margin-bottom:12px;">
             <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
               <label style="font-size:12px;font-weight:700;color:var(--text2);">Runner Level</label>
               <button onclick="openRunnerLevelInfo()" title="What do these levels mean?"
@@ -1264,7 +1279,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
           </div>
 
           <!-- Speed Unit -->
-          <div style="margin-bottom:12px;">
+          <div data-pb="pref-speed" style="margin-bottom:12px;">
             <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">Treadmill Speed</label>
             <div style="display:flex;gap:8px;">
               <button onclick="setSpeedUnit('mph')" id="speedBtn-mph" style="flex:1;padding:8px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;transition:all 0.2s;">mph</button>
@@ -1273,7 +1288,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
           </div>
 
           <!-- Weight Unit -->
-          <div>
+          <div data-pb="pref-weightunit">
             <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">Dumbbell/Barbell Weight</label>
             <div style="display:flex;gap:8px;">
               <button onclick="setWeightUnit('kg')" id="weightBtn-kg" style="flex:1;padding:8px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;transition:all 0.2s;">Kilograms (kg)</button>
@@ -1283,7 +1298,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
 
         <!-- Runner Level Info Modal -->
-        <div class="modal-ov" id="runnerLevelInfoMod" onclick="if(event.target===this)this.classList.remove('open')">
+        <div data-pb="runner-modal" class="modal-ov" id="runnerLevelInfoMod" onclick="if(event.target===this)this.classList.remove('open')">
           <div class="modal" style="display:flex;flex-direction:column;max-height:88vh;padding-bottom:8px;">
             <div class="modal-handle"></div>
             <div style="font-size:19px;font-weight:800;margin-bottom:4px;">Runner Level</div>
@@ -1328,27 +1343,27 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
         
         <!-- Save Button -->
-        <button onclick="saveProfile()" style="background:var(--accent);color:#000;border:none;border-radius:10px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;margin-top:12px;">Save Profile</button>
+        <button data-pb="save" onclick="saveProfile()" style="background:var(--accent);color:#000;border:none;border-radius:10px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;margin-top:12px;">Save Profile</button>
         
         <!-- Info Box -->
-        <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-top:8px;">
+        <div data-pb="info" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-top:8px;">
           <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:4px;">ℹ️ How we use this info</div>
           <div style="font-size:12px;color:var(--text2);line-height:1.5;">
-            • Your weight is used to calculate bodyweight exercise volume in Muscle Balance<br>
-            • Height helps track body composition over time<br>
-            • All data is saved locally on your device
+            • Your weight is used for bodyweight exercises and the Muscle Balance chart<br>
+            • Gender, date of birth and height are optional and don't change your training today<br>
+            • Saved on this device, and to your account when you're signed in
           </div>
         </div>
         
         <!-- ── SETTINGS & DATA ── -->
-        <div style="margin-top:24px;">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+        <div data-pbc="settings" style="margin-top:24px;">
+          <div data-pb="settings-head" style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
             <div style="font-size:11px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;">Settings & Data</div>
             <div style="flex:1;height:0.5px;background:var(--border);"></div>
           </div>
           
           <!-- Sync status -->
-          <div style="background:var(--surface2);border-radius:12px;padding:14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;">
+          <div data-pb="account-sync" style="background:var(--surface2);border-radius:12px;padding:14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;">
             <div>
               <div style="font-size:13px;color:var(--text);" id="storageBadge">💾 0 sessions saved</div>
               <div style="font-size:11px;color:var(--text2);margin-top:2px;" id="syncStatus" role="status" aria-live="polite">💾 Saved on this device</div>
@@ -1357,31 +1372,31 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
           </div>
           
           <!-- Data actions -->
-          <div style="display:flex;gap:8px;margin-bottom:10px;">
-            <button onclick="exportData()" style="flex:1;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;">⬇ Export JSON</button>
-            <button onclick="confirmClear()" style="flex:1;background:rgba(255,77,106,0.08);border:0.5px solid rgba(255,77,106,0.3);border-radius:10px;padding:11px;font-size:12px;font-weight:700;color:var(--red);cursor:pointer;">🗑 Clear history</button>
+          <div data-pbc="data-row" style="display:flex;gap:8px;margin-bottom:10px;">
+            <button data-pb="data-exportjson" onclick="exportData()" style="flex:1;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;">⬇ Export JSON</button>
+            <button data-pb="data-clear" onclick="confirmClear()" style="flex:1;background:rgba(255,77,106,0.08);border:0.5px solid rgba(255,77,106,0.3);border-radius:10px;padding:11px;font-size:12px;font-weight:700;color:var(--red);cursor:pointer;">🗑 Clear history</button>
           </div>
-          <button onclick="openDataHealth()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🩺 Data health check</button>
+          <button data-pb="data-health" onclick="openDataHealth()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🩺 Data health check</button>
           <!-- Path -->
-          <button class="v1-only" onclick="openStartTodayFromProfile()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">⚡ Recommend a plan for me</button>
-          <button onclick="openDetailedSetup()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🎚 Fine-tune starting weights</button>
-          <button class="v1-only" onclick="openPathWizard()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🎯 Change My Path</button>
+          <button data-pb="train-recommend" class="v1-only" onclick="openStartTodayFromProfile()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">⚡ Recommend a plan for me</button>
+          <button data-pb="train-finetune" onclick="openDetailedSetup()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🎚 Fine-tune starting weights</button>
+          <button data-pb="train-path" class="v1-only" onclick="openPathWizard()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🎯 Change My Path</button>
           <!-- Training-day reminders (Phase 4, ?p4=reminders) -->
           <div id="remindersCard" hidden></div>
           <!-- In-app alerts (only when the app is open) -->
-          <button id="notifEnableBtn" onclick="requestNotificationPermission()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;margin-bottom:2px;">🔔 Allow alerts when you open the app</button>
-          <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">If a muscle group goes 7+ days untrained, you'll see a reminder when you open or return to Max Gainz. This alert is never sent while the app is closed.</div>
+          <button data-pb="pref-alerts" id="notifEnableBtn" onclick="requestNotificationPermission()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;margin-bottom:2px;">🔔 Allow alerts when you open the app</button>
+          <div data-pb="pref-alerts" style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">If a muscle group goes 7+ days untrained, you'll see a reminder when you open or return to Max Gainz. This alert is never sent while the app is closed.</div>
           <!-- Effort (RPE) tracking -->
-          <button id="trackRpeBtn" onclick="toggleTrackRPE()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">📊 Track effort (RPE): Off</button>
-          <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Adds an optional effort chip when logging a set — the coach uses it to fine-tune weight suggestions.</div>
+          <button data-pb="train-rpe" id="trackRpeBtn" onclick="toggleTrackRPE()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">📊 Track effort (RPE): Off</button>
+          <div data-pb="train-rpe" style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Adds an optional effort chip when logging a set — the coach uses it to fine-tune weight suggestions.</div>
           <!-- Periodization -->
-          <button id="periodizeBtn" onclick="togglePeriodize()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">🗓 Periodize training: Off</button>
-          <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">A rolling 4-week rhythm (build → push → recover) that eases off borderline jumps on recovery weeks.</div>
+          <button data-pb="train-periodize" id="periodizeBtn" onclick="togglePeriodize()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">🗓 Periodize training: Off</button>
+          <div data-pb="train-periodize" style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">A rolling 4-week rhythm (build → push → recover) that eases off borderline jumps on recovery weeks.</div>
           <!-- Exercise rotation -->
-          <button id="navV2Btn" onclick="toggleNavV2()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;" aria-pressed="false">🧭 Simplified navigation: Off</button>
-          <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Today · Plan · Progress · Profile, with the workout as a full-screen mode. Switch back any time.</div>
-          <button id="rotateExBtn" onclick="toggleRotateExercises()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">🔄 Exercise variety: On</button>
-          <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Accessory exercises rotate through fresh variations each time you repeat a workout day. Main lifts never change.</div>
+          <button data-pb="pref-nav" id="navV2Btn" onclick="toggleNavV2()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;" aria-pressed="false">🧭 Simplified navigation: Off</button>
+          <div data-pb="pref-nav" style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Today · Plan · Progress · Profile, with the workout as a full-screen mode. Switch back any time.</div>
+          <button data-pb="train-variety" id="rotateExBtn" onclick="toggleRotateExercises()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">🔄 Exercise variety: On</button>
+          <div data-pb="train-variety" style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Accessory exercises rotate through fresh variations each time you repeat a workout day. Main lifts never change.</div>
           <!-- Phase 2: AI coaching consent (shown only when the maxgainz_ai_v1 rollout flag is on) -->
           <div id="aiSettings" hidden style="background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px;">
             <button id="aiCoachBtn" type="button" aria-pressed="false" aria-describedby="aiCoachInfo aiCoachState" onclick="toggleAiCoach()" style="width:100%;background:var(--surface);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;min-height:44px;">✨ AI coaching: Off</button>
@@ -1394,18 +1409,18 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
             <button id="aiNotesBtn" type="button" aria-pressed="false" disabled onclick="toggleAiNotes()" style="width:100%;margin-top:8px;background:transparent;border:0.5px solid var(--border);border-radius:10px;padding:10px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;min-height:44px;">Also send my exercise notes: Off</button>
           </div>
           <!-- Feedback -->
-          <button onclick="openFeedbackModal()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;">📬 Send Feedback</button>
+          <button data-pb="data-feedback" onclick="openFeedbackModal()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;">📬 Send Feedback</button>
         </div>
 
         <!-- Shared links (Phase 3, flag maxgainz_p3_share) -->
-        <div id="sharedLinksSection" hidden style="margin-top:20px;padding-top:20px;border-top:0.5px solid var(--border);">
+        <div data-pb="data-shares" id="sharedLinksSection" hidden style="margin-top:20px;padding-top:20px;border-top:0.5px solid var(--border);">
           <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px;">SHARED LINKS</div>
           <div style="font-size:11px;color:var(--text2);margin-bottom:10px;line-height:1.5;">See who-can-see links you've created and turn any of them off.</div>
           <button type="button" class="st-secondary" onclick="openSharedLinks()">Manage shared links</button>
         </div>
 
         <!-- Data Backup -->
-        <div style="margin-top:20px;padding-top:20px;border-top:0.5px solid var(--border);">
+        <div data-pb="data-backup" style="margin-top:20px;padding-top:20px;border-top:0.5px solid var(--border);">
           <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px;">DATA BACKUP</div>
           <div style="font-size:11px;color:var(--text2);margin-bottom:10px;line-height:1.5;">Export everything (sessions, custom programmes, body weight, prefs) as a JSON file. Import to restore on a new device or roll back.</div>
           <div style="display:flex;gap:8px;">
@@ -1416,7 +1431,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
 
         <!-- Delete Account Section -->
-        <div style="margin-top:20px;padding-top:20px;border-top:0.5px solid var(--border);">
+        <div data-pb="data-delete" style="margin-top:20px;padding-top:20px;border-top:0.5px solid var(--border);">
           <div style="background:rgba(255,77,106,0.1);border:0.5px solid rgba(255,77,106,0.25);border-radius:10px;padding:12px;margin-bottom:12px;">
             <div style="font-size:12px;font-weight:700;color:var(--red);margin-bottom:4px;">⚠️ Delete Account</div>
             <div style="font-size:12px;color:var(--text2);margin-bottom:12px;">This action cannot be undone. You can download a complete copy of your data first.</div>
@@ -29355,6 +29370,208 @@ const PROFILE_ICONS = [
   {id:"icon8_chevron",label:"Chevron",src:"data:image/png;base64,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"},
 ];
 const AVATARS=['🏋️','💪','🏆','⚡','🔥','🎯','🚀','💯','😤','🤸'];
+
+// ── PROFILE LAYOUT V2 (flag ?p5=profile) ──
+// Groups the Profile screen into Account · Your training · Body · About you ·
+// Preferences · Data & account (audit P2). The flag only MOVES the existing
+// elements (tagged data-pb) into new sections — nothing is duplicated, every id
+// and handler stays the same, and with the flag off the screen is untouched.
+const P5_FLAG_KEYS = { profile:'maxgainz_p5_profile' };
+function _p5FlagsFromQuery(search){
+  const m = /[?&]p5=([^&#]*)/.exec(String(search || ''));
+  if(!m) return null;
+  let v = '';
+  try { v = decodeURIComponent(m[1]).toLowerCase(); } catch(e){ return null; }
+  const all = Object.keys(P5_FLAG_KEYS);
+  if(v === '0' || v === 'off'){ const o = {}; all.forEach(k => { o[k] = false; }); return o; }
+  const want = (v === 'all' || v === '1') ? all : v.split(',').map(x => x.trim()).filter(x => all.indexOf(x) !== -1);
+  if(!want.length) return null;
+  const out = {};
+  all.forEach(k => { out[k] = want.indexOf(k) !== -1; });
+  return out;
+}
+function _p5ApplyFlagQuery(){
+  let f = null;
+  try { f = _p5FlagsFromQuery(location.search); } catch(e){ f = null; }
+  if(!f) return;
+  try {
+    Object.keys(P5_FLAG_KEYS).forEach(k => { if(f[k]) localStorage.setItem(P5_FLAG_KEYS[k], '1'); else localStorage.removeItem(P5_FLAG_KEYS[k]); });
+    const rest = location.search.replace(/[?&]p5=[^&#]*/, '').replace(/^&/, '?');
+    history.replaceState(null, '', location.pathname + (rest && rest !== '?' ? rest : '') + location.hash);
+  } catch(e){}
+}
+function _p5FlagOn(name){
+  try { return !!P5_FLAG_KEYS[name] && localStorage.getItem(P5_FLAG_KEYS[name]) === '1'; } catch(e){ return false; }
+}
+
+// Section → blocks, in order. A block is every element tagged data-pb="<key>"
+// (or, for the two flag-gated cards, an id). '-' entries are hidden in v2.
+const PROFILE_V2_LAYOUT = [
+  { id:'pfAccount',  title:'Account',          blocks:['account-icon', 'prefname', 'names', 'email', 'account-cloud', 'account-sync'] },
+  { id:'pfTraining', title:'Your training',    note:'How Max Gainz plans and progresses your workouts.',
+    blocks:['train-recommend', 'train-path', 'train-finetune', 'train-rpe', 'train-periodize', 'train-variety', { k:'train-runner', caption:'🏃 For Garry\'s treadmill workouts' }, '#aiSettings'] },
+  { id:'pfBody',     title:'Body',             note:'Your current weight is used for bodyweight exercises and the Muscle Balance chart.',
+    blocks:['body-weight', 'body-history', 'body-measure'] },
+  { id:'pfAbout',    title:'About you',        collapsed:true, note:'Optional. Saved on this device, and to your account when you\'re signed in. Not used to change your training today.',
+    blocks:['about-gender', 'about-dob', 'about-height'] },
+  { id:'pfPrefs',    title:'Preferences',      blocks:['pref-weightunit', 'pref-speed', 'pref-sound', 'pref-theme', 'pref-nav', '#remindersCard', 'pref-alerts'] },
+  { id:'pfData',     title:'Data & account',   blocks:['data-backup', 'data-health', 'data-shares', 'data-feedback', 'data-clear', 'data-delete'] }
+];
+// Shown in the old layout only: replaced by the sections' own wording / autosave / the full export.
+const PROFILE_V2_HIDDEN = ['garry', 'save', 'info', 'settings-head', 'data-exportjson'];
+const PROFILE_V2_KEEP = ['runner-modal'];   // overlays: moved, never hidden
+
+let _profileV2Applied = false;
+function _profileV2Blocks(root, key){
+  if(key.charAt(0) === '#'){ const el = root.querySelector(key); return el ? [el] : []; }
+  return Array.from(root.querySelectorAll('[data-pb="' + key + '"]'));
+}
+function _profileApplyLayoutV2(){
+  if(_profileV2Applied || !_p5FlagOn('profile')) return false;
+  const screen = document.getElementById('s-profile');
+  if(!screen) return false;
+  const header = screen.querySelector('.page-header');
+  const v2 = document.createElement('div');
+  v2.id = 'profileV2';
+  v2.className = 'pf-v2';
+  // In the page FIRST, so a failure part-way never leaves moved controls detached.
+  if(header && header.nextSibling) screen.insertBefore(v2, header.nextSibling); else screen.appendChild(v2);
+  PROFILE_V2_LAYOUT.forEach(sec => {
+    const wrap = document.createElement(sec.collapsed ? 'details' : 'section');
+    wrap.id = sec.id;
+    wrap.className = 'pf-sec';
+    const h = document.createElement('h2');
+    h.className = 'pf-h';
+    h.id = sec.id + 'H';
+    h.textContent = sec.title + (sec.collapsed ? ' (optional)' : '');
+    if(sec.collapsed){
+      const sum = document.createElement('summary');
+      sum.className = 'pf-sum';
+      sum.appendChild(h);
+      const chev = document.createElement('span'); chev.className = 'pf-chev'; chev.setAttribute('aria-hidden', 'true'); chev.textContent = '▾';
+      sum.appendChild(chev);
+      wrap.appendChild(sum);
+    } else wrap.appendChild(h);
+    wrap.setAttribute('aria-labelledby', h.id);
+    v2.appendChild(wrap);
+    if(sec.note){ const n = document.createElement('p'); n.className = 'pf-note'; n.textContent = sec.note; wrap.appendChild(n); }
+    sec.blocks.forEach(b => {
+      const k = typeof b === 'string' ? b : b.k;
+      const els = _profileV2Blocks(screen, k);
+      if(typeof b === 'object' && b.caption && els.length){
+        const c = document.createElement('div'); c.className = 'pf-caption'; c.textContent = b.caption; wrap.appendChild(c);
+      }
+      if(els.length > 1){   // a control and its explanation stay together
+        const g = document.createElement('div'); g.className = 'pf-group';
+        els.forEach(el => g.appendChild(el)); wrap.appendChild(g);
+      } else els.forEach(el => wrap.appendChild(el));
+    });
+    if(sec.id === 'pfAccount' || sec.id === 'pfBody' || sec.id === 'pfAbout'){
+      // Each section that has profile fields shows its own save status.
+      const st = document.createElement('div');
+      st.id = sec.id === 'pfAccount' ? 'profileSaveStatus' : sec.id + 'Status';
+      st.className = 'pf-note pf-status';
+      st.setAttribute('role', 'status'); st.setAttribute('aria-live', 'polite');
+      st.textContent = sec.id === 'pfAccount' ? 'Changes save as you leave each field.' : '';
+      wrap.appendChild(st);
+    }
+  });
+  PROFILE_V2_KEEP.forEach(k => _profileV2Blocks(screen, k).forEach(el => v2.appendChild(el)));
+  PROFILE_V2_HIDDEN.forEach(k => _profileV2Blocks(screen, k).forEach(el => { el.hidden = true; el.style.display = 'none'; el.setAttribute('data-pb-hidden', '1'); }));
+  // The old containers now hold only hidden leftovers (inline display:flex beats [hidden]).
+  screen.querySelectorAll('[data-pbc]').forEach(c => { c.hidden = true; c.style.display = 'none'; });
+  const accountWrap = screen.querySelector('[data-pb="account-cloud"]');
+  if(accountWrap) accountWrap.style.padding = '0';
+  const sub = document.getElementById('profileSubtitle');
+  if(sub) sub.textContent = 'Your account, training settings and data';
+  // Each field saves itself, right away, as you leave it (no Save button here).
+  Object.keys(PROFILE_FIELD_RULES).forEach(id => {
+    const el = document.getElementById(id);
+    if(el) el.addEventListener('change', () => _profileAutosaveField(id));
+  });
+  document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'hidden') _profileFlushCloud(); });
+  screen.classList.add('pf-v2-on');
+  _profileV2Applied = true;
+  return true;
+}
+// Per-field rules. A field only ever writes ITS OWN value, and only when valid —
+// so an unrelated edit can never touch body weight, and a cleared field never
+// saves a made-up default.
+const PROFILE_FIELD_RULES = {
+  profilePreferredName: { key:'preferredName', kind:'text', greet:true, sec:'pfAccount' },
+  profileFirstName:     { key:'firstName',     kind:'text', greet:true, sec:'pfAccount' },
+  profileLastName:      { key:'lastName',      kind:'text', sec:'pfAccount' },
+  profileEmail:         { key:'email',         kind:'text', sec:'pfAccount' },
+  profileWeight:        { key:'weight',        kind:'weight', min:20, max:500, sec:'pfBody' },
+  profileGender:        { key:'gender',        kind:'gender', sec:'pfAbout' },
+  profileDOB:           { key:'dob',           kind:'date', sec:'pfAbout' },
+  profileHeightCM:      { key:'heightCM',      kind:'num', min:100, max:250, sec:'pfAbout', label:'height in cm' }
+};
+// Pure: validate one field. → { ok:true, value } or { ok:false, msg }
+function _profileFieldValue(rule, raw, now){
+  const v = String(raw == null ? '' : raw).trim();
+  if(rule.kind === 'text') return { ok:true, value: v.slice(0, 60) };
+  if(rule.kind === 'gender') return ['', 'M', 'F', 'O'].indexOf(v) !== -1 ? { ok:true, value:v } : { ok:false, msg:'Pick an option from the list.' };
+  if(rule.kind === 'date'){
+    if(v === '') return { ok:true, value:'' };
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+    const y = m ? +m[1] : 0, nowY = new Date(now).getFullYear();
+    if(!m || y < 1900 || y > nowY || isNaN(Date.parse(v))) return { ok:false, msg:'Enter a full date of birth.' };
+    return { ok:true, value:v };
+  }
+  const n = parseFloat(v);
+  if(v === '' || !isFinite(n) || n < rule.min || n > rule.max){
+    return { ok:false, msg: rule.kind === 'weight' ? 'Enter a weight between ' + rule.min + ' and ' + rule.max + ' kg — not saved.'
+                                                   : 'Enter your ' + (rule.label || 'value') + ' (' + rule.min + '–' + rule.max + ') — not saved.' };
+  }
+  return { ok:true, value: rule.kind === 'weight' ? Math.round(n * 10) / 10 : Math.round(n) };
+}
+let _profileStatusSeq = 0, _profileCloudTimer = null, _profileCloudPending = false, _profileStatusEl = null;
+function _profileAutosaveField(id){
+  const rule = PROFILE_FIELD_RULES[id];
+  const el = document.getElementById(id);
+  if(!rule || !el) return;
+  const statusEl = document.getElementById(rule.sec === 'pfAccount' ? 'profileSaveStatus' : rule.sec + 'Status');
+  const r = _profileFieldValue(rule, el.value, Date.now());
+  if(!r.ok){ if(statusEl) statusEl.textContent = '⚠️ ' + r.msg; return; }
+  userProfile[rule.key] = r.value;
+  if(rule.kind === 'weight'){
+    // Same as Save Profile did for weight — and only for weight.
+    userProfile.bodyWeight = r.value; userProfile.bodyWeightUnit = 'kg';
+    const today = new Date().toISOString().split('T')[0];
+    bodyWeightLog = bodyWeightLog.filter(e => e.date !== today);
+    bodyWeightLog.push({ date: today, weight: r.value, unit: 'kg', displayWeight: r.value, displayUnit: 'kg' });
+    bodyWeightLog.sort((a, b) => a.date.localeCompare(b.date));
+    try { renderBWChart(); } catch(e){}
+  }
+  saveLocalCache();
+  if(rule.greet){ try { renderToday(); } catch(e){} }
+  // The device copy is saved now; the account copy follows shortly (one upload for a burst of edits).
+  const seq = ++_profileStatusSeq;
+  _profileStatusEl = statusEl;
+  if(statusEl) statusEl.textContent = isAuthenticated() ? '✓ Saved on this device · syncing…' : '✓ Saved on this device';
+  _profileCloudPending = true;
+  clearTimeout(_profileCloudTimer);
+  _profileCloudTimer = setTimeout(() => _profileFlushCloud(seq), 800);
+}
+function _profileFlushCloud(seq){
+  clearTimeout(_profileCloudTimer);
+  if(!_profileCloudPending) return;
+  _profileCloudPending = false;
+  const s = seq || _profileStatusSeq;
+  const el = _profileStatusEl;
+  const cloud = typeof cloudSaveProfile === 'function' ? cloudSaveProfile() : null;
+  if(!el || !isAuthenticated()) return;
+  Promise.resolve(cloud).then(res => {
+    if(s !== _profileStatusSeq) return;   // a newer edit's status wins
+    el.textContent = res === false ? '✓ Saved on this device · syncs once your account has finished loading'
+      : (res !== null && res !== undefined ? '☁️ Saved and synced to your account' : '✓ Saved on this device · will sync automatically');
+  }).catch(() => {});
+}
+if(typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', () => {
+  try { _p5ApplyFlagQuery(); } catch(e){}
+  try { _profileApplyLayoutV2(); } catch(e){ console.warn('[profile v2] layout failed:', e); }
+});
 
 function renderProfile(){
   // Body weight history chart (moved from Progress tab)

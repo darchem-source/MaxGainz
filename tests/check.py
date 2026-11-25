@@ -5840,60 +5840,210 @@ def gate_reminders_server(html, js, sql=None, core_src=None, api=None, sched=Non
     return not problems
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Gate 25 — Profile & settings information model (flag ?p5=profile)
+#   (a) every control on the Profile screen belongs to a tagged block, and every
+#       tagged block is placed in exactly one section, hidden on purpose, or kept
+#       as an overlay — so the new layout can't silently drop a control;
+#   (b) the layout only runs with the flag, moves (never clones) elements, and
+#       leaves the old layout untouched when off;
+#   (c) profile fields autosave quietly with honest sync wording; no stray Save;
+#   (d) copy is honest (no "saved locally" / unused-height claims).
+# ─────────────────────────────────────────────────────────────────────────────
+from html.parser import HTMLParser
+
+class _ProfileTree(HTMLParser):
+    VOID = {'input', 'img', 'br', 'hr', 'meta', 'link', 'source', 'area', 'base', 'col', 'embed', 'param', 'track', 'wbr'}
+    def __init__(self):
+        super().__init__(); self.stack = []; self.controls = []; self.blocks = {}; self.in_profile = 0
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if a.get('id') == 's-profile': self.in_profile = len(self.stack) + 1
+        node = {'tag': tag, 'attrs': a}
+        if self.in_profile:
+            if a.get('data-pb'): self.blocks[a['data-pb']] = self.blocks.get(a['data-pb'], 0) + 1
+            if tag in ('button', 'input', 'select', 'textarea', 'a'):
+                self.controls.append((tag, a, [n['attrs'] for n in self.stack] + [a]))
+        if tag not in self.VOID: self.stack.append(node)
+    def handle_endtag(self, tag):
+        if tag in self.VOID: return
+        while self.stack:
+            n = self.stack.pop()
+            if n['tag'] == tag: break
+        if self.in_profile and len(self.stack) < self.in_profile: self.in_profile = 0
+
+P5_AUTOSAVE = r"""
+var fails = [];
+function t(c, m){ if(!c) fails.push(m); }
+var VAL = {}, STATUS = {}, CLOUD = 0, GREET = 0, CHART = 0;
+var document = { getElementById: function(id){ if(/Status$/.test(id)) return STATUS[id] || (STATUS[id] = { textContent:'' }); return VAL.hasOwnProperty(id) ? { value: VAL[id] } : null; } };
+var userProfile = { weight: 82.4, bodyWeight: 82.4, firstName:'A', gender:'', dob:'', heightCM: 180 };
+var TODAY = new Date().toISOString().split('T')[0];
+var bodyWeightLog = [{ date: TODAY, weight: 82.4, unit:'lbs', displayWeight: 181.7, displayUnit:'lbs' }];
+function saveLocalCache(){} function isAuthenticated(){ return false; } function renderToday(){ GREET++; } function renderBWChart(){ CHART++; }
+function setTimeout(){ return 0; } function clearTimeout(){} function cloudSaveProfile(){ CLOUD++; }
+var _profileStatusSeq = 0, _profileCloudTimer = null, _profileCloudPending = false, _profileStatusEl = null;
+// an unrelated field never touches body weight
+VAL.profileGender = 'F'; _profileAutosaveField('profileGender');
+t(userProfile.gender === 'F', 'gender not saved');
+t(userProfile.weight === 82.4 && bodyWeightLog.length === 1 && bodyWeightLog[0].weight === 82.4 && bodyWeightLog[0].displayUnit === 'lbs', 'editing gender rewrote body weight: ' + JSON.stringify(bodyWeightLog));
+t(CHART === 0 && GREET === 0, 'gender edit re-rendered weight chart / greeting');
+// a cleared or silly weight is never saved
+VAL.profileWeight = ''; _profileAutosaveField('profileWeight');
+t(userProfile.weight === 82.4 && bodyWeightLog[0].weight === 82.4, 'empty weight saved a default');
+t(/not saved/.test(STATUS.pfBodyStatus.textContent), 'no message for empty weight: ' + STATUS.pfBodyStatus.textContent);
+VAL.profileWeight = '999'; _profileAutosaveField('profileWeight'); t(userProfile.weight === 82.4, 'out-of-range weight saved');
+VAL.profileWeight = '83.6'; _profileAutosaveField('profileWeight');
+t(userProfile.weight === 83.6 && bodyWeightLog.length === 1 && bodyWeightLog[0].weight === 83.6, 'valid weight not saved/logged: ' + JSON.stringify(bodyWeightLog));
+// half-typed date and empty height are not saved
+VAL.profileDOB = '0019-05-02'; _profileAutosaveField('profileDOB'); t(userProfile.dob === '', 'half-typed date saved');
+VAL.profileDOB = '1990-05-02'; _profileAutosaveField('profileDOB'); t(userProfile.dob === '1990-05-02', 'full date not saved');
+VAL.profileHeightCM = ''; _profileAutosaveField('profileHeightCM'); t(userProfile.heightCM === 180, 'empty height saved a default');
+// a name edit saves only that name and refreshes the greeting
+VAL.profilePreferredName = '  Sam  '; _profileAutosaveField('profilePreferredName');
+t(userProfile.preferredName === 'Sam' && userProfile.firstName === 'A' && GREET === 1, 'name edit');
+t(_profileFieldValue({ kind:'text' }, 'x'.repeat(100), Date.now()).value.length === 60, 'text not capped');
+JSON.stringify(fails);
+"""
+
+P5_PURE = r"""
+var fails = [];
+function t(c, m){ if(!c) fails.push(m); }
+t(_p5FlagsFromQuery('') === null && _p5FlagsFromQuery('?p4=reminders') === null, 'no p5 → null');
+t(_p5FlagsFromQuery('?p5=profile').profile === true && _p5FlagsFromQuery('?p5=1').profile === true, 'on');
+t(_p5FlagsFromQuery('?p5=0').profile === false && _p5FlagsFromQuery('?p5=off').profile === false, 'off');
+t(_p5FlagsFromQuery('?p5=nope') === null, 'unknown ignored');
+JSON.stringify(fails);
+"""
+
+def gate_profile_v2(html, js):
+    problems = []
+    s = html.find('id="s-profile"'); e = html.find('id="navV2"', s)
+    seg = html[html.rfind('<div', 0, s):e if e != -1 else len(html)]
+    tree = _ProfileTree(); tree.feed(seg)
+    lay = extract_const_array(js, 'PROFILE_V2_LAYOUT') or ''
+    hid = extract_const_line(js, 'PROFILE_V2_HIDDEN') or ''
+    keep = extract_const_line(js, 'PROFILE_V2_KEEP') or ''
+    placed = re.findall(r"'([a-z0-9-]+)'", re.sub(r"title:'[^']*'|note:'[^']*'|id:'[^']*'|k:'[^']*'|caption:'(?:\\'|[^'])*'", '', lay)) + re.findall(r"k:'([a-z0-9-]+)'", lay)
+    by_id = re.findall(r"'#([A-Za-z0-9_]+)'", lay)
+    hidden = re.findall(r"'([a-z0-9-]+)'", hid); kept = re.findall(r"'([a-z0-9-]+)'", keep)
+    if not lay or not hid or not keep: problems.append('PROFILE_V2_LAYOUT / _HIDDEN / _KEEP not found')
+    all_keys = placed + hidden + kept
+    for k in set(all_keys):
+        n = all_keys.count(k)
+        if n > 1: problems.append(f'block "{k}" is placed {n} times (a control would move twice)')
+        if k not in tree.blocks: problems.append(f'layout names block "{k}", which no element is tagged with')
+    for k in tree.blocks:
+        if k not in all_keys: problems.append(f'Profile block "{k}" is tagged but not placed — it would disappear in the new layout')
+    for i in by_id:
+        if f'id="{i}"' not in seg: problems.append(f'layout names #{i}, which is not on the Profile screen')
+    # every control must sit inside a tagged block (or a by-id card), unless it is an overlay's own control
+    orphans = []
+    for tag, a, chain in tree.controls:
+        # the NEAREST tagged ancestor decides where the control ends up
+        near = None
+        for c in reversed(chain):
+            if c.get('data-pb'): near = ('pb', c['data-pb']); break
+            if c.get('id') in by_id: near = ('id', c['id']); break
+        name = a.get('id') or a.get('onclick') or a.get('onchange') or tag
+        if near is None: orphans.append((name, 'is not in any tagged block'))
+        elif near[0] == 'pb' and near[1] in hidden:
+            if near[1] == 'data-exportjson' or (near[1] == 'save' and 'saveProfile' in (a.get('onclick') or '')): continue   # replaced on purpose
+            orphans.append((name, f'sits in "{near[1]}", which the new layout hides'))
+    for o, why in orphans: problems.append(f'control {o!r} on Profile {why} — it would vanish in the new layout')
+    # (b) flag, move-only
+    ap = extract_decl(js, '_profileApplyLayoutV2') or ''
+    if "if(_profileV2Applied || !_p5FlagOn('profile')) return false;" not in ap: problems.append('the new layout must only run behind the ?p5=profile flag, once')
+    if 'cloneNode' in ap or 'innerHTML' in ap or 'outerHTML' in ap: problems.append('the new layout must move existing elements, never copy them (duplicate ids / lost handlers)')
+    if "screen.querySelectorAll('[data-pbc]').forEach(c => { c.hidden = true; c.style.display = 'none'; });" not in ap:
+        problems.append('the emptied old containers must be hidden for real (inline display:flex beats [hidden])')
+    if ap.find('screen.insertBefore(v2') == -1 or ap.find('screen.insertBefore(v2') > ap.find('sec.blocks.forEach'):
+        problems.append('the new sections must be in the page before controls are moved (a failure must not strand them)')
+    if "sum.appendChild(h);" not in ap or "wrap.setAttribute('aria-labelledby', h.id);" not in ap:
+        problems.append('the collapsed section needs a real heading and a label')
+    # (c) per-field autosave: valid values only, own field only, honest status
+    rules = extract_const_object(js, 'PROFILE_FIELD_RULES') or ''
+    for fid in ['profileFirstName', 'profileLastName', 'profileEmail', 'profilePreferredName', 'profileGender', 'profileDOB', 'profileHeightCM', 'profileWeight']:
+        if fid + ':' not in rules: problems.append(f'{fid} does not autosave in the new layout')
+    if "el.addEventListener('change', () => _profileAutosaveField(id));" not in ap: problems.append('fields must save themselves on change (no debounced whole-form save)')
+    fl = extract_decl(js, '_profileFlushCloud') or ''
+    for phrase in ["'✓ Saved on this device · syncs once your account has finished loading'", "'☁️ Saved and synced to your account'", "'✓ Saved on this device · will sync automatically'", 's !== _profileStatusSeq']:
+        if phrase not in fl: problems.append(f'autosave status must use the honest _announceSave wording and ignore stale results ({phrase})')
+    if "if(document.visibilityState === 'hidden') _profileFlushCloud();" not in ap: problems.append('a pending account upload must be flushed when the app is hidden')
+    if "'save'" not in hid: problems.append('the Save button must be hidden in the autosave layout')
+    if rules:
+        dom = [extract_const_object(js, 'PROFILE_FIELD_RULES'), extract_decl(js, '_profileFieldValue'), extract_decl(js, '_profileAutosaveField')]
+        out2, _ = run_jxa('\n'.join(dom) + '\n' + P5_AUTOSAVE)
+        try: problems += json.loads(out2)
+        except Exception: problems.append('autosave runner errored: ' + out2[:300])
+    # (d) honest copy everywhere
+    for bad in ['Height helps track body composition', 'All data is saved locally on your device']:
+        if bad in html: problems.append(f'over-promising copy still present: {bad!r}')
+    # pure flag parser
+    pieces = [extract_const_line(js, 'P5_FLAG_KEYS') or '', extract_decl(js, '_p5FlagsFromQuery') or '']
+    out, _ = run_jxa('\n'.join(pieces) + '\n' + P5_PURE)
+    try: problems += json.loads(out)
+    except Exception: problems.append('flag runner errored: ' + out[:200])
+    if not problems: print(f'  ✓ {len(tree.controls)} Profile controls all in tagged blocks; {len(tree.blocks)} blocks each placed once (sections/hidden/overlay); flag-only, move-only; quiet honest autosave; honest copy')
+    for p in problems: print('  ✗ ' + p)
+    return not problems
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/24] parse')
+    print('[1/25] parse')
     p = gate_parse(js)
-    print('[2/24] invariants')
+    print('[2/25] invariants')
     inv = gate_invariants(js)
-    print('[3/24] video map')
+    print('[3/25] video map')
     vm = gate_videomap(js)
-    print('[4/24] inline handler wiring')
+    print('[4/25] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/24] auth log hygiene')
+    print('[5/25] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/24] sign-out scrub')
+    print('[6/25] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/24] safe rendering of user text')
+    print('[7/25] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/24] sync honesty')
+    print('[8/25] sync honesty')
     sy = gate_sync(js)
-    print('[9/24] media fallback + reminder copy')
+    print('[9/25] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/24] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/25] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/24] core-journey accessibility (session + dialogs)')
+    print('[11/25] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/24] Start today (first-use flow) + shortened Path wizard')
+    print('[12/25] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/24] simplified navigation (flagged)')
+    print('[13/25] simplified navigation (flagged)')
     nv = gate_nav_v2(html, js)
-    print('[14/24] Progress weekly briefing')
+    print('[14/25] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/24] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/25] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/24] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/25] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/24] Phase 2 typed sets (preview before save)')
+    print('[17/25] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
-    print('[18/24] Phase 2 weekly AI recap + measurement')
+    print('[18/25] Phase 2 weekly AI recap + measurement')
     rc = gate_recap(html, js)
-    print('[19/24] Phase 3 offline media (download, cache versioning, fallback order)')
+    print('[19/25] Phase 3 offline media (download, cache versioning, fallback order)')
     om = gate_offline_media(html, js)
-    print('[20/24] Phase 3 programme discovery (metadata, finder, why, switch preview)')
+    print('[20/25] Phase 3 programme discovery (metadata, finder, why, switch preview)')
     dc = gate_discovery(html, js)
-    print('[21/24] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
+    print('[21/25] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
     sh = gate_sharing(html, js)
-    print('[22/24] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
+    print('[22/25] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
     lf = gate_leftovers(html, js)
-    print('[23/24] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
+    print('[23/25] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
     rm = gate_reminders(html, js)
-    print('[24/24] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
+    print('[24/25] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
     rs = gate_reminders_server(html, js)
+    print('[25/25] Profile & settings information model (flagged)')
+    pv = gate_profile_v2(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 
