@@ -6903,76 +6903,163 @@ def gate_ai_beta(html, js, sql=None, core=None):
     for p in problems: print('  ✗ ' + p)
     return not problems
 
+# ── Gate 33: extracted modules (Priority 7) ────────────────────────────────
+# app/rollout.js is loaded AS A FILE (no HTML parsing) with only browser-API
+# stubs, and must behave on its own; index.html must carry an exact copy.
+MODULE_ROLLOUT_RUN = r"""
+var P = [];
+function eq(l, g, w){ if(JSON.stringify(g) !== JSON.stringify(w)) P.push(l + ' — got ' + JSON.stringify(g) + ', want ' + JSON.stringify(w)); }
+// registry ↔ the module's own flag functions, for every stored value
+var REAL = { nav_v2: function(){ return _navV2On(localStorage.getItem(NAV_V2_KEY)); }, p5_profile: function(){ return _p5FlagOn('profile'); }, p4_reminders: function(){ return _p4FlagOn('reminders'); },
+  p3_offline: function(){ return _p3FlagOn('offline'); }, p3_discover: function(){ return _p3FlagOn('discover'); }, p3_share: function(){ return _p3FlagOn('share'); },
+  ai_v1: function(){ return _aiFlagOn('master'); }, ai_coach: function(){ return _aiFlagOn('coach'); }, ai_nl: function(){ return _aiFlagOn('nl'); }, ai_recap: function(){ return _aiFlagOn('recap'); } };
+var keys = [NAV_V2_KEY]; [P3_FLAG_KEYS, P4_FLAG_KEYS, P5_FLAG_KEYS, AI_FLAG_KEYS].forEach(function(o){ Object.keys(o).forEach(function(k){ keys.push(o[k]); }); });
+eq('every flag key is registered, nothing extra', keys.slice().sort(), ROLLOUT_REGISTRY.map(function(e){ return e.key; }).sort());
+ROLLOUT_REGISTRY.forEach(function(e){
+  [null, '1', '0', 'x'].forEach(function(v){ [null, '1'].forEach(function(m){
+    store = {}; if(v !== null) store[e.key] = v; if(e.requires && m !== null) store[AI_FLAG_KEYS.master] = m;
+    var snap = _rolloutSnapshot(ROLLOUT_REGISTRY, function(k){ return localStorage.getItem(k); });
+    if(snap[e.id].on !== REAL[e.id]()) P.push(e.id + ' disagrees for ' + v + '/' + m);
+  }); });
+});
+// URL switches, exactly as the app uses them
+function Q(q, fn){ store = {}; location.search = q; fn(); return JSON.parse(JSON.stringify(store)); }
+eq('?p3=all / ?p3=0', [Q('?p3=all', _p3ApplyFlagQuery), Q('?p3=0', _p3ApplyFlagQuery)], [{ maxgainz_p3_offline:'1', maxgainz_p3_discover:'1', maxgainz_p3_share:'1' }, {}]);
+eq('?p4=0 stores the opt-out; ?p5=0 too', [Q('?p4=0', _p4ApplyFlagQuery), Q('?p5=0', _p5ApplyFlagQuery)], [{ maxgainz_p4_reminders:'0' }, { maxgainz_p5_profile:'0' }]);
+eq('?ai=coach → master + coach; ?ai=0 → stored opt-out', [Q('?ai=coach', _aiApplyFlagQuery), Q('?ai=0', _aiApplyFlagQuery)], [{ maxgainz_ai_v1:'1', maxgainz_ai_coach:'1' }, { maxgainz_ai_v1:'0' }]);
+eq('no query → nothing changes', Q('', _p3ApplyFlagQuery), {});
+eq('URL cleaned after applying', (function(){ location.search = '?p3=all&x=1'; replaced = null; _p3ApplyFlagQuery(); return replaced; })(), '/?x=1');
+store = {}; _navMigrate(); eq('nav migration on a fresh device', /^pending:\d+$/.test(store[NAV_NOTICE_KEY] || ''), true);
+store = { maxgainz_nav_v2:'0' }; _navMigrate(); eq('nav migration respects an opt-out', store[NAV_NOTICE_KEY], undefined);
+eq('beta plan', [_aiBetaPlan(true, null, null), _aiBetaPlan(true, '0', null)], ['enrol', 'none']);
+// blocked storage never throws
+localStorage.getItem = function(){ throw new Error('denied'); };
+eq('blocked storage: defaults, no throw', [_p5FlagOn('profile'), _p4FlagOn('reminders'), _p3FlagOn('offline'), _aiFlagOn('master')], [true, true, false, false]);
+JSON.stringify(P);
+"""
+MODULE_STUBS = r"""
+var store = {}, replaced = null;
+var localStorage = { getItem:function(k){ return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; }, setItem:function(k, v){ store[k] = String(v); }, removeItem:function(k){ delete store[k]; } };
+var location = { search:'', pathname:'/', hash:'' };
+var history = { replaceState:function(a, b, u){ replaced = u; } };
+"""
+
+def gate_modules(html, js, root=None):
+    problems = []
+    root = root or ROOT
+    sys.path.insert(0, os.path.join(root, 'tools'))
+    try:
+        import importlib; bundle = importlib.import_module('bundle'); importlib.reload(bundle)
+    except Exception as e:
+        print('  ✗ tools/bundle.py not importable: ' + str(e)); return False
+    problems += bundle.drift(html, root)
+    for m in bundle.MODULES:
+        pth = os.path.join(root, m)
+        if not os.path.exists(pth): problems.append(f'{m} missing'); continue
+        src = open(pth, encoding='utf-8').read()
+        if re.search(r'\bdocument\b|\bwindow\.', re.sub(r'//[^\n]*', '', src)): problems.append(f'{m} must not touch the DOM (keep UI in index.html)')
+        # the region must come before any other script code (its consts are read at load time)
+        si = html.find('\n<script>\n') + len('\n<script>\n')
+        if html.find(bundle.begin(m)) != si: problems.append(f'{m} must be bundled at the very top of the script')
+    # loaded on its own, the file must work (no hidden dependency on index.html)
+    pth = os.path.join(root, 'app', 'rollout.js')
+    if os.path.exists(pth):
+        out, _ = run_jxa(MODULE_STUBS + open(pth, encoding='utf-8').read() + '\n' + MODULE_ROLLOUT_RUN)
+        try: problems += json.loads(out)
+        except Exception: problems.append('module runner errored (does app/rollout.js depend on index.html?): ' + out[:300])
+        # one source of truth: no flag key or flag declaration outside the module
+        r = bundle.region_re('app/rollout.js').search(html)
+        if r:
+            outside = html[:r.start()] + html[r.end():]
+            keys = re.findall(r"key:'([a-z0-9_]+)'", r.group(1)) + ['maxgainz_nav_notice_v1', 'maxgainz_ai_cohort']
+            for line in outside.splitlines():
+                t = line.strip()
+                if t.startswith('//') or t.startswith('<!--') or t.startswith('*'): continue
+                code = re.sub(r'//[^\n]*$', '', t)
+                for k in keys:
+                    if k in code: problems.append(f'flag key {k} used outside app/rollout.js: {t[:80]}')
+            decl = re.findall(r'^(?:const|let|var)\s+([A-Z0-9_]+)\s*=|^function\s+([A-Za-z0-9_$]+)\s*\(', r.group(1), re.M)
+            for c, f in decl:
+                n = c or f
+                if re.search(r'^(?:const|let|var)\s+' + re.escape(n) + r'\s*=|^(?:async\s+)?function\s+' + re.escape(n) + r'\s*\(', outside, re.M):
+                    problems.append(f'{n} is declared both in app/rollout.js and in index.html')
+    if not problems:
+        print(f'  ✓ app/rollout.js bundled verbatim at the top; works loaded on its own (registry ↔ flags, URL switches, migration, blocked storage); no flag key or declaration outside it')
+    for p in problems: print('  ✗ ' + p)
+    return not problems
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/32] parse')
+    print('[1/33] parse')
     p = gate_parse(js)
-    print('[2/32] invariants')
+    print('[2/33] invariants')
     inv = gate_invariants(js)
-    print('[3/32] video map')
+    print('[3/33] video map')
     vm = gate_videomap(js)
-    print('[4/32] inline handler wiring')
+    print('[4/33] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/32] auth log hygiene')
+    print('[5/33] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/32] sign-out scrub')
+    print('[6/33] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/32] safe rendering of user text')
+    print('[7/33] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/32] sync honesty')
+    print('[8/33] sync honesty')
     sy = gate_sync(js)
-    print('[9/32] media fallback + reminder copy')
+    print('[9/33] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/32] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/33] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/32] core-journey accessibility (session + dialogs)')
+    print('[11/33] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/32] Start today (first-use flow) + shortened Path wizard')
+    print('[12/33] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/32] simplified navigation (default, reversible, one-time notice)')
+    print('[13/33] simplified navigation (default, reversible, one-time notice)')
     nv = gate_nav_v2(html, js)
-    print('[14/32] Progress weekly briefing')
+    print('[14/33] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/32] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/33] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/32] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/33] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/32] Phase 2 typed sets (preview before save)')
+    print('[17/33] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
-    print('[18/32] Phase 2 weekly AI recap + measurement')
+    print('[18/33] Phase 2 weekly AI recap + measurement')
     rc = gate_recap(html, js)
-    print('[19/32] Phase 3 offline media (download, cache versioning, fallback order)')
+    print('[19/33] Phase 3 offline media (download, cache versioning, fallback order)')
     om = gate_offline_media(html, js)
-    print('[20/32] Phase 3 programme discovery (metadata, finder, why, switch preview)')
+    print('[20/33] Phase 3 programme discovery (metadata, finder, why, switch preview)')
     dc = gate_discovery(html, js)
-    print('[21/32] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
+    print('[21/33] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
     sh = gate_sharing(html, js)
-    print('[22/32] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
+    print('[22/33] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
     lf = gate_leftovers(html, js)
-    print('[23/32] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
+    print('[23/33] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
     rm = gate_reminders(html, js)
-    print('[24/32] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
+    print('[24/33] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
     rs = gate_reminders_server(html, js)
-    print('[25/32] Profile & settings information model (flagged)')
+    print('[25/33] Profile & settings information model (flagged)')
     pv = gate_profile_v2(html, js)
-    print('[26/32] rollout registry + configuration in Data health')
+    print('[26/33] rollout registry + configuration in Data health')
     ro = gate_rollout(html, js)
-    print('[27/32] Today headline metric (context-sensitive, pinnable)')
+    print('[27/33] Today headline metric (context-sensitive, pinnable)')
     tm = gate_today_metric(html, js)
-    print('[28/32] authentication forms (Enter, password managers, errors, local data kept)')
+    print('[28/33] authentication forms (Enter, password managers, errors, local data kept)')
     af = gate_auth_forms(html, js)
-    print('[29/32] product-wide accessibility (click targets, state, dialog names)')
+    print('[29/33] product-wide accessibility (click targets, state, dialog names)')
     ax = gate_a11y_product(html, js)
-    print('[30/32] offline coverage explained (what works in the gym, what removal deletes)')
+    print('[30/33] offline coverage explained (what works in the gym, what removal deletes)')
     oc = gate_offline_coverage(html, js)
-    print('[31/32] feedback operational controls (bounded payloads, safe retries, rate limits, receipt)')
+    print('[31/33] feedback operational controls (bounded payloads, safe retries, rate limits, receipt)')
     fo = gate_feedback_ops(html, js)
-    print('[32/32] controlled AI beta (cohort, explanations, outcomes, failure review)')
+    print('[32/33] controlled AI beta (cohort, explanations, outcomes, failure review)')
     ab = gate_ai_beta(html, js)
+    print('[33/33] extracted modules (app/rollout.js: verbatim bundle, works standalone, one source of truth)')
+    md = gate_modules(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af and ax and oc and fo and ab:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af and ax and oc and fo and ab and md:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 
