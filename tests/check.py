@@ -4187,9 +4187,9 @@ def gate_offline_media(html, js, sw=None, root=None):
 # ─────────────────────────────────────────────────────────────────────────────
 DISC_FNS = ['_discKeys', '_progInfo', '_estSessionMin', '_progMatches', '_whyProgramme', '_progBaseExercises',
             '_progSwitchDiff', '_discRenderCards', '_discRenderFilters', '_discFilterOpts', '_discAnswers',
-            '_discSwitchHtml', '_discWhyHtml', 'recommendProgramme', '_stCatalogue', '_stProgEquip', '_stAnswersFrom',
+            '_discSwitchHtml', '_discSwitchBlock', '_discPathName', '_progAllDays', '_discWhyHtml', 'recommendProgramme', '_stCatalogue', '_stProgEquip', '_stAnswersFrom',
             'isLibraryProgramme', 'getLibraryId', 'getLibraryProgramme', 'esc', '_p3FlagOn', '_offlineFmtMB']
-DISC_OBJS = ['PROGRAMME_META', 'DISC_LEVEL_LABEL', 'DISC_GOAL_LABEL', 'DISC_PROG_LABEL', 'DISC_EQUIP_LABEL',
+DISC_OBJS = ['HIIT_SERIES', 'PROGRAMME_META', 'DISC_LEVEL_LABEL', 'DISC_GOAL_LABEL', 'DISC_PROG_LABEL', 'DISC_EQUIP_LABEL',
              'ULF_VARIANTS', 'PPL', 'P3_FLAG_KEYS']
 DISC_ARRS = ['LIBRARY_PROGRAMMES', '_BUILTIN_STRENGTH', 'ST_DAYS', 'ST_MINUTES']
 
@@ -4197,14 +4197,15 @@ DISC_STUBS = r"""
 var LS = {}; var localStorage = { getItem: function(k){ return Object.prototype.hasOwnProperty.call(LS, k) ? LS[k] : null; }, setItem: function(k, v){ LS[k] = String(v); }, removeItem: function(k){ delete LS[k]; } };
 var userProfile = { onboarding: null }; var userPath = null; var completedSessions = [];
 var _pathWizard = { programme:null, daysPerWeek:3 };
-var _discFilters = { goal:'all', level:'all', days:'all', equip:'all', minutes:'all' }, _discList = [], _discCompare = [], _discDetailKey = null, _discRemoveOldMedia = true;
+var _discFilters = { goal:'all', level:'all', days:'all', equip:'all', minutes:'all' }, _discList = [], _discCompare = [], _discDetailKey = null, _discRemoveOldMedia = true, _discRemoveArmed = null;
+function _offlinePathsToRemove(st, k){ return ['a/0.jpg', 'a/loop.mp4']; }
 function isPathActive(){ return !!userPath; }
 function getPathCurrentWeek(){ return 2; }
 function _progDisplayName(k){ return k; }
 var OFF_STATE = { progs:{} };
 function _offlineProgKey(p){ return p ? p.programme : null; }
 function _offlineStateGet(){ return OFF_STATE; }
-function _offlineSetForKey(){ return [{ size: 5e6 }]; }
+function _offlineSetForKey(k, tier){ var f = [{ path:'a/0.jpg', size: 5e6 }, { path:'b/0.jpg', size: 7e6 }]; if(tier === 'full') f.push({ path:'a/loop.mp4', size: 60e6 }); return f; }
 function _offlineSetBytes(f){ return f.reduce(function(a, x){ return a + x.size; }, 0); }
 function eqA(a, b){ return JSON.stringify(a) === JSON.stringify(b); }
 """
@@ -4240,12 +4241,14 @@ keys.forEach(function(k){
           : ((/strength/.test(g) && /hypertrophy|size/.test(g)) || (/hypertrophy/.test(g) && /power/.test(g)));
   ok(k + ': goal matches "' + src.goal + '"', gOk);
   var ec = p.equipClass;
-  if(ec === 'bodyweight') ok(k + ': bodyweight programme lists no gym kit', m.equipment.every(function(e){ return ['bodyweight','band'].indexOf(e) !== -1; }));
+  if(ec === 'bodyweight') ok(k + ': bodyweight programme lists no gym kit', m.equipment.every(function(e){ return ['bodyweight','band','stability ball','bench'].indexOf(e) !== -1; }) && m.equipment.indexOf('barbell') === -1 && m.equipment.indexOf('machines') === -1);
   if(ec === 'home') ok(k + ': home programme needs dumbbells, no barbell/machines', m.equipment.indexOf('dumbbells') !== -1 && m.equipment.indexOf('barbell') === -1 && m.equipment.indexOf('machines') === -1);
   if(ec === 'gym') ok(k + ': gym programme lists gym kit', m.equipment.some(function(e){ return ['barbell','machines','cables'].indexOf(e) !== -1; }));
   var allDays = k === 'ULF' ? [].concat.apply([], Object.keys(ULF_VARIANTS).map(function(d){ return ULF_VARIANTS[d]; })) : p.days.map(function(d){ return d.exercises; });
   allDays.forEach(function(exs, i){ var e = _estSessionMin(exs);
     ok(k + ': day ' + (i + 1) + ' (~' + e + ' min) fits ' + m.minutes[0] + '–' + m.minutes[1], e >= m.minutes[0] * 0.8 && e <= m.minutes[1] * 1.2); });
+  ok(k + ': leg curls / extensions / leg press need machines', !allDays.some(function(exs){ return exs.some(function(x){ return /^(Leg Curls|Leg Extensions|Leg Press|Seated Leg Curl|Hack Squat)$/.test(x.name); }); }) || m.equipment.indexOf('machines') !== -1);
+  ok(k + ': stability-ball moves list the ball', !allDays.some(function(exs){ return exs.some(function(x){ return /Stability Ball/.test(x.name); }); }) || m.equipment.indexOf('stability ball') !== -1);
   ok(k + ': barbell programmes list a barbell', !allDays.some(function(exs){ return exs.some(function(x){ return /^(Squat|Bench Press|Deadlift|Overhead Press)$/.test(x.name); }); }) || m.equipment.indexOf('barbell') !== -1);
 });
 // Filters.
@@ -4253,7 +4256,8 @@ function F(o){ var f = { goal:'all', level:'all', days:'all', equip:'all', minut
 ok('no filter → everything', F({}).length === keys.length);
 ok('no equipment → only bodyweight programmes', F({ equip:'bodyweight' }).every(function(k){ return _progInfo(k).equipClass === 'bodyweight'; }) && F({ equip:'bodyweight' }).length >= 1);
 ok('dumbbells at home → home + bodyweight', F({ equip:'home' }).every(function(k){ var c = _progInfo(k).equipClass; return c === 'home' || c === 'bodyweight'; }) && F({ equip:'home' }).length >= 2);
-ok('≤ 45 min → shortest session ≤ 45', F({ minutes:45 }).every(function(k){ return PROGRAMME_META[k].minutes[0] <= 45; }) && F({ minutes:45 }).length >= 3);
+ok('≤ 45 min → every session ≤ 45', F({ minutes:45 }).every(function(k){ return PROGRAMME_META[k].minutes[1] <= 45; }) && F({ minutes:45 }).length >= 3 && F({ minutes:45 }).indexOf('library:sl5x5') === -1);
+ok('intermediate includes beginner-intermediate (GZCLP)', F({ level:'intermediate' }).indexOf('library:gzclp') !== -1);
 ok('6 days → PPL included', F({ days:6 }).indexOf('PPL') !== -1 && F({ days:6 }).every(function(k){ return PROGRAMME_META[k].days.indexOf(6) !== -1; }));
 ok('strength → includes strength + both', F({ goal:'strength' }).every(function(k){ return PROGRAMME_META[k].goal !== 'muscle'; }) && F({ goal:'strength' }).indexOf('library:phul') !== -1);
 ok('beginner → beginner + beginner-intermediate', F({ level:'beginner' }).indexOf('library:gzclp') !== -1 && F({ level:'beginner' }).every(function(k){ return PROGRAMME_META[k].level.indexOf('beginner') === 0; }));
@@ -4271,10 +4275,23 @@ var cat = _stCatalogue(), n = 0;
       if(w.misses.some(function(t){ return /^Needs .* — you said/.test(t); })) fails.push('recommended programme flagged as wrong equipment ' + JSON.stringify(ans));
     }
     keys.forEach(function(k){ var w = _whyProgramme(k, ans, cat); var e = _progInfo(k).equipClass;
+      var cg = ''; cat.forEach(function(c){ if(c.key === k) cg = String(c.goal).toLowerCase(); });
+      var bonus = goal === 'strength' ? cg.indexOf('strength') !== -1 : goal === 'muscle' ? (cg.indexOf('hypertrophy') !== -1 || cg.indexOf('size') !== -1) : null;
+      var claims = w.fits.some(function(t){ return /^Suits your goal/.test(t); });
+      if(bonus !== null && bonus !== claims) fails.push('goal fit disagrees with the recommender for ' + k + ' / ' + goal);
+      if(bonus === null && (claims || w.misses.some(function(t){ return /more than/.test(t); }))) fails.push('goal claim for ' + goal + ' on ' + k);
+      var est = _progAllDays(k).map(_estSessionMin), fitN = est.filter(function(x){ return x <= minutes; }).length;
+      var mClaim = w.fits.filter(function(t){ return /fit(s)? in \d+ minutes/.test(t); })[0];
+      if(mClaim && fitN * 2 < est.length) fails.push('claims sessions fit in ' + minutes + ' for ' + k + ' (' + fitN + '/' + est.length + ')');
+      if(/^Every session/.test(mClaim || '') && fitN !== est.length) fails.push('claims every session fits for ' + k);
+      if(w.misses.some(function(t){ return /rotate/.test(t); })) fails.push('promises rotation the finder never does: ' + k);
       var eqOk = equipment === 'gym' || (equipment === 'home' ? (e === 'home' || e === 'bodyweight') : e === 'bodyweight');
       if(eqOk !== w.fits.some(function(t){ return /^Works with/.test(t); })) fails.push('equipment fit wrong for ' + k + ' / ' + equipment); });
   }); }); }); }); });
 ok('why: ' + n + ' answer sets checked', n === 4 * 3 * 5 * 3 * 4);
+userProfile = { onboarding: { goal:'strength', equipment:'gym', experienceLevel:'beginner' } };
+ok('no days answer → no "your N days" claim', _discAnswers().days === null && !_whyProgramme('ULF', _discAnswers(), cat).fits.some(function(t){ return /training days|of your/.test(t); }));
+userProfile = { onboarding: null };
 ok('why without answers → invite, no claims', (function(){ var w = _whyProgramme('ULF', {}, cat); return !w.hasAnswers && !w.isTop && !w.fits.length && !w.misses.length; })());
 // Switch diff.
 var d = _progSwitchDiff({ programme:'ULF', duration:8, coreSchedule:{ daysPerWeek:3 } }, 'library:sl5x5', 3, { sessions:42, week:3, offlineBytes:0 });
@@ -4292,7 +4309,12 @@ var h = _discSwitchHtml();
 ok('switch preview shown for a real switch', /What changes/.test(h) && /Kept: all 2 logged workouts/.test(h) && /week 2 of 8/.test(h));
 ok('no media checkbox without a download', !/type="checkbox"/.test(h));
 OFF_STATE = { progs: { 'ULF': { tier:'images' } } };
-var h2 = _discSwitchHtml(); ok('media checkbox (ticked) when the old programme is downloaded', /type="checkbox" checked/.test(h2) && /discToggleRemoveMedia\(this\.checked\)/.test(h2));
+var h2 = _discSwitchHtml(); ok('media checkbox (ticked) when the old programme is downloaded', /type="checkbox" checked/.test(h2) && /discToggleRemoveMedia\(this\.checked\)/.test(h2) && _discRemoveArmed === 'ULF');
+ok('checkbox states only what removal frees', /frees 5 MB/.test(h2));
+_discRemoveArmed = null; var h3 = _discSwitchBlock('PPL', 3, false); ok('Start today shows what changes, offers no removal and never arms it', /What changes/.test(h3) && !/checkbox/.test(h3) && _discRemoveArmed === null);
+userPath = { programme:'HIIT', hiitSeries:'summer-series', duration:8, coreSchedule:{ daysPerWeek:3 } };
+var h4 = _discSwitchBlock('ULF', 3, false); ok('HIIT series named, no fake exercise diff', /Summer Series/.test(h4) && /chosen per session/.test(h4) && !/Dropped/.test(h4));
+userPath = { programme:'ULF', duration:8, coreSchedule:{ daysPerWeek:3 } };
 _pathWizard = { programme:'ULF', daysPerWeek:3 }; ok('same programme → no switch preview', _discSwitchHtml() === '');
 // Rendering: escaped text, index/literal handlers only.
 var saveName = LIBRARY_PROGRAMMES[0].name, saveBlurb = LIBRARY_PROGRAMMES[0].blurb;
@@ -4343,12 +4365,15 @@ def gate_discovery(html, js):
     if 'selectBuiltInStrength' not in rc or 'openLibraryPreview' not in rc: problems.append('old library view changed (flag-off behaviour)')
     csp = extract_decl(js, 'confirmStartPath') or ''
     if re.search(r'completedSessions\s*=|customWeights\s*=|completedSessions\.(splice|pop|shift|length\s*=)', csp): problems.append('a switch touches saved history')
-    if not re.search(r'if\(_oldOfflineKey && _discRemoveOldMedia && [^\n]*_offlineRemoveKey\(_oldOfflineKey\)', csp): problems.append('switch does not honour the remove-offline-demos choice')
+    if not re.search(r'if\(_oldOfflineKey && _discRemoveOldMedia && _discRemoveArmed === _oldOfflineKey && [^\n]*\n\s*Promise\.resolve\(_offlineRemoveKey\(_oldOfflineKey\)\)\.catch', csp) or "_pathWizard.step === 5" not in csp: problems.append('switch does not honour the remove-offline-demos choice')
     if not re.search(r'\$\{_discSwitchHtml\(\)\}\s*\n\s*<div', extract_decl(js, 'renderPathStep5') or ''): problems.append('review step lacks the switch preview')
     for fn in ['adoptLibraryProgramme', 'discChoose']:
         body = extract_decl(js, fn) or ''
-        i_open = body.find("contains('open')) openPathWizard();"); i_set = body.find('_pathWizard.programme =')
+        i_open = body.find("openPathWizard(); }"); i_set = body.find('_pathWizard.programme =')
         if i_open == -1 or i_set == -1 or i_open > i_set: problems.append(fn + ': the wizard is opened after the choice is set (openPathWizard re-seeds it with the old programme)')
+    if '_pathWizard.hiitSeries = null' not in (extract_decl(js, 'adoptLibraryProgramme') or ''): problems.append('adopting a library programme keeps a HIIT series')
+    if not re.search(r'\.st-secondary\[hidden\]\s*\{\s*display:\s*none', html): problems.append('hidden .st-secondary buttons still display (the Find button shows with the flag off)')
+    if '_discSwitchBlock(pv.rec.key, pv.rec.daysPerWeek, false)' not in (extract_decl(js, 'renderStartTodayStep') or ''): problems.append('Start today replaces a Path without showing what changes, or offers a removal it cannot honour')
     rpt = extract_decl(js, 'renderPathTab') or ''
     if "_p3FlagOn('discover')" not in rpt or 'id="planFindProg" hidden' not in html: problems.append('Plan finder button not flag-gated')
     for p in problems: print('  ✗ ' + p)

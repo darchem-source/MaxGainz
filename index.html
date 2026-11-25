@@ -535,6 +535,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
 .st-next[disabled] { opacity:0.45; cursor:not-allowed; }
 .st-skip { display:block; width:100%; background:transparent; border:none; color:var(--text2); font-family:inherit; font-size:13px; padding:12px; cursor:pointer; text-decoration:underline; text-underline-offset:3px; min-height:44px; }
 .st-need { font-size:12px; color:var(--orange, #ff8c42); margin:-6px 0 8px; }
+.st-secondary[hidden] { display:none; }
 .st-secondary { display:block; width:100%; margin-top:8px; padding:13px; background:var(--surface2); border:0.5px solid var(--border); border-radius:12px; color:var(--text); font-family:inherit; font-size:14px; font-weight:700; cursor:pointer; min-height:48px; }
 .st-days { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; }
 .st-day { font-size:12px; font-weight:700; padding:6px 10px; border-radius:999px; background:var(--surface2); border:0.5px solid var(--border); color:var(--text2); }
@@ -2925,7 +2926,7 @@ const PROGRAMME_META = {
     notFor:['Anyone focused on muscle size', 'Lifters past the beginner stage'] },
   'library:greyskull': { goal:'strength', level:'beginner', days:[3], minutes:[35,45],
     equipment:['barbell','rack','bench','pull-up bar'],
-    progression:'linear', progressionText:'Add weight each session. The last set is as many reps as possible: beat 5 to go up faster; miss 5 and drop back 10%.',
+    progression:'linear', progressionText:'Add weight each session. The last set is as many reps as possible: 10 or more doubles the next jump; fewer than 5 means dropping back 10%.',
     forWho:['Beginners who want strength plus some arm work', 'People who like to push a final set'],
     notFor:['Lifters who want lots of variety', 'Training without a barbell'] },
   'library:gzclp': { goal:'strength', level:'beginner-intermediate', days:[4], minutes:[35,45],
@@ -2939,7 +2940,7 @@ const PROGRAMME_META = {
     forWho:['Lifters whose beginner gains have slowed', 'People who like a heavy, a light and a medium day'],
     notFor:['Complete beginners', 'Training without a barbell'] },
   'library:531-bbb': { goal:'strength-muscle', level:'intermediate', days:[4], minutes:[40,45],
-    equipment:['barbell','rack','bench','pull-up bar'],
+    equipment:['barbell','rack','bench','pull-up bar','machines'],
     progression:'wave', progressionText:'A 4-week wave from a training max (5s, 3s, then 1s). The max goes up a little after each wave.',
     forWho:['Intermediate lifters who want steady long-term progress', 'People who like one main lift per session'],
     notFor:['Beginners who can still add weight every session', 'Training three days or fewer'] },
@@ -2969,9 +2970,9 @@ const PROGRAMME_META = {
     forWho:['Home trainers with a pair of dumbbells', 'Beginners who want to build muscle'],
     notFor:['Lifters who want barbell strength numbers', 'Training with no equipment at all'] },
   'library:home-gainz': { goal:'muscle', level:'beginner', days:[3], minutes:[50,55],
-    equipment:['bodyweight','band'],
+    equipment:['bodyweight','band','stability ball','bench'],
     progression:'variation', progressionText:'Reach the top of each rep range, then lower more slowly, then move to a harder version or a shorter band.',
-    forWho:['Training at home with only a resistance band', 'Beginners who want muscle without a gym'],
+    forWho:['Training at home with a resistance band, a chair and a sturdy table', 'Beginners who want muscle without a gym'],
     notFor:['Lifters who want heavy strength work', 'People with access to a full gym'] },
   'library:machine-foundations': { goal:'muscle', level:'beginner', days:[3], minutes:[45,50],
     equipment:['machines','cables'],
@@ -17723,7 +17724,7 @@ function renderStartTodayStep(step, focusField, focusVal){
           <ul class="st-exlist">${rows || '<li><span class="st-ex-n">Your first session</span></li>'}</ul>
           <p class="st-note">Starting weights are deliberately conservative — adjust them on the first set. Add your body weight and best lifts later (Profile → Fine-tune starting weights) for sharper numbers.</p>
         </div>
-        ${replacing ? '<p class="st-need">This replaces your current plan.</p>' : ''}
+        ${replacing ? (_discSwitchBlock(pv.rec.key, pv.rec.daysPerWeek, false) || '<p class="st-need">This replaces your current plan.</p>') : ''}
         <button type="button" class="btn-p" style="width:100%;font-size:16px;padding:16px;min-height:56px;margin-top:6px;" onclick="stStart(1)" data-autofocus>▶ Start today's workout</button>
         <button type="button" class="st-secondary" onclick="stStart(0)">Save plan — start later</button>
         <div class="st-nav" style="margin-top:4px;">
@@ -26424,7 +26425,10 @@ function confirmStartPath() {
   // Offline demos of the programme being replaced (removed below if the
   // switch preview's checkbox stayed ticked).
   let _oldOfflineKey = null;
-  try { if(_p3FlagOn('discover') && isPathActive() && userPath && userPath.programme !== _pathWizard.programme) _oldOfflineKey = _offlineProgKey(userPath); } catch(e){ _oldOfflineKey = null; }
+  try {
+    const wizOpen = document.getElementById('pathWizardMod').classList.contains('open') && _pathWizard.step === 5;
+    if(wizOpen && _p3FlagOn('discover') && isPathActive() && userPath && userPath.programme !== _pathWizard.programme) _oldOfflineKey = _offlineProgKey(userPath);
+  } catch(e){ _oldOfflineKey = null; }
   // Archive any completed path before it's overwritten by the new one, so a
   // finished path is never silently discarded (idempotent — deduped by id).
   _archiveCompletedPathIfNeeded();
@@ -26463,9 +26467,10 @@ function confirmStartPath() {
   todayProg = userPath.programme;
   saveLocalCache();
   try {
-    if(_oldOfflineKey && _discRemoveOldMedia && _oldOfflineKey !== _offlineProgKey(userPath) && _offlineStateGet().progs[_oldOfflineKey]) _offlineRemoveKey(_oldOfflineKey);
+    if(_oldOfflineKey && _discRemoveOldMedia && _discRemoveArmed === _oldOfflineKey && _oldOfflineKey !== _offlineProgKey(userPath) && _offlineStateGet().progs[_oldOfflineKey])
+      Promise.resolve(_offlineRemoveKey(_oldOfflineKey)).catch(() => {});
   } catch(e){}
-  _discRemoveOldMedia = true;
+  _discRemoveOldMedia = true; _discRemoveArmed = null;
   document.getElementById('pathWizardMod').classList.remove('open');
   renderToday();
   setTimeout(() => {
@@ -26487,6 +26492,7 @@ let _libFilters = { goal:'all', level:'all', days:'all' };
 function openLibraryBrowse(){
   _libFilters = { goal:'all', level:'all', days:'all' };
   _discFilters = { goal:'all', level:'all', days:'all', equip:'all', minutes:'all' };
+  _discCompare = [];
   const disc = _p3FlagOn('discover'), t = document.getElementById('libBrowseTitle'), st = document.getElementById('libBrowseSub');
   if(t) t.textContent = disc ? '🔎 Find a programme' : '🏋️ Strength';
   if(st) st.textContent = disc ? 'Filter by what fits your week, compare up to three, and see why one suits you. Switching keeps all your history.'
@@ -26702,8 +26708,9 @@ function adoptLibraryProgramme(id){
   // Open the wizard FIRST: openPathWizard() re-seeds _pathWizard from the
   // current Path, which would silently replace this choice with the old
   // programme (reachable since the Plan tab can open the finder directly).
-  if(!document.getElementById('pathWizardMod').classList.contains('open')) openPathWizard();
+  if(!document.getElementById('pathWizardMod').classList.contains('open')){ _pathWizardAutoOpened = false; openPathWizard(); }
   _pathWizard.programme = 'library:' + id;
+  _pathWizard.hiitSeries = null;   // a library Path is never a HIIT series
   if(typeof _discRemoveOldMedia !== 'undefined') _discRemoveOldMedia = true;
   _pathWizard.daysPerWeek = p.daysPerWeek;
   _pathWizard.variant = 'standard';
@@ -26731,7 +26738,7 @@ function adoptLibraryProgramme(id){
 const DISC_LEVEL_LABEL = { 'beginner':'Beginner', 'beginner-intermediate':'Beginner–intermediate', 'intermediate':'Intermediate', 'advanced':'Advanced' };
 const DISC_GOAL_LABEL = { 'strength':'Strength', 'muscle':'Muscle', 'strength-muscle':'Strength + muscle' };
 const DISC_PROG_LABEL = { 'linear':'Add weight every session', 'double':'Reps, then weight', 'tiered':'Tiered (GZCL)', 'weekly':'Weekly increase', 'wave':'4-week wave', 'variation':'Harder variations' };
-const DISC_EQUIP_LABEL = { 'barbell':'Barbell', 'rack':'Squat rack', 'bench':'Bench', 'dumbbells':'Dumbbells', 'cables':'Cables', 'machines':'Machines', 'pull-up bar':'Pull-up bar', 'dip bars':'Dip bars', 'band':'Resistance band', 'bodyweight':'Bodyweight' };
+const DISC_EQUIP_LABEL = { 'barbell':'Barbell', 'rack':'Squat rack', 'bench':'Bench', 'dumbbells':'Dumbbells', 'cables':'Cables', 'machines':'Machines', 'pull-up bar':'Pull-up bar', 'dip bars':'Dip bars', 'band':'Resistance band', 'stability ball':'Stability ball (optional)', 'bodyweight':'Bodyweight' };
 let _discFilters = { goal:'all', level:'all', days:'all', equip:'all', minutes:'all' };
 let _discList = [];          // keys exactly as the cards were drawn (buttons pass an index)
 let _discCompare = [];       // keys picked for comparison (≤ 3)
@@ -26783,11 +26790,11 @@ function _progMatches(info, f){
   if(!info) return false;
   const m = info.meta;
   if(f.goal !== 'all' && m.goal !== f.goal && !(m.goal === 'strength-muscle' && (f.goal === 'strength' || f.goal === 'muscle'))) return false;
-  if(f.level !== 'all' && m.level.indexOf(f.level) !== 0) return false;
+  if(f.level !== 'all' && !(m.level === f.level || (m.level === 'beginner-intermediate' && (f.level === 'beginner' || f.level === 'intermediate')))) return false;
   if(f.days !== 'all' && m.days.indexOf(Number(f.days)) === -1) return false;
   if(f.equip === 'home' && !(info.equipClass === 'home' || info.equipClass === 'bodyweight')) return false;
   if(f.equip === 'bodyweight' && info.equipClass !== 'bodyweight') return false;
-  if(f.minutes !== 'all' && m.minutes[0] > Number(f.minutes)) return false;
+  if(f.minutes !== 'all' && m.minutes[1] > Number(f.minutes)) return false;   // every session, not just the shortest
   return true;
 }
 // Pure: "why this programme" for saved Start-today answers. Reuses
@@ -26801,20 +26808,23 @@ function _whyProgramme(key, ans, catalogue){
   const top = recommendProgramme(a, catalogue);
   if(top){ out.top = { key: top.key, name: top.name, reason: top.reason }; out.isTop = top.key === key; }
   const m = info.meta;
-  const goalOk = !a.goal || (a.goal === 'strength' && m.goal !== 'muscle') || (a.goal === 'muscle' && m.goal !== 'strength')
-    || ((a.goal === 'fitness' || a.goal === 'health') && m.level === 'beginner');
+  // Goal: judged on the same goal words the recommender scores.
+  const g = String((getLibraryProgramme(key) || _BUILTIN_STRENGTH.find(x => x.id === key) || {}).goal || '').toLowerCase();
   const goalTxt = { strength:'getting stronger', muscle:'building muscle', fitness:'getting fitter', health:'staying healthy' }[a.goal];
-  if(a.goal) (goalOk ? out.fits : out.misses).push(goalOk ? 'Suits your goal: ' + goalTxt : 'Built for ' + DISC_GOAL_LABEL[m.goal].toLowerCase() + ', not ' + goalTxt);
+  if(a.goal === 'strength' || a.goal === 'muscle'){
+    const goalOk = a.goal === 'strength' ? g.indexOf('strength') !== -1 : (g.indexOf('hypertrophy') !== -1 || g.indexOf('size') !== -1);
+    (goalOk ? out.fits : out.misses).push(goalOk ? 'Suits your goal: ' + goalTxt : 'Built for ' + DISC_GOAL_LABEL[m.goal].toLowerCase() + ' more than ' + goalTxt);
+  }
   const ud = Number(a.days) || 0;
   if(ud){
     const best = m.days.filter(d => d <= ud).sort((x, y) => y - x)[0];
     if(best) out.fits.push(best === ud ? 'Uses your ' + ud + ' training days' : 'Needs ' + best + ' of your ' + ud + ' days');
-    else out.misses.push('Designed for ' + m.days[0] + ' days; you have ' + ud + ' (it would rotate through on fewer)');
+    else out.misses.push('Needs at least ' + m.days[0] + ' days a week; you have ' + ud);
   }
   if(a.equipment){
     const e = info.equipClass;
     const ok = a.equipment === 'gym' || (a.equipment === 'home' ? (e === 'home' || e === 'bodyweight') : e === 'bodyweight');
-    const has = { gym:'a gym', home:'dumbbells at home', bodyweight:'no equipment' }[a.equipment];
+    const has = { gym:'a gym', home:'dumbbells at home', bodyweight:'minimal kit at home' }[a.equipment];
     (ok ? out.fits : out.misses).push(ok ? 'Works with ' + has : 'Needs ' + m.equipment.slice(0, 3).map(x => DISC_EQUIP_LABEL[x] || x).join(', ').toLowerCase() + ' — you said ' + has);
   }
   if(a.experience){
@@ -26824,10 +26834,24 @@ function _whyProgramme(key, ans, catalogue){
     else out.misses.push(gap > 0 ? 'Aimed at more experienced lifters' : 'Simpler than you may need');
   }
   if(a.minutes){
-    if(m.minutes[0] <= a.minutes) out.fits.push('Sessions fit in ' + a.minutes + ' minutes' + (m.minutes[1] > a.minutes ? ' on most days' : ''));
+    // Counted per session type from the real day lists, not the range's low end.
+    const est = _progAllDays(key).map(_estSessionMin);
+    const fit = est.filter(x => x <= a.minutes).length;
+    if(est.length && fit === est.length) out.fits.push('Every session fits in ' + a.minutes + ' minutes');
+    else if(est.length && fit * 2 >= est.length) out.fits.push(fit + ' of ' + est.length + ' session types fit in ' + a.minutes + ' minutes');
     else out.misses.push('Sessions usually take ' + m.minutes[0] + '–' + m.minutes[1] + ' minutes; you have ' + a.minutes);
   }
   return out;
+}
+function _discPathName(key, series){
+  if(key === 'HIIT' && series && typeof HIIT_SERIES === 'object' && HIIT_SERIES[series]) return HIIT_SERIES[series].name;
+  return typeof _progDisplayName === 'function' ? _progDisplayName(key) : String(key || '');
+}
+// Every day's exercise list (both ULF variants) — for session-length checks.
+function _progAllDays(key){
+  if(key === 'ULF') return Object.keys(ULF_VARIANTS).reduce((a, d) => a.concat(ULF_VARIANTS[d]), []);
+  const p = _progInfo(key);
+  return p ? p.days.map(d => d.exercises) : [];
 }
 // Pure: the base exercise list of a programme (every day, both ULF variants).
 function _progBaseExercises(key){
@@ -26848,8 +26872,9 @@ function _progSwitchDiff(fromPath, toKey, toDays, ctx){
   const fi = _progInfo(fromKey), ti = _progInfo(toKey);
   return {
     fromKey, toKey,
-    fromName: fi ? fi.name : (typeof _progDisplayName === 'function' ? _progDisplayName(fromKey) : String(fromKey || '')),
-    toName: ti ? ti.name : (typeof _progDisplayName === 'function' ? _progDisplayName(toKey) : String(toKey || '')),
+    fromName: fi ? fi.name : _discPathName(fromKey, fromPath && fromPath.hiitSeries),
+    toName: ti ? ti.name : _discPathName(toKey, c.toSeries),
+    exercisesKnown: fromKey !== 'HIIT' && toKey !== 'HIIT',
     daysFrom: fromPath && fromPath.coreSchedule ? fromPath.coreSchedule.daysPerWeek : null,
     daysTo: toDays,
     minutesFrom: fi ? fi.meta.minutes : null, minutesTo: ti ? ti.meta.minutes : null,
@@ -26878,8 +26903,8 @@ function _discFilterOpts(){
     goal:[{ id:'all', label:'Any goal' }, { id:'strength', label:'Strength' }, { id:'muscle', label:'Muscle' }, { id:'strength-muscle', label:'Both' }],
     level:[{ id:'all', label:'Any level' }, { id:'beginner', label:'Beginner' }, { id:'intermediate', label:'Intermediate' }, { id:'advanced', label:'Advanced' }],
     days:[{ id:'all', label:'Any days' }, { id:3, label:'3 days' }, { id:4, label:'4 days' }, { id:5, label:'5 days' }, { id:6, label:'6 days' }],
-    equip:[{ id:'all', label:'Any equipment' }, { id:'home', label:'Dumbbells at home' }, { id:'bodyweight', label:'No equipment' }],
-    minutes:[{ id:'all', label:'Any length' }, { id:45, label:'≤ 45 min' }, { id:60, label:'≤ 60 min' }]
+    equip:[{ id:'all', label:'Any equipment' }, { id:'home', label:'Dumbbells at home' }, { id:'bodyweight', label:'Minimal kit' }],
+    minutes:[{ id:'all', label:'Any length' }, { id:45, label:'All ≤ 45 min' }, { id:60, label:'All ≤ 60 min' }]
   };
 }
 function _discRenderFilters(){
@@ -26890,7 +26915,13 @@ function _discRenderFilters(){
     return `<button type="button" aria-pressed="${on}" onclick="discSetFilter('${g}', ${i})" style="background:${on ? 'rgba(200,255,0,0.15)' : 'var(--surface2)'};border:1px solid ${on ? 'var(--accent)' : 'var(--border)'};border-radius:18px;padding:6px 12px;font-size:11px;font-weight:700;color:${on ? 'var(--accent)' : 'var(--text2)'};cursor:pointer;white-space:nowrap;">${esc(opt.label)}</button>`;
   }).join('')}</div>`).join('');
 }
-function _discAnswers(){ return (typeof _stAnswersFrom === 'function') ? _stAnswersFrom(typeof userProfile === 'object' && userProfile ? userProfile.onboarding : null) : {}; }
+function _discAnswers(){
+  const onb = (typeof userProfile === 'object' && userProfile) ? userProfile.onboarding : null;
+  const a = (typeof _stAnswersFrom === 'function') ? _stAnswersFrom(onb) : {};
+  // _stAnswersFrom defaults days to 3; only claim "your N days" when they said so.
+  if(!onb || (onb.daysPerWeek == null && onb.trainingFrequency == null)) a.days = null;
+  return a;
+}
 function _discRenderCards(){
   const ans = _discAnswers();
   const top = (ans.goal || ans.equipment || ans.experience) ? recommendProgramme(ans, _stCatalogue()) : null;
@@ -26942,7 +26973,7 @@ function _discWhyHtml(key){
 function discOpenStartToday(){ closeLibraryPreview(); closeLibraryBrowse(); if(typeof openStartTodayFromProfile === 'function') openStartTodayFromProfile(); }
 function openProgrammeDetail(i){
   const k = _discList[i];
-  if(k) _discShowDetail(k);
+  if(k){ _discFromCompare = false; _discShowDetail(k); }
 }
 function _discShowDetail(k){
   const p = _progInfo(k); if(!p) return;
@@ -26950,10 +26981,11 @@ function _discShowDetail(k){
   const m = p.meta;
   const sec = (t, body) => `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px;"><div style="font-size:11px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:8px;">${t}</div>${body}</div>`;
   const ul = arr => `<ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.5;color:var(--text);">${arr.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
-  const current = typeof isPathActive === 'function' && isPathActive() && userPath && userPath.programme === k;
+  const wizOpen = !!document.getElementById('pathWizardMod') && document.getElementById('pathWizardMod').classList.contains('open');
+  const current = !wizOpen && typeof isPathActive === 'function' && isPathActive() && userPath && userPath.programme === k;
   document.getElementById('libPreviewContent').innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-      <button type="button" onclick="closeLibraryPreview()" style="background:transparent;border:none;color:var(--text2);font-size:14px;cursor:pointer;padding:4px 0;font-weight:700;">‹ Back</button>
+      <button type="button" onclick="discDetailBack()" style="background:transparent;border:none;color:var(--text2);font-size:14px;cursor:pointer;padding:4px 0;font-weight:700;">‹ Back</button>
     </div>
     <h2 id="discDetailTitle" style="font-size:24px;font-weight:900;color:var(--text);margin:0;">${esc(p.name)}</h2>
     <div style="font-size:12px;color:var(--text2);margin:3px 0 12px;">${esc(p.author)}</div>
@@ -26963,17 +26995,18 @@ function _discShowDetail(k){
       <dt style="color:var(--text2);">Days a week</dt><dd style="margin:0;font-weight:700;">${esc(m.days.join(' or '))}</dd>
       <dt style="color:var(--text2);">Session</dt><dd style="margin:0;font-weight:700;">about ${m.minutes[0]}–${m.minutes[1]} min</dd>
       <dt style="color:var(--text2);">Equipment</dt><dd style="margin:0;font-weight:700;">${esc(m.equipment.map(x => DISC_EQUIP_LABEL[x] || x).join(', '))}</dd>
-      <dt style="color:var(--text2);">Progression</dt><dd style="margin:0;font-weight:700;">${esc(DISC_PROG_LABEL[m.progression])}</dd>
+      <dt style="color:var(--text2);">Original progression</dt><dd style="margin:0;font-weight:700;">${esc(DISC_PROG_LABEL[m.progression])}</dd>
     </dl>
     ${sec('Why this programme', _discWhyHtml(k))}
     ${sec('Good for', ul(m.forWho))}
     ${sec('Not ideal for', ul(m.notFor))}
     ${sec('How it works', `<div style="font-size:13px;line-height:1.5;color:var(--text);margin-bottom:8px;">${esc(p.description)}</div><div style="font-size:12px;line-height:1.5;color:var(--text2);">${esc(m.progressionText)} In the app, the coach suggests each weight from the sets you log.</div>`)}
-    ${sec('Schedule · ' + p.days.length + ' days', p.days.map(d => `<div style="padding:6px 0;border-top:0.5px solid var(--border);font-size:12px;"><strong>${esc(d.day)}</strong> · <span style="color:var(--text2);">${esc(d.exercises.map(e => e.name).join(', '))}</span> · ~${_estSessionMin(d.exercises)} min</div>`).join(''))}
+    ${sec('Schedule · ' + (k === 'PPL' ? 'A days for 3 a week, A and B for 6' : p.days.length + ' days'), p.days.map(d => `<div style="padding:6px 0;border-top:0.5px solid var(--border);font-size:12px;"><strong>${esc(d.day)}</strong> · <span style="color:var(--text2);">${esc(d.exercises.map(e => e.name).join(', '))}</span> · ~${_estSessionMin(d.exercises)} min</div>`).join(''))}
     ${current ? `<div role="status" style="text-align:center;font-size:13px;color:var(--text2);padding:10px;">This is your current programme.</div>`
       : `<button type="button" class="btn-p" style="width:100%;font-size:15px;padding:14px;" onclick="discChoose()">Choose ${esc(p.name)}</button>`}
     <button type="button" onclick="closeLibraryPreview()" style="width:100%;margin-top:8px;background:transparent;border:none;color:var(--text2);font-size:13px;padding:8px;cursor:pointer;">Back to programmes</button>`;
   document.getElementById('libraryPreviewMod').classList.add('open');
+  _discLabelSheet('discDetailTitle');
   const h = document.getElementById('discDetailTitle'); if(h){ h.tabIndex = -1; try { h.focus(); } catch(e){} }
 }
 function openProgrammeCompare(){
@@ -27004,9 +27037,14 @@ function openProgrammeCompare(){
       </tbody>
     </table></div>`;
   document.getElementById('libraryPreviewMod').classList.add('open');
+  _discFromCompare = false;
+  _discLabelSheet('discCmpTitle');
   const h = document.getElementById('discCmpTitle'); if(h){ h.tabIndex = -1; try { h.focus(); } catch(e){} }
 }
-function discCompareOpen(i){ const k = _discCompare[i]; if(k) _discShowDetail(k); }
+function discCompareOpen(i){ const k = _discCompare[i]; if(k){ _discShowDetail(k); _discFromCompare = true; } }
+let _discFromCompare = false;
+function _discLabelSheet(id){ const m = document.querySelector('#libraryPreviewMod .modal'); if(m) m.setAttribute('aria-labelledby', id); }
+function discDetailBack(){ if(_discFromCompare){ _discFromCompare = false; openProgrammeCompare(); } else closeLibraryPreview(); }
 // Choose: hand the programme to the Path wizard (its review step shows what
 // changes before anything is saved).
 function discChoose(){
@@ -27015,7 +27053,7 @@ function discChoose(){
   if(isLibraryProgramme(k)){ adoptLibraryProgramme(getLibraryId(k)); return; }
   _discRemoveOldMedia = true;
   // Open first — openPathWizard() re-seeds the wizard from the current Path.
-  if(!document.getElementById('pathWizardMod').classList.contains('open')) openPathWizard();
+  if(!document.getElementById('pathWizardMod').classList.contains('open')){ _pathWizardAutoOpened = false; openPathWizard(); }
   _pathWizard.programme = k;
   _pathWizard.daysPerWeek = 3;
   _pathWizard.variant = k === 'PPL' ? '3day' : 'standard';
@@ -27030,30 +27068,44 @@ function discChoose(){
   setTimeout(() => pathWizardNext(), 100);
 }
 
-// ── Switch preview on the wizard's review step ──
+// ── Switch preview: the wizard's review step and Start today's plan step ──
+// The removal checkbox is only offered on the wizard's review step; the
+// removal itself only runs when that box was shown (armed) and left ticked.
+let _discRemoveArmed = null; // offline key whose removal the visible checkbox offers
 function _discSwitchHtml(){
+  if(!_pathWizard || !_pathWizard.programme) { _discRemoveArmed = null; return ''; }
+  return _discSwitchBlock(_pathWizard.programme, _pathWizard.daysPerWeek, true, _pathWizard.hiitSeries);
+}
+function _discSwitchBlock(toKey, toDays, withMedia, toSeries){
+  if(withMedia) _discRemoveArmed = null;
   if(!_p3FlagOn('discover') || typeof isPathActive !== 'function' || !isPathActive() || !userPath) return '';
-  if(!_pathWizard.programme || userPath.programme === _pathWizard.programme) return '';
+  if(!toKey || userPath.programme === toKey) return '';
   const real = (typeof completedSessions !== 'undefined' ? completedSessions : []).filter(s => s && !s.manualActivity).length;
   let offlineBytes = 0, oldOfflineKey = null;
-  try {
-    oldOfflineKey = typeof _offlineProgKey === 'function' ? _offlineProgKey(userPath) : null;
-    const st = typeof _offlineStateGet === 'function' ? _offlineStateGet() : { progs:{} };
-    if(oldOfflineKey && st.progs[oldOfflineKey]) offlineBytes = _offlineSetBytes(_offlineSetForKey(oldOfflineKey, st.progs[oldOfflineKey].tier));
-  } catch(e){ offlineBytes = 0; }
-  const d = _progSwitchDiff(userPath, _pathWizard.programme, _pathWizard.daysPerWeek, { sessions: real, week: typeof getPathCurrentWeek === 'function' ? getPathCurrentWeek() : null, offlineBytes });
+  if(withMedia){
+    try {
+      oldOfflineKey = typeof _offlineProgKey === 'function' ? _offlineProgKey(userPath) : null;
+      const st = typeof _offlineStateGet === 'function' ? _offlineStateGet() : { progs:{} };
+      if(oldOfflineKey && st.progs[oldOfflineKey]){
+        // Only what removal would actually free: files another download needs stay.
+        const gone = new Set(_offlinePathsToRemove(st, oldOfflineKey));
+        offlineBytes = _offlineSetBytes(_offlineSetForKey(oldOfflineKey, st.progs[oldOfflineKey].tier).filter(f => gone.has(f.path)));
+      }
+    } catch(e){ offlineBytes = 0; }
+  }
+  const d = _progSwitchDiff(userPath, toKey, toDays, { sessions: real, week: typeof getPathCurrentWeek === 'function' ? getPathCurrentWeek() : null, offlineBytes, toSeries });
+  if(withMedia && d.offlineBytes) _discRemoveArmed = oldOfflineKey;
   const list = (arr, max) => arr.length ? esc(arr.slice(0, max).join(', ')) + (arr.length > max ? ' and ' + (arr.length - max) + ' more' : '') : 'none';
-  return `<div role="region" aria-label="What changes" style="background:var(--surface2);border:1px solid rgba(255,140,66,0.35);border-radius:16px;padding:16px;margin-bottom:18px;">
+  return `<div role="region" aria-label="What changes" style="background:var(--surface2);border:1px solid rgba(255,140,66,0.35);border-radius:16px;padding:16px;margin-bottom:18px;text-align:left;">
     <div style="font-size:11px;font-weight:800;color:var(--orange);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">What changes</div>
     <ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.55;color:var(--text);">
       <li><strong>${esc(d.fromName)}</strong> → <strong>${esc(d.toName)}</strong>${d.week && d.weeks ? ` (your current Path ends at week ${d.week} of ${d.weeks})` : ''}</li>
-      ${d.daysFrom !== d.daysTo ? `<li>Training days: ${d.daysFrom} → ${d.daysTo} a week</li>` : ''}
+      ${d.daysFrom !== d.daysTo && d.daysTo ? `<li>Training days: ${d.daysFrom} → ${d.daysTo} a week</li>` : ''}
       ${d.minutesFrom && d.minutesTo ? `<li>Sessions: about ${d.minutesFrom[0]}–${d.minutesFrom[1]} → ${d.minutesTo[0]}–${d.minutesTo[1]} min</li>` : ''}
-      <li>New exercises: ${list(d.added, 6)}</li>
-      <li>Dropped: ${list(d.removed, 6)}</li>
-      <li style="color:var(--green);">Kept: all ${d.sessions} logged workout${d.sessions === 1 ? '' : 's'}, your PBs and working weights${d.kept.length ? ` (${d.kept.length} exercise${d.kept.length === 1 ? '' : 's'} carry straight over)` : ''}</li>
+      ${d.exercisesKnown ? `<li>New exercises: ${list(d.added, 6)}</li><li>Dropped: ${list(d.removed, 6)}</li>` : `<li>Exercises: chosen per session (HIIT)</li>`}
+      <li style="color:var(--green);">Kept: ${d.sessions === 1 ? 'your 1 logged workout' : 'all ' + d.sessions + ' logged workouts'}, your PBs and working weights${d.exercisesKnown && d.kept.length ? ` (${d.kept.length} exercise${d.kept.length === 1 ? '' : 's'} carry straight over)` : ''}</li>
     </ul>
-    ${d.offlineBytes ? `<label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:12px;color:var(--text2);cursor:pointer;"><input type="checkbox" ${_discRemoveOldMedia ? 'checked' : ''} onchange="discToggleRemoveMedia(this.checked)" style="margin-top:2px;"> Also remove the offline demos for ${esc(d.fromName)} (${_offlineFmtMB(d.offlineBytes)})</label>` : ''}
+    ${d.offlineBytes ? `<label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:12px;color:var(--text2);cursor:pointer;"><input type="checkbox" ${_discRemoveOldMedia ? 'checked' : ''} onchange="discToggleRemoveMedia(this.checked)" style="margin-top:2px;"> Also remove the offline demos for ${esc(d.fromName)} (frees ${_offlineFmtMB(d.offlineBytes)})</label>` : ''}
   </div>`;
 }
 function discToggleRemoveMedia(on){ _discRemoveOldMedia = !!on; }
