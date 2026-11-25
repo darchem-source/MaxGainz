@@ -5110,7 +5110,7 @@ def gate_reminders(html, js, sw=None, root=None):
             ctx = js[line_start:m.start()]
             if re.match(r'\s*(async\s+)?function\s+$', ctx): continue        # the definition
             if 'onclick="' in ctx and ctx.rfind('onclick="') > ctx.rfind('"', 0, ctx.rfind('onclick="') + 1): continue
-            if nm == '_pushSubscribe' and _owner(m.start()) in ('pushToggleReminders', '_pushSyncPrefs'): continue
+            if nm == '_pushSubscribe' and _owner(m.start()) in ('pushToggleReminders', '_pushSyncPrefsNow'): continue
             problems.append(f'{nm}() is called outside a tap handler (in {_owner(m.start())})')
     # sign-out clears this account's reminder settings and the device's counts
     lo = extract_decl(js, 'authLogout') or ''
@@ -5180,8 +5180,8 @@ PUSH_SQL = os.path.join(ROOT, 'supabase', 'push_reminders.sql')
 P4_CORE_PRELUDE = r"""
 function ms(iso){ return Date.parse(iso); }
 var CLOCK = 0;   // DB time (ms) for pending-claim staleness
-// A fake database with push_claim's semantics: one claim per (account, scope, local date);
-// 'pending' claims older than 20 minutes can be re-claimed; release deletes pending; report marks sent.
+// A fake database with push_claim's semantics: one claim per (account, scope, local date),
+// recorded before sending (at most once); release deletes it.
 function DB(rows, subs){
   this.rows = rows; this.subs = subs; this.sent = {}; this.calls = []; this.released = []; this.report = null; this.reports = []; this.claimFail = false;
   rows.forEach(function(r){ if(!r.uid) r.uid = 'u-' + r.pid; });
@@ -5194,18 +5194,17 @@ DB.prototype.rpc = function(name, body){
   if(name === 'push_candidates') return Promise.resolve({ ok:true, rows: self.rows.filter(function(r){
       return self.subs.some(function(s){ return s.pid === r.pid && body.p_origins.indexOf(s.origin) !== -1; }); }).map(function(r){
       var o = JSON.parse(JSON.stringify(r)); delete o.uid; var best = null;
-      Object.keys(self.sent).forEach(function(k){ var v = self.sent[k]; if(v.uid === r.uid && v.scope === body.p_scope && (v.state === 'sent' || CLOCK - v.at < 20 * 60000) && (!best || v.day > best)) best = v.day; });
+      Object.keys(self.sent).forEach(function(k){ var v = self.sent[k]; if(v.uid === r.uid && v.scope === body.p_scope && (!best || v.day > best)) best = v.day; });
       o.last_sent_on = best; return o; }) });
   if(name === 'push_claim'){
     if(self.claimFail) return Promise.resolve(null);
     var claimed = [];
     body.p_items.forEach(function(it){ var uid = self.uidOf(it.pid); if(!uid) return; var k = uid + '|' + body.p_scope + '|' + it.date; var v = self.sent[k];
-      if(!v){ self.sent[k] = { uid:uid, scope:body.p_scope, day:it.date, state:'pending', at:CLOCK }; claimed.push(it.pid); }
-      else if(v.state === 'pending' && CLOCK - v.at >= 20 * 60000){ v.at = CLOCK; claimed.push(it.pid); } });
+      if(!v){ self.sent[k] = { uid:uid, scope:body.p_scope, day:it.date, at:CLOCK }; claimed.push(it.pid); } });
     return Promise.resolve({ ok:true, subs: self.subs.filter(function(s){ return claimed.indexOf(s.pid) !== -1 && body.p_origins.indexOf(s.origin) !== -1; }) });
   }
-  if(name === 'push_release'){ body.p_items.forEach(function(it){ self.released.push(it.pid); var k = self.uidOf(it.pid) + '|' + body.p_scope + '|' + it.date; if(self.sent[k] && self.sent[k].state === 'pending') delete self.sent[k]; }); return Promise.resolve({ ok:true }); }
-  if(name === 'push_report'){ self.report = body; self.reports.push(body); body.p_sent_items.forEach(function(it){ var k = self.uidOf(it.pid) + '|' + body.p_scope + '|' + it.date; if(self.sent[k]) self.sent[k].state = 'sent'; });
+  if(name === 'push_release'){ body.p_items.forEach(function(it){ self.released.push(it.pid); var k = self.uidOf(it.pid) + '|' + body.p_scope + '|' + it.date; delete self.sent[k]; }); return Promise.resolve({ ok:true }); }
+  if(name === 'push_report'){ if(self.reportFail) return Promise.resolve(null); self.report = body; self.reports.push(body);
     self.subs = self.subs.filter(function(s){ return body.p_gone.indexOf(s.sid) === -1; }); return Promise.resolve({ ok:true }); }
   return Promise.resolve(null);
 };
@@ -5269,7 +5268,7 @@ P4_CORE_SCENARIOS = {
    var got = s.sent.map(function(x){ return x.ep.replace(EP, ''); }).sort().join();
    if(got !== 's1,s5,s7') return 'sent to ' + got;
    if(r.skippedTrained !== 2 || r.sent !== 3) return 'summary ' + JSON.stringify(r);
-   if(db.report.p_skipped !== 2 || db.report.p_sent !== 3 || db.report.p_sent_items.length !== 3) return 'report ' + JSON.stringify(db.report);
+   if(db.report.p_skipped !== 2 || db.report.p_sent !== 3) return 'report ' + JSON.stringify(db.report);
    var s2 = sender(201); await run(db, ms('2026-11-25T19:10:00Z'), s2);
    if(s2.sent.length) return 'second run re-sent ' + s2.sent.length;
    return true;""",
@@ -5295,14 +5294,15 @@ P4_CORE_SCENARIOS = {
    var s3 = sender(201); await run(db2, ms('2026-11-25T18:00:00Z'), s3, 'prod', ['https://app.test', 'https://site.netlify.app']);
    if(s3.sent.length !== 1) return 'alias origin missed';
    return true;""",
- 'a run that dies after claiming is retried later': r"""
+ 'at most once: a run that dies or can\'t report never causes a second reminder': r"""
    var db = new DB([row('p')], [sub('p','a')]);
    CLOCK = ms('2026-11-25T18:00:00Z');
-   await db.rpc('push_claim', { p_key:'k'.repeat(40), p_scope:'prod', p_origins:['https://app.test'], p_items:[{ pid:'p', date:'2026-11-25' }] });   // claimed, never sent
-   var s = sender(201); await run(db, ms('2026-11-25T18:10:00Z'), s);
-   if(s.sent.length) return 'took over a live claim';
-   var s2 = sender(201); await run(db, ms('2026-11-25T19:00:00Z'), s2);
-   if(s2.sent.length !== 1) return 'dead claim never retried';
+   await db.rpc('push_claim', { p_key:'k'.repeat(40), p_scope:'prod', p_origins:['https://app.test'], p_items:[{ pid:'p', date:'2026-11-25' }] });   // claimed, then the run died
+   for(var h = 18; h <= 20; h++){ var s = sender(201); await run(db, ms('2026-11-25T' + h + ':10:00Z'), s); if(s.sent.length) return 'resent after a crashed run at ' + h; }
+   var dbr = new DB([row('q')], [sub('q','b')]); dbr.reportFail = true;
+   var s1 = sender(201); await run(dbr, ms('2026-11-25T18:00:00Z'), s1);
+   var s2 = sender(201); await run(dbr, ms('2026-11-25T19:00:00Z'), s2);
+   if(s1.sent.length !== 1 || s2.sent.length) return 'report failure caused a resend ' + s1.sent.length + '/' + s2.sent.length;
    // out of time: unsent claims are released for the next run
    var db3 = new DB([row('x'), row('y')], [sub('x','x1'), sub('y','y1')]);
    var s3 = sender(201); var r3 = await run(db3, ms('2026-11-25T18:00:00Z'), s3, null, null, { deadline: 1 });
@@ -5363,10 +5363,13 @@ P4_CORE_SCENARIOS = {
    seen = []; await pushRunScheduled(mk(c({ PUSH_ORIGINS:'https://www.maxgainz.example, javascript:alert(1)' })));
    if(JSON.stringify(seen[0][2]) !== '["https://maxgainz.example","https://maxgainz.netlify.app","https://www.maxgainz.example"]') return 'extra origins ' + JSON.stringify(seen);
    // /api/push/run: production = the hourly run's scope; a preview = its own scope and origin only
-   seen = []; await handlePushApi({ method:'POST', path:'/api/push/run', cronKey:'k'.repeat(40), origin:'https://maxgainz.example' }, mk(c({ CONTEXT:'production' })));
+   seen = []; await handlePushApi({ method:'POST', path:'/api/push/run', cronKey:'k'.repeat(40), origin:'https://maxgainz.example', context:'production' }, mk(full));
    if(seen[0][1] !== 'prod') return 'production run scope ' + JSON.stringify(seen);
-   seen = []; await handlePushApi({ method:'POST', path:'/api/push/run', cronKey:'k'.repeat(40), origin:'https://deploy-preview-3--maxgainz.netlify.app' }, mk(c({ CONTEXT:'deploy-preview' })));
+   seen = []; await handlePushApi({ method:'POST', path:'/api/push/run', cronKey:'k'.repeat(40), origin:'https://deploy-preview-3--maxgainz.netlify.app', context:'deploy-preview' }, mk(full));
    if(seen[0][1] !== 'https://deploy-preview-3--maxgainz.netlify.app' || JSON.stringify(seen[0][2]) !== '["https://deploy-preview-3--maxgainz.netlify.app"]') return 'preview run scope ' + JSON.stringify(seen);
+   seen = []; var u1 = await handlePushApi({ method:'POST', path:'/api/push/run', cronKey:'k'.repeat(40), origin:'https://maxgainz.example', context:'' }, mk(full));
+   var u2 = await handlePushApi({ method:'POST', path:'/api/push/run', cronKey:'k'.repeat(40), origin:'https://maxgainz.netlify.app', context:'deploy-preview' }, mk(full));
+   if(seen.length || u1.status !== 400 || u2.status !== 400) return 'unknown context / preview on a production origin must refuse ' + JSON.stringify(seen);
    return true;""",
  'API fails closed; key route never exposes the private key; test/run need auth': r"""
    var calls = 0, sent = 0;
@@ -5452,8 +5455,8 @@ def _p4_server_checks(js, sql, core, api, sched):
         if body and re.search(r"'user_id'|'email'", body.group(0)): problems.append(f'SQL: {fn} returns user ids or emails')
     if not re.search(r'revoke all on function public\.push_cron_ok\(text\) from public, anon, authenticated', low): problems.append('SQL: push_cron_ok callable by clients')
     claim = re.search(r'create or replace function public\.push_claim\([\s\S]*?\$\$;', low); claim = claim.group(0) if claim else ''
-    if 'on conflict (user_id, scope, day) do update set at = now()' not in claim or "where push_sent.state = 'pending' and push_sent.at < now() - interval '20 minutes'" not in claim:
-        problems.append('SQL: push_claim is not one-per-account-per-day atomic (with dead-run recovery)')
+    if 'insert into push_sent(user_id, scope, day) values (uid, p_scope, d)\n    on conflict (user_id, scope, day) do nothing;' not in claim or 'if found then claimed' not in claim:
+        problems.append('SQL: push_claim must record the reminder before sending, once per account/scope/day (at most once)')
     if 'primary key (user_id, scope, day)' not in low or 'references auth.users(id) on delete cascade' not in low.split('create table if not exists public.push_sent')[-1][:400]:
         problems.append('SQL: push_sent must be keyed by account, scope and day, and go with the account')
     for fn in ['push_unsubscribe', 'push_unsubscribe_all', 'push_report']:
@@ -5472,6 +5475,48 @@ def _p4_server_checks(js, sql, core, api, sched):
     if 'check (public.push_endpoint_ok(endpoint))' not in low: problems.append('SQL: endpoints not restricted to push services')
     return problems
 
+
+def _p4_param_checks(js, core, sql):
+    """Every RPC call's parameter names must equal the SQL function's (PostgREST
+    matches by name; a typo is a 404 at runtime that no stub would notice)."""
+    problems = []
+    low = sql.lower()
+    sig = {}
+    for m in re.finditer(r'create or replace function public\.(push_\w+)\(([^)]*)\)', low):
+        params = []
+        for part in [x.strip() for x in m.group(2).split(',') if x.strip()]:
+            nm = part.split()[0]; params.append((nm, ' default ' in ' ' + part + ' '))
+        sig[m.group(1)] = params
+    def check(fn, keys, where):
+        if fn not in sig: problems.append(f'{where}: calls {fn}, which push_reminders.sql does not define'); return
+        names = [n for n, _ in sig[fn]]; required = [n for n, d in sig[fn] if not d]
+        extra = [k for k in keys if k not in names]; missing = [r for r in required if r not in keys]
+        if extra or missing: problems.append(f'{where}: {fn} params mismatch (unknown {extra}, missing {missing})')
+    def literal_keys(src, start):
+        i = src.find('{', start); j = src.find(')', start)
+        if i == -1 or (j != -1 and j < i): return []
+        d = 0
+        for k in range(i, len(src)):
+            if src[k] == '{': d += 1
+            elif src[k] == '}':
+                d -= 1
+                if d == 0: return re.findall(r'\b(p_\w+)\s*:', src[i:k + 1])
+        return []
+    prefs_keys = re.findall(r'\b(p_\w+)\s*:', extract_decl(js, '_pushServerPrefs') or '')
+    for src, where in ((js, 'index.html'), (core, 'push-core.mjs')):
+        for m in re.finditer(r"(?:_pushRpc|rpcUser|rpc)\('(push_\w+)',\s*", src):
+            fn, rest = m.group(1), src[m.end():m.end() + 400]
+            if rest.startswith('{'): keys = literal_keys(src, m.end())
+            elif rest.startswith('Object.assign({'): keys = literal_keys(src, m.end()) + prefs_keys
+            elif rest.startswith('body') or rest.startswith('JSON.parse(body)'): keys = prefs_keys
+            else: continue
+            check(fn, keys, where)
+    for m in re.finditer(r"sbFetch\('rpc/(push_\w+)',\s*\{[^\n]*body:\s*JSON\.stringify\((\{[^)]*\})\)", js):
+        check(m.group(1), re.findall(r'\b(p_\w+)\s*:', m.group(2)), 'index.html (sbFetch)')
+    so = extract_decl(js, '_pushSignOutCleanup') or ''
+    if '/rest/v1/rpc/push_unsubscribe' in so: check('push_unsubscribe', re.findall(r'\b(p_\w+)\s*:', so[so.find('body: JSON.stringify('):][:80]), '_pushSignOutCleanup')
+    return problems
+
 def _p4_cleanup_checks(js):
     problems = []
     lo = extract_decl(js, 'authLogout') or ''
@@ -5483,7 +5528,9 @@ def _p4_cleanup_checks(js):
     dua = extract_decl(js, 'deleteUserAccount') or ''
     if 'rpc/push_unsubscribe_all' not in dua or 'p_forget: true' not in dua or '!pushOk' not in dua or not re.search(r'pushNone = pushRes === null && pushErr === 404 && /PGRST202/', dua):
         problems.append('account deletion must delete reminder subscriptions and refuse success if it cannot')
-    dis = extract_decl(js, 'pushDisableReminders') or ''
+    rt = extract_decl(js, 'renderToday') or ''
+    if 'localStorage.getItem(PUSH_FORGET_KEY)' not in rt: problems.append('a remembered endpoint must be removed at the next signed-in app open, reminders on or not')
+    dis = extract_decl(js, '_pushDisableRemindersNow') or ''
     if "_pushRpc('push_unsubscribe'" not in dis or '.unsubscribe()' not in dis or 'p.enabled = false' not in dis:
         problems.append('turning reminders off must remove the server row and the browser subscription')
     return problems
@@ -5494,17 +5541,18 @@ var TOASTS = []; function showToast(m){ TOASTS.push(m); }
 var RPC = []; var RPC_RESULT = {};
 function sbFetch(path, o){ RPC.push([path, o.body]); var r = RPC_RESULT[path]; if(r && r.err){ if(o.onError) o.onError(r.err, r.text || ''); return Promise.resolve(null); } return Promise.resolve(r === undefined ? { ok:true } : r); }
 var FETCHES = []; var FETCH_PLAN = [];
-function fetch(u, o){ FETCHES.push([u, o]); var x = FETCH_PLAN.length ? FETCH_PLAN.shift() : 204;
+function fetch(u, o){ FETCHES.push([u, o]); ORDER.push('fetch'); var x = FETCH_PLAN.length ? FETCH_PLAN.shift() : 204;
   if(x === 'throw') return Promise.reject(new Error('offline'));
   if(typeof x === 'object') return Promise.resolve({ ok:true, status:200, json: function(){ return Promise.resolve(x); } });
   return Promise.resolve({ ok: x >= 200 && x < 300, status: x, json: function(){ return Promise.resolve({}); } }); }
 var authRefreshToken = null; var refreshAuthToken = null; var NOTIF = 'default'; var Notification = { get permission(){ return NOTIF; } };
 var VAPID = null; function _pushGetVapidKey(){ return Promise.resolve(VAPID); }
-function _pushActivePath(){ return null; } function _pushTz(){ return 'Europe/London'; }
+function _pushActivePath(){ return null; } var _pushTz = function(){ return 'Europe/London'; };
 function setTimeout(f){ return 0; } function clearTimeout(){}
-var _pushLastSync = '', _pushSyncTimer = null, _pushSyncing = false, _pushCheckedAt = 0, _pushVapid = null, _pushVapidStatus = 0;
+var _pushLastSync = '', _pushSyncTimer = null, _pushSyncing = false, _pushCheckedAt = 0, _pushVapid = null, _pushVapidStatus = 0, _pushVapidFailAt = 0, _pushQ = Promise.resolve();
+var ORDER = [];
 var location = { origin:'https://app.test' };
-var UNSUB = 0; var SUB = { endpoint:'https://fcm.googleapis.com/fcm/send/dev1', options:{}, unsubscribe: function(){ UNSUB++; return Promise.resolve(true); } };
+var UNSUB = 0; var SUB = { endpoint:'https://fcm.googleapis.com/fcm/send/dev1', options:{}, unsubscribe: function(){ UNSUB++; ORDER.push('unsub'); return Promise.resolve(true); } };
 var PushManager = function(){};
 var navigator = { onLine:true, serviceWorker: { getRegistration: function(){ return Promise.resolve({ pushManager: { getSubscription: function(){ return Promise.resolve(SUB); } } }); } } };
 var authToken = 'tok-OLD'; var SB_URL = 'https://sb.test'; var SB_KEY = 'anon';
@@ -5551,8 +5599,10 @@ P4_CLIENT_SCENARIOS = {
    authRefreshToken = 'refresh-OLD';
    FETCH_PLAN = [401, { access_token:'tok-NEW' }, 204];
    var p = _pushSignOutCleanup(); authToken = null; authRefreshToken = null; await p;
-   if(FETCHES.length !== 3 || FETCHES[2][1].headers.Authorization !== 'Bearer tok-NEW' || JSON.parse(FETCHES[1][1].body).refresh_token !== 'refresh-OLD') return 'refresh path ' + JSON.stringify(FETCHES.map(function(f){ return f[0]; }));
+   if(FETCHES.length < 3 || FETCHES[2][1].headers.Authorization !== 'Bearer tok-NEW' || JSON.parse(FETCHES[1][1].body).refresh_token !== 'refresh-OLD') return 'refresh path ' + JSON.stringify(FETCHES.map(function(f){ return f[0]; }));
    if(LS[PUSH_FORGET_KEY]) return 'remembered an endpoint that was removed';
+   if(ORDER[0] !== 'unsub') return 'browser subscription must be killed before the network calls ' + ORDER;
+   if(!FETCHES.some(function(f){ return /auth\/v1\/logout/.test(f[0]); })) return 'the session minted by the refresh is not ended';
    FETCHES = []; UNSUB = 0; authToken = 'tok-B'; authRefreshToken = null; FETCH_PLAN = ['throw'];
    var p2 = _pushSignOutCleanup(); authToken = null; await p2;
    if(LS[PUSH_FORGET_KEY] !== SUB.endpoint || UNSUB !== 1) return 'offline sign-out must remember the endpoint and kill it locally';
@@ -5562,7 +5612,7 @@ P4_CLIENT_SCENARIOS = {
    if(RPC.length !== 1 || RPC[0][0] !== 'rpc/push_forget_endpoint' || JSON.parse(RPC[0][1]).p_endpoint !== SUB.endpoint || LS[PUSH_FORGET_KEY]) return 'forget ' + JSON.stringify(RPC);
    return true;""",
  'sync: the account schedule wins unless this device changed it; off elsewhere turns this device off': r"""
-   NOTIF = 'granted'; VAPID = null;
+   NOTIF = 'granted'; VAPID = 'B'.repeat(87);
    LS[PUSH_PREFS_KEY] = JSON.stringify({ enabled:true, hour:18, days:[1], daysMode:'custom', endpoint: SUB.endpoint });
    RPC_RESULT['rpc/push_get_prefs'] = { ok:true, this_device:true, devices:2, prefs:{ hour:7, days:1|4, follow_path:false, labels:['train','train','train','train','train','train','train'], tz:'Europe/London' } };
    await _pushSyncPrefs();
@@ -5604,6 +5654,35 @@ P4_CLIENT_SCENARIOS = {
    FETCHES = []; TOASTS = []; refreshAuthToken = function(){ return Promise.resolve(false); }; FETCH_PLAN = [401];
    await pushSendTest();
    if(!/sign-in has expired/.test(TOASTS.join())) return 'message ' + TOASTS;
+   return true;""",
+ 'a device in another time zone or without the Path never rewrites the account schedule': r"""
+   NOTIF = 'granted'; VAPID = 'B'.repeat(87); _pushCheckedAt = 0;
+   _pushTz = function(){ return 'America/New_York'; };
+   var SP = { hour:7, days:1|4, follow_path:true, labels:['upper','train','lower','train','train','train','train'], tz:'Europe/London' };
+   RPC_RESULT['rpc/push_get_prefs'] = { ok:true, this_device:true, devices:2, prefs:SP };
+   LS[PUSH_PREFS_KEY] = JSON.stringify({ enabled:true, hour:7, days:[], daysMode:'path', endpoint: SUB.endpoint });
+   await _pushSyncPrefs();
+   if(RPC.some(function(x){ return x[0] === 'rpc/push_set_prefs'; })) return 'rewrote the account schedule: ' + JSON.stringify(RPC.filter(function(x){ return x[0] === 'rpc/push_set_prefs'; }));
+   if(JSON.parse(LS[PUSH_PREFS_KEY]).tz !== 'Europe/London') return 'account time zone not kept';
+   // explicit "use this device's time zone" does change it
+   RPC = []; _pushCheckedAt = 0; pushUseDeviceTz(); await _pushSyncPrefs();
+   var sp = RPC.filter(function(x){ return x[0] === 'rpc/push_set_prefs'; });
+   if(sp.length !== 1 || JSON.parse(sp[0][1]).p_tz !== 'America/New_York' || JSON.parse(sp[0][1]).p_days !== 5) return 'explicit tz change ' + JSON.stringify(sp);
+   _pushTz = function(){ return 'Europe/London'; };
+   return true;""",
+ 'turning off while a sync is running stays off': r"""
+   NOTIF = 'granted'; VAPID = 'B'.repeat(87); _pushCheckedAt = 0; UNSUB = 0;
+   var release; var gate = new Promise(function(r){ release = r; });
+   var realSb = sbFetch;
+   sbFetch = function(path, o){ if(path === 'rpc/push_get_prefs'){ RPC.push([path, o.body]); return gate.then(function(){ return { ok:true, this_device:true, devices:1, prefs:{ hour:7, days:1, follow_path:false, labels:['train','train','train','train','train','train','train'], tz:'Europe/London' } }; }); } return realSb(path, o); };
+   LS[PUSH_PREFS_KEY] = JSON.stringify({ enabled:true, hour:9, days:[1], daysMode:'custom', endpoint: SUB.endpoint, dirty:true, tz:'Europe/London' });
+   var syncP = _pushSyncPrefs();
+   var offP = pushDisableReminders();
+   release({}); await syncP; await offP;
+   sbFetch = realSb;
+   var q = JSON.parse(LS[PUSH_PREFS_KEY]);
+   if(q.enabled) return 'a sync running at the same time turned reminders back on';
+   if(UNSUB < 1) return 'browser subscription kept';
    return true;""",
  'sign-out with reminders never turned on still kills a stray subscription': r"""
    var p = _pushSignOutCleanup(); authToken = null; await p;
@@ -5720,6 +5799,7 @@ def gate_reminders_server(html, js, sql=None, core_src=None, api=None, sched=Non
     if not sql or not core_src or not api:
         print('  ✗ supabase/push_reminders.sql, netlify/lib/push-core.mjs or push-api.mjs missing'); return False
     problems = _p4_server_checks(js, sql, core_src, api, sched)
+    problems += _p4_param_checks(js, core_src, sql)
     problems += _p4_cleanup_checks(js)
     core = re.sub(r'^export\s+', '', core_src, flags=re.M)
     f1 = _run_jsc_scenarios(core + '\n' + P4_CORE_PRELUDE, P4_CORE_SCENARIOS)
@@ -5740,7 +5820,8 @@ def gate_reminders_server(html, js, sql=None, core_src=None, api=None, sched=Non
                '_pushDaysMask', '_pushMaskDays', '_pushDayLabels', '_pushServerPrefs', '_pushAdoptServer', '_pushPrefsBody', '_pushPathRotation',
                '_pushB64ToBytes', '_pushSameKey', '_pushCurrentSub', '_pushRpc', '_pushStatus', 'pushDisableReminders',
                'pushDisableAllDevices', '_pushSignOutCleanup', '_pushFlushForget', '_pushTurnedOffHere', '_pushSyncPrefs', '_pushSubscribe',
-               '_pushPostTest', 'pushSendTest', '_pushEndpointOk']:
+               '_pushPostTest', 'pushSendTest', '_pushEndpointOk', '_pushExclusive', '_pushDisableRemindersNow', '_pushDisableAllDevicesNow',
+               '_pushSendTestNow', '_pushSyncPrefsNow', '_pushScheduleSync', 'pushUseDeviceTz', '_pushPrefsChanged']:
         src = _decl_keep_async(js, fn)
         if not src: problems.append(f'function {fn} not found')
         else: pieces.append(src)

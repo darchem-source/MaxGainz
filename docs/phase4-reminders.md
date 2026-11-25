@@ -6,12 +6,16 @@ Status: built behind the `?p4=reminders` flag (device-level, reversible with `?p
 
 > We send one notification at about this time on the days you pick, even when the app is closed. We never send one on a day you've already logged a workout. It says only "Time to train" and the day type (for example "Upper day today"). Your weights, notes and name are never in a notification.
 
-- **One per day.** `push_claim` records (account, scope, local date) in `push_sent` atomically. Overlapping or repeated runs can't double-send, and neither can turning reminders off and on again: the record outlives the schedule for 3 days. Every opted-in device of the account gets that one reminder (same tag), and an account can have at most 5 devices.
-  - A run that dies mid-way leaves a "pending" claim, which a later run may take over after 20 minutes.
+- **One per day, at most once.** Before sending, `push_claim` records (account, scope, local date) in `push_sent` atomically. That means:
+  - Overlapping, repeated or crashed runs can't send twice. A run killed mid-way can lose that day's reminder, but never duplicate it.
+  - An account none of whose devices was reached (a temporary failure, or the run ran out of time) is released for the next hourly run.
+  - The record outlives the schedule for 3 days, so turning reminders off and on again can't send twice either.
   - Preview test runs use their own scope, so they never use up the production reminder.
-- **One schedule per account.** The account's schedule on the server is the source of truth.
+- **Every device gets it.** All of the account's opted-in devices get that one reminder (same tag). An account can have at most 5 devices.
+- **One schedule per account.** The account's schedule on the server is the source of truth: hour, days, "follow my Path" and time zone.
   - A device that turns reminders on while another device already has them adopts the account's settings, and says so.
-  - Each device picks up changes on its next sync. A change made on a device is pushed first.
+  - Changes made on a device are pushed first. Other devices pick them up on their next sync, at most 30 minutes later.
+  - The time zone changes only when someone taps "Use this device's time zone", so a laptop in another zone never moves the phone's reminder.
 - **"At about this time".** An hourly run at :00 UTC. The reminder arrives within the chosen hour: at :00, or at :30 or :45 in half-hour and 45-minute zones (India, Nepal, parts of Australia).
   - A run that is missed, or fails temporarily, retries for up to 3 hours, but never past local midnight.
   - On DST change days it is still sent exactly once (gate 24).
@@ -54,7 +58,7 @@ Neither clients nor the scheduler read the tables directly: RLS is on with no po
 
 **Deploy Previews.** Netlify does not run scheduled functions there. To test "app closed" delivery, close the app on the device and trigger one run for the preview's origin:
 `curl -X POST https://<preview-url>/api/push/run -H "x-cron-key: <PUSH_CRON_KEY>"`
-It sends only to devices that subscribed on that preview URL, under the preview's own scope, and only if one is due within its 3-hour window. Pick a reminder hour that has just started. On the production deploy, the same call is exactly one hourly run (same scope), so it can't double-send.
+It sends only to devices that subscribed on that preview URL, under the preview's own scope, and only if one is due within its 3-hour window. Pick a reminder hour that has just started. On the production deploy, the same call is exactly one hourly run (same scope), so it can't double-send. If Netlify doesn't report the deploy context, the call refuses to run.
 
 ## Costs
 

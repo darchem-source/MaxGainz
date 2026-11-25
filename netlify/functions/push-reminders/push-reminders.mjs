@@ -15,9 +15,9 @@ export default async () => {
   const summary = await pushRunScheduled({
     env,
     now: Date.now(),
-    rpcFetch: pushRpcFetch(fetch, () => AbortSignal.timeout(8000)),
+    rpcFetch: pushRpcFetch(fetch, () => AbortSignal.timeout(5000)),
     send: (sub, payload, opts) => webpush.sendNotification(sub, payload, {
-      TTL: opts.ttl, urgency: 'normal', topic: opts.topic, timeout: 8000,
+      TTL: opts.ttl, urgency: 'normal', topic: opts.topic, timeout: opts.timeout,
       vapidDetails: { subject: env.VAPID_SUBJECT, publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY }
     }).then(r => ({ status: r.statusCode }))
   });

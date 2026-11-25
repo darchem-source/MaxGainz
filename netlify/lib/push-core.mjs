@@ -96,14 +96,14 @@ async function _pool(items, n, fn){
 }
 
 // Send one payload to a list of devices. Returns per-device outcomes.
-export async function pushSendAll(subs, payloadFor, send, late){
+export async function pushSendAll(subs, payloadFor, send, late, sendTimeout){
   return _pool(subs, PUSH_CONCURRENCY, async (s) => {
     if(!s || !pushEndpointOk(s.endpoint)) return { sid: s && s.sid, pid: s && s.pid, out: 'fail' };
     if(late && late()) return { sid: s.sid, pid: s.pid, out: 'skipped' };   // out of time: released, retried next run
     let status = 0;
     const payload = payloadFor(s);
     const topic = JSON.parse(payload).kind === 'test' ? 'mg-test' : 'mg-train';
-    try { const r = await send({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { ttl: PUSH_TTL_SECONDS, topic }); status = r && r.status || 0; }
+    try { const r = await send({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { ttl: PUSH_TTL_SECONDS, topic, timeout: sendTimeout || 6000 }); status = r && r.status || 0; }
     catch(e){ status = (e && e.statusCode) || 0; }
     return { sid: s.sid, pid: s.pid, out: pushClassify(status) };
   });
@@ -111,7 +111,11 @@ export async function pushSendAll(subs, payloadFor, send, late){
 
 // One run. deps: { key, scope ('prod' or a preview origin), origins [..], now (ms),
 //   rpc(name, body) → parsed JSON or null, send(sub, payload, opts) → {status},
-//   deadline (ms, optional: stop starting new sends after it) }
+//   deadline (ms, optional: stop starting new sends after it), sendTimeout (ms) }
+// At most once: a claim records the reminder BEFORE it is sent. Only an account
+// none of whose devices was reached (temporary failure, or out of time) is
+// released for the next run. A run killed mid-way can lose a reminder; it can
+// never send one twice.
 export async function pushRunScheduler(deps){
   const sum = { ok: false, candidates: 0, due: 0, skippedTrained: 0, claimed: 0, sent: 0, devices: 0, gone: 0, retried: 0, failed: 0 };
   if(!deps || !deps.key || !deps.scope || !Array.isArray(deps.origins) || !deps.origins.length) return Object.assign(sum, { reason: 'config' });
@@ -137,23 +141,23 @@ export async function pushRunScheduler(deps){
   const claimedPids = [...new Set(subs.map(s => s.pid))];
   sum.claimed = claimedPids.length;
   const late = () => deps.deadline && Date.now() > deps.deadline;
-  const res = await pushSendAll(subs, s => pushPayload('train', labelOf[s.pid].label, labelOf[s.pid].date), deps.send, late);
+  const res = await pushSendAll(subs, s => pushPayload('train', labelOf[s.pid].label, labelOf[s.pid].date), deps.send, late, deps.sendTimeout);
   const byPid = {};
   claimedPids.forEach(pid => { byPid[pid] = []; });
   res.forEach(r => { byPid[r.pid].push(r.out); });
   const okSids = res.filter(r => r.out === 'ok').map(r => r.sid);
   const goneSids = res.filter(r => r.out === 'gone').map(r => r.sid);
   const failSids = res.filter(r => r.out === 'fail').map(r => r.sid);
-  const sentItems = [], release = [];
+  const release = [];
   Object.keys(byPid).forEach(pid => {
     const outs = byPid[pid];
-    if(outs.indexOf('ok') !== -1){ sum.sent++; sentItems.push({ pid, date: labelOf[pid].date }); }
+    if(outs.indexOf('ok') !== -1) sum.sent++;
     else if(outs.indexOf('retry') !== -1 || outs.indexOf('skipped') !== -1){ sum.retried++; release.push({ pid, date: labelOf[pid].date }); }
     else if(outs.indexOf('fail') !== -1){ sum.failed++; release.push({ pid, date: labelOf[pid].date }); }
   });
   sum.devices = okSids.length; sum.gone = goneSids.length;
   for(let i = 0; i < release.length; i += 500) await deps.rpc('push_release', { p_key: deps.key, p_scope: deps.scope, p_items: release.slice(i, i + 500) });
-  await deps.rpc('push_report', { p_key: deps.key, p_scope: deps.scope, p_sent_items: sentItems.slice(0, 1000), p_ok: okSids, p_gone: goneSids, p_fail: failSids,
+  await deps.rpc('push_report', { p_key: deps.key, p_ok: okSids, p_gone: goneSids, p_fail: failSids,
                                   p_sent: sum.sent, p_skipped: sum.skippedTrained, p_failed: sum.failed + sum.retried });
   sum.ok = true;
   return sum;
@@ -166,9 +170,9 @@ export async function pushRunTest(deps){
   if(t && t.__http === 401) return { ok: false, reason: 'auth' };
   if(!t || t.ok !== true || !Array.isArray(t.subs)) return { ok: false, reason: (t && t.reason) || 'targets' };
   if(!t.subs.length) return { ok: false, reason: 'none' };
-  const res = await pushSendAll(t.subs, () => pushPayload('test', 'train', ''), deps.send);
+  const res = await pushSendAll(t.subs, () => pushPayload('test', 'train', ''), deps.send, null, 5000);
   const gone = res.filter(r => r.out === 'gone').map(r => r.sid);
-  if(gone.length && deps.key) await deps.rpc('push_report', { p_key: deps.key, p_scope: 'test', p_sent_items: [], p_ok: [], p_gone: gone, p_fail: [], p_sent: 0, p_skipped: 0, p_failed: 0 });
+  if(gone.length && deps.key) await deps.rpc('push_report', { p_key: deps.key, p_ok: [], p_gone: gone, p_fail: [], p_sent: 0, p_skipped: 0, p_failed: 0 });
   const sent = res.filter(r => r.out === 'ok').length;
   return { ok: sent > 0, sent, gone: gone.length, devices: res.length };
 }
@@ -202,7 +206,7 @@ function _vapidReady(env){
   return !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY && /^(mailto:|https:\/\/)/.test(String(env.VAPID_SUBJECT || '')));
 }
 
-// /api/push/* — req: { method, path, origin, auth, cronKey }; deps: { env, now, rpcFetch, send }.
+// /api/push/* — req: { method, path, origin, context (Netlify deploy context), auth, cronKey }; deps: { env, now, rpcFetch, send }.
 // Fails closed: nothing is sent unless PUSH_ENABLED=1 and the VAPID keys are set.
 export async function handlePushApi(req, deps){
   const env = (deps && deps.env) || {};
@@ -232,12 +236,19 @@ export async function handlePushApi(req, deps){
     if(!_sameSecret(req.cronKey, env.PUSH_CRON_KEY)) return out(403, { ok: false, reason: 'key' });
     if(!_vapidReady(env)) return out(503, { ok: false, reason: 'not_configured' });
     // On the production deploy this is exactly the hourly run (same 'prod' scope,
-    // so it can never double-send); on a Deploy Preview it only touches devices
-    // that subscribed on that preview, under its own scope.
-    const prod = env.CONTEXT === 'production';
-    const origins = prod ? pushProdOrigins(env) : [String(req.origin || '')].filter(o => /^https:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/.test(o));
+    // so it can never double-send); on a Deploy Preview / branch deploy it only
+    // touches devices that subscribed on that deploy's origin, under its own scope.
+    // Unknown context, or a "preview" on a production origin: refuse (fail closed).
+    const ctx = String(req.context || '');
+    const prodOrigins = pushProdOrigins(env);
+    const origin = String(req.origin || '').replace(/\/+$/, '');
+    let scope, origins;
+    if(ctx === 'production'){ scope = 'prod'; origins = prodOrigins; }
+    else if((ctx === 'deploy-preview' || ctx === 'branch-deploy') && /^https:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/.test(origin) && prodOrigins.indexOf(origin) === -1){ scope = origin; origins = [origin]; }
+    else return out(400, { ok: false, reason: 'context' });
     if(!origins.length) return out(400, { ok: false, reason: 'origin' });
-    const r = await pushRunScheduler({ key: env.PUSH_CRON_KEY, scope: prod ? 'prod' : origins[0], origins, now: deps.now, deadline: Date.now() + 20000,
+    // A synchronous function has ~10 s: stop starting sends after 3 s.
+    const r = await pushRunScheduler({ key: env.PUSH_CRON_KEY, scope, origins, now: deps.now, deadline: Date.now() + 3000, sendTimeout: 4000,
                                        rpc: (n, b) => deps.rpcFetch(n, b, null), send: deps.send });
     return out(r.ok ? 200 : 502, r);
   }
@@ -252,7 +263,8 @@ export async function pushRunScheduled(deps){
   if(!_vapidReady(env) || !env.PUSH_CRON_KEY) return { ok: false, reason: 'not_configured' };
   const origins = pushProdOrigins(env);
   if(!origins.length) return { ok: false, reason: 'origin' };
-  return pushRunScheduler({ key: env.PUSH_CRON_KEY, scope: 'prod', origins, now: deps.now, deadline: Date.now() + 20000,
+  // Scheduled functions get 30 s: start sends for 10 s, each send ≤ 6 s, then release/report (≤ 5 s each).
+  return pushRunScheduler({ key: env.PUSH_CRON_KEY, scope: 'prod', origins, now: deps.now, deadline: Date.now() + 10000, sendTimeout: 6000,
                             rpc: (n, b) => deps.rpcFetch(n, b, null), send: deps.send });
 }
 

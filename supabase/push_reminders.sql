@@ -7,8 +7,10 @@
 --                       Mon = 1 … Sun = 64), whether the days follow the Path, a
 --                       label per weekday from a fixed list, the IANA time zone.
 --   push_sent           which local dates an account was already reminded on
---                       (per scope: 'prod', or a Deploy Preview's origin). Kept 3
---                       days so turning reminders off and on can't send twice.
+--                       (per scope: 'prod', or a Deploy Preview's origin). Written
+--                       BEFORE sending (at most once: a run that dies mid-way can
+--                       lose a reminder, never send it twice). Kept 3 days, so
+--                       turning reminders off and on can't send twice either.
 --   push_subscriptions  one row per opted-in device: the browser's push endpoint
 --                       and its two public encryption keys, plus the site origin.
 --   push_sends_daily    operations counts per UTC day (sent / skipped because the
@@ -64,7 +66,7 @@ create table if not exists public.push_prefs (
   user_id      uuid primary key references auth.users(id) on delete cascade,
   id           uuid not null unique default gen_random_uuid(),   -- what the scheduler sees instead of user_id
   hour         smallint not null check (hour between 0 and 23),
-  days         smallint not null check (days between 0 and 127),
+  days         smallint not null,
   follow_path  boolean not null default true,
   labels       text[] not null check (public.push_labels_ok(labels)),
   tz           text not null check (char_length(tz) between 1 and 64),
@@ -86,17 +88,22 @@ create table if not exists public.push_subscriptions (
 );
 create index if not exists push_subscriptions_user_idx on public.push_subscriptions(user_id);
 
--- One reminder per account per local date per scope. 'pending' while a run is
--- sending; a pending claim older than 20 minutes (a run that died) can be
--- claimed again; 'sent' is final.
+-- One reminder per account per local date per scope, recorded when claimed.
 create table if not exists public.push_sent (
   user_id uuid not null references auth.users(id) on delete cascade,
   scope   text not null check (char_length(scope) between 1 and 200),
   day     date not null,
-  state   text not null check (state in ('pending', 'sent')),
   at      timestamptz not null default now(),
   primary key (user_id, scope, day)
 );
+
+-- Re-runs over an earlier draft of these tables (never shipped): bring them in line.
+alter table public.push_prefs add column if not exists follow_path boolean not null default true;
+alter table public.push_prefs drop column if exists last_sent_on;
+alter table public.push_subscriptions add column if not exists fail_n smallint not null default 0;
+alter table public.push_sent drop column if exists state;
+alter table public.push_prefs drop constraint if exists push_prefs_days_check;
+alter table public.push_prefs add constraint push_prefs_days_check check (days between 1 and 127);
 
 create table if not exists public.push_sends_daily (
   day             date primary key,
@@ -215,7 +222,7 @@ declare
 begin
   if uid is null then return jsonb_build_object('ok', false, 'reason', 'auth'); end if;
   if p_hour is null or p_hour < 0 or p_hour > 23 then return jsonb_build_object('ok', false, 'reason', 'hour'); end if;
-  if p_days is null or p_days < 0 or p_days > 127 then return jsonb_build_object('ok', false, 'reason', 'days'); end if;
+  if p_days is null or p_days < 1 or p_days > 127 then return jsonb_build_object('ok', false, 'reason', 'days'); end if;
   if not push_labels_ok(p_labels) then return jsonb_build_object('ok', false, 'reason', 'labels'); end if;
   if p_tz is null or char_length(p_tz) > 64 or not exists (select 1 from pg_timezone_names where name = p_tz) then
     return jsonb_build_object('ok', false, 'reason', 'tz');
@@ -348,8 +355,7 @@ begin
   return jsonb_build_object('ok', true, 'rows', coalesce((
     select jsonb_agg(jsonb_build_object(
       'pid', p.id, 'hour', p.hour, 'days', p.days, 'labels', to_jsonb(p.labels), 'tz', p.tz,
-      'last_sent_on', (select max(x.day) from push_sent x where x.user_id = p.user_id and x.scope = p_scope
-                         and (x.state = 'sent' or x.at > now() - interval '20 minutes')),
+      'last_sent_on', (select max(x.day) from push_sent x where x.user_id = p.user_id and x.scope = p_scope),
       'last_session_at', (select max(t.ts) from (
           select push_ts(s.date::text) as ts from sessions s where s.user_id = p.user_id::text) t
           where t.ts < now() + interval '1 day')))
@@ -361,10 +367,8 @@ end
 $$;
 
 -- Atomically claim "one reminder for this account on this local date in this
--- scope". Succeeds only if no reminder was sent for that date and no other run
--- is sending it right now, so overlapping or repeated runs never send twice. A
--- claim left 'pending' for 20 minutes (the run died) can be claimed again.
--- Returns the devices on these origins to send to.
+-- scope". Succeeds only once per date, so overlapping, repeated or crashed runs
+-- never send twice. Returns the devices on these origins to send to.
 create or replace function public.push_claim(p_key text, p_scope text, p_origins text[], p_items jsonb)
 returns jsonb
 language plpgsql
@@ -392,9 +396,8 @@ begin
     if d < (now() at time zone 'utc')::date - 1 or d > (now() at time zone 'utc')::date + 1 then continue; end if;
     select user_id into uid from push_prefs where id = pid;
     if uid is null then continue; end if;
-    insert into push_sent(user_id, scope, day, state, at) values (uid, p_scope, d, 'pending', now())
-    on conflict (user_id, scope, day) do update set at = now()
-      where push_sent.state = 'pending' and push_sent.at < now() - interval '20 minutes';
+    insert into push_sent(user_id, scope, day) values (uid, p_scope, d)
+    on conflict (user_id, scope, day) do nothing;
     if found then claimed := claimed || pid; end if;
   end loop;
   return jsonb_build_object('ok', true, 'subs', coalesce((
@@ -404,8 +407,8 @@ begin
 end
 $$;
 
--- Undo a claim when every device failed temporarily, so the next hourly run
--- (still inside the 3-hour window) tries again.
+-- Undo a claim when no device was reached (temporary failure, or the run ran out
+-- of time before sending), so the next hourly run (inside the 3-hour window) tries again.
 create or replace function public.push_release(p_key text, p_scope text, p_items jsonb)
 returns jsonb
 language plpgsql
@@ -421,7 +424,7 @@ begin
     begin
       delete from push_sent x using push_prefs p
        where p.id = (it->>'pid')::uuid and x.user_id = p.user_id and x.scope = p_scope
-         and x.day = (it->>'date')::date and x.state = 'pending';
+         and x.day = (it->>'date')::date;
     exception when others then
       continue;
     end;
@@ -430,11 +433,10 @@ begin
 end
 $$;
 
--- Results of a run: claims that reached a device become 'sent'; endpoints the
--- push service says are gone are deleted; a device rejected 7 runs in a row
+-- Results of a run: endpoints the push service says are gone are deleted; a device rejected 7 runs in a row
 -- (e.g. after a key change) is deleted; an account left with no device loses
 -- its schedule; the day's counts are added up (no user ids).
-create or replace function public.push_report(p_key text, p_scope text, p_sent_items jsonb,
+create or replace function public.push_report(p_key text,
                                               p_ok uuid[], p_gone uuid[], p_fail uuid[],
                                               p_sent int, p_skipped int, p_failed int)
 returns jsonb
@@ -446,19 +448,8 @@ declare
   n_gone int := 0;
   touched uuid[];
   today date := (now() at time zone 'utc')::date;
-  it jsonb;
 begin
   if not push_cron_ok(p_key) then return jsonb_build_object('ok', false, 'reason', 'key'); end if;
-  if jsonb_typeof(coalesce(p_sent_items, '[]'::jsonb)) = 'array' and jsonb_array_length(coalesce(p_sent_items, '[]'::jsonb)) <= 1000 then
-    for it in select * from jsonb_array_elements(coalesce(p_sent_items, '[]'::jsonb)) loop
-      begin
-        update push_sent x set state = 'sent', at = now() from push_prefs p
-         where p.id = (it->>'pid')::uuid and x.user_id = p.user_id and x.scope = p_scope and x.day = (it->>'date')::date;
-      exception when others then
-        continue;
-      end;
-    end loop;
-  end if;
   if coalesce(array_length(p_ok, 1), 0) > 0 then
     update push_subscriptions set last_ok_at = now(), fail_n = 0 where id = any(p_ok);
   end if;
@@ -491,6 +482,7 @@ drop function if exists public.push_candidates(text, text);
 drop function if exists public.push_claim(text, text, jsonb);
 drop function if exists public.push_release(text, jsonb);
 drop function if exists public.push_report(text, uuid[], uuid[], int, int, int);
+drop function if exists public.push_report(text, text, jsonb, uuid[], uuid[], uuid[], int, int, int);
 
 -- ── Grants ─────────────────────────────────────────────────────────────────
 revoke all on function public.push_endpoint_ok(text) from public, anon, authenticated;
@@ -518,8 +510,8 @@ revoke all on function public.push_claim(text, text, text[], jsonb) from public,
 grant execute on function public.push_claim(text, text, text[], jsonb) to anon;
 revoke all on function public.push_release(text, text, jsonb) from public, authenticated;
 grant execute on function public.push_release(text, text, jsonb) to anon;
-revoke all on function public.push_report(text, text, jsonb, uuid[], uuid[], uuid[], int, int, int) from public, authenticated;
-grant execute on function public.push_report(text, text, jsonb, uuid[], uuid[], uuid[], int, int, int) to anon;
+revoke all on function public.push_report(text, uuid[], uuid[], uuid[], int, int, int) from public, authenticated;
+grant execute on function public.push_report(text, uuid[], uuid[], uuid[], int, int, int) to anon;
 
 notify pgrst, 'reload schema';
 

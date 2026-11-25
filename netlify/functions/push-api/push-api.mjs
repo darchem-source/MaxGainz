@@ -9,21 +9,22 @@
 import webpush from 'web-push';
 import { handlePushApi, pushRpcFetch } from '../../lib/push-core.mjs';
 
-export default async (req) => {
+export default async (req, context) => {
   const env = process.env;
   const url = new URL(req.url);
   const result = await handlePushApi({
     method: req.method,
     path: url.pathname,
     origin: url.origin,
+    context: (context && context.deploy && context.deploy.context) || process.env.CONTEXT || '',
     auth: req.headers.get('authorization') || '',
     cronKey: req.headers.get('x-cron-key') || ''
   }, {
     env,
     now: Date.now(),
-    rpcFetch: pushRpcFetch(fetch, () => AbortSignal.timeout(5000)),
+    rpcFetch: pushRpcFetch(fetch, () => AbortSignal.timeout(3000)),
     send: (sub, payload, opts) => webpush.sendNotification(sub, payload, {
-      TTL: opts.ttl, urgency: 'normal', topic: opts.topic, timeout: 8000,
+      TTL: opts.ttl, urgency: 'normal', topic: opts.topic, timeout: opts.timeout,
       vapidDetails: { subject: env.VAPID_SUBJECT, publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY }
     }).then(r => ({ status: r.statusCode }))
   });
