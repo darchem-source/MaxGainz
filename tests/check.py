@@ -4382,52 +4382,341 @@ def gate_discovery(html, js):
     return ok_all
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gate 21 — Phase 3 private sharing (snapshot whitelist, links, revocation)
+# (a) the client whitelist SHARE_SCHEMA equals supabase/shares.sql's, field
+#     for field; (b) _shareModel is byte-identical in index.html and share.js,
+#     so the preview IS what a viewer sees; (c) snapshot builders run in jsc on
+#     sessions laced with PII (email, ids, names, body weight, notes, custom
+#     names) — nothing un-ticked or unlisted may reach the payload, every key
+#     must be whitelisted, and _shareClean strips injected keys; (d) link
+#     creation sends exactly the previewed payload, only on the button, only
+#     signed in + online; revocation deletes and forgets the token; (e) the
+#     viewer runs no app code, reads no storage, writes no HTML, sends only the
+#     token to share_get; strict CSP/no-referrer/noindex; sw.js leaves it
+#     alone; (f) SQL: RLS on, no client writes, anon may only call share_get,
+#     only a hash of the token stored, revoke deletes, expiry enforced;
+#     (g) wiring: flag-gated entry points, sign-out + account deletion clean up.
+# ─────────────────────────────────────────────────────────────────────────────
+SHARE_JS = os.path.join(ROOT, 'share.js')
+SHARE_HTML = os.path.join(ROOT, 'share.html')
+SHARE_SQL = os.path.join(ROOT, 'supabase', 'shares.sql')
+NETLIFY_TOML = os.path.join(ROOT, 'netlify.toml')
+
+SHARE_FNS = ['_shareModel', '_shareLocalDate', '_shareIsCatalogueName', '_shareNamer', '_shareNum', '_shareProgName',
+             '_shareSessionSnapshot', '_shareWeekSnapshot', '_shareClean', '_shareTitle', '_shareFlagOn', '_shareDefaults',
+             '_shareCurrentPayload', 'shareSetOpt', '_shareModelHtml', '_shareLinksLoad', '_shareLinksSave', '_shareErrText',
+             'shareCreateLink', '_shareRevokeId', 'shareRevokeCurrent', 'openShareSession', 'openShareWeek',
+             '_orderedSetLogEntries', '_sessTime', '_prsInWindow', '_weekStartMs', '_p3FlagOn', 'esc']
+SHARE_STUBS = r"""
+var LS = {}; var localStorage = { getItem: function(k){ return Object.prototype.hasOwnProperty.call(LS, k) ? LS[k] : null; }, setItem: function(k, v){ LS[k] = String(v); }, removeItem: function(k){ delete LS[k]; } };
+var navigator = { onLine: true }; var location = { origin: 'https://app.test' };
+var document = { getElementById: function(){ return null; }, querySelector: function(){ return null; } };
+var P3_FLAG_KEYS = { offline:'maxgainz_p3_offline', discover:'maxgainz_p3_discover', share:'maxgainz_p3_share' };
+var CATALOGUE = { 'Bench Press':1, 'Squat':1, 'Deadlift':1, 'Barbell Row':1 };
+function _nlIsCatalogueName(n){ return !!CATALOGUE[n]; }
+var EX_ROTATION_POOLS = {}; var CORE_EXERCISES = [];
+function _progDisplayName(k){ return k === 'ULF' ? 'Upper · Lower · Full Body' : k; }
+var AUTH = true, UID = 'user-7f3a', CALLS = [];
+function isAuthenticated(){ return AUTH; } function getCurrentUserId(){ return UID; }
+var _lastSyncErrorDetail = null, RPC = {};
+function sbFetch(path, o){ CALLS.push({ path: path, body: o && o.body }); var f = RPC[path]; return Promise.resolve(f ? f(o) : null); }
+function showToast(){}
+function _shareRender(){}
+function _shareOpen(){}
+var _share = null, _shareList = [];
+function _calcMuscleGroupShare(){ return { share:{}, hasData:false }; } function _muscleBalanceVerdict(){ return null; }
+function _plannedPerWeek(){ return 3; } var userProfile = {}; var userPath = null;
+var BRIEF = null; function _weeklyBriefing(){ return BRIEF; }
+function _shareBriefing(){ return BRIEF; }
+var DAY = 864e5, NOW = Date.UTC(2026, 10, 25, 12);
+var completedSessions = [
+  { date: new Date(NOW - 9 * DAY), day: 'Upper', progKey: 'ULF', setLog: { 'Bench Press': { ord:0, sets:2, reps:[5,5], weight:80, setWeights:[80,80] } }, volume: 800, durationMin: 50 },
+  { date: new Date(NOW - 1 * DAY), day: 'Upper', progKey: 'ULF', durationMin: 63, volume: 4321,
+    userEmail: 'max.test@example.com', user_id: 'user-7f3a', cloud_id: 'cloud-99', client_id: 'cli-42', name: 'Maximilian Tester',
+    bodyWeight: 87.3, measurements: { waist: 81.7 },
+    setLog: {
+      'Bench Press': { ord:0, sets:3, reps:[5,5,4], weight:85, setWeights:[85,85,85], note:'Left shoulder tweak — email me at max.test@example.com', rpe:[8,9,9] },
+      "Grandma's Secret Press": { ord:1, sets:2, reps:[10,9], weight:22.5, setWeights:[22.5,22.5] },
+      'Squat': { ord:2, sets:2, reps:[5,5], weight:100, bw:false }
+    } }
+];
+function walkKeys(o, schemaFor, path, bad){
+  if(Array.isArray(o)){ o.forEach(function(x){ walkKeys(x, schemaFor, path, bad); }); return; }
+  if(!o || typeof o !== 'object') return;
+  var allowed = schemaFor(path);
+  Object.keys(o).forEach(function(k){ if(allowed.indexOf(k) === -1) bad.push(path + '.' + k); walkKeys(o[k], schemaFor, k, bad); });
+}
+function schemaFor(kind){ return function(path){
+  if(path === 'root') return SHARE_SCHEMA[kind];
+  return { totals: SHARE_SCHEMA.totals, exercises: SHARE_SCHEMA.exercise, sets: SHARE_SCHEMA.set, newPBs: SHARE_SCHEMA.pb, sessions: SHARE_SCHEMA.weeksession }[path] || [];
+}; }
+"""
+SHARE_PURE = r"""
+var fails = []; function ok(l, c){ if(!c) fails.push(l); }
+var ALL = { exercises:true, weights:true, pbs:true, duration:true, notes:true, ownNames:true };
+var NONE = { exercises:false, weights:false, pbs:false, duration:false, notes:false, ownNames:false };
+var DEF = _shareDefaults('session');
+var s = completedSessions[1];
+function snap(o){ return _shareClean(_shareSessionSnapshot(s, completedSessions, o)); }
+var pd = snap(DEF), jd = JSON.stringify(pd);
+['max.test@example.com', '@', 'user-7f3a', 'cloud-99', 'cli-42', 'Maximilian', '87.3', '81.7', 'waist', 'rpe', 'Secret', 'shoulder'].forEach(function(t){ ok('default payload leaks "' + t + '"', jd.indexOf(t) === -1); });
+ok('defaults: notes and own names off', DEF.notes === false && DEF.ownNames === false && _shareDefaults('week').ownNames === false);
+ok('custom exercise masked by default', jd.indexOf('Exercise 1') !== -1);
+ok('catalogue names kept', jd.indexOf('Bench Press') !== -1 && jd.indexOf('Squat') !== -1);
+ok('date is a local day only', /^\d{4}-\d{2}-\d{2}$/.test(pd.date) && jd.indexOf('T') === -1 || /^\d{4}-\d{2}-\d{2}$/.test(pd.date));
+ok('PB marked from history (Bench 85 > 80)', pd.exercises[0].pb === true && pd.exercises[2].pb === false);
+var bad = []; walkKeys(pd, schemaFor('session'), 'root', bad); ok('only whitelisted keys: ' + bad.join(','), !bad.length);
+// The builders themselves must be clean too (not only after _shareClean).
+[DEF, ALL, NONE].forEach(function(o, i){ var raw = _shareSessionSnapshot(s, completedSessions, o), b0 = []; walkKeys(raw, schemaFor('session'), 'root', b0);
+  ok('raw session snapshot ' + i + ' has unlisted keys: ' + b0.slice(0, 3).join(','), !b0.length);
+  ok('raw session date is a local day', /^\d{4}-\d{2}-\d{2}$/.test(raw.date)); });
+var rw = _shareWeekSnapshot({ weekStartMs: NOW - 2 * DAY, done: 1, planned: 3, plannedSource: 'plan', trend: null, newPBs: [] }, completedSessions, _shareDefaults('week'), NOW), b1 = [];
+walkKeys(rw, schemaFor('week'), 'root', b1); ok('raw week snapshot has unlisted keys: ' + b1.join(','), !b1.length && /^\d{4}-\d{2}-\d{2}$/.test(rw.weekStart));
+var pa = snap(ALL), ja = JSON.stringify(pa);
+ok('notes only when ticked', ja.indexOf('shoulder') !== -1);
+ok('own names only when ticked', ja.indexOf("Grandma's Secret Press") !== -1);
+['user-7f3a', 'cloud-99', 'Maximilian', '87.3', '81.7', 'rpe'].forEach(function(t){ ok('everything-ticked payload still leaks "' + t + '"', ja.indexOf(t) === -1); });
+var pn = snap(NONE), jn = JSON.stringify(pn);
+ok('nothing ticked → no exercises, weights, length', pn.exercises.length === 0 && pn.durationMin === null && pn.totals.volumeKg === null && jn.indexOf('85') === -1);
+var pw = snap({ exercises:true, weights:false, pbs:false, duration:true, notes:false, ownNames:false });
+ok('weights off → no weights or volume anywhere', pw.exercises.every(function(e){ return e.sets.every(function(x){ return x.w === null; }); }) && pw.totals.volumeKg === null);
+ok('PB off → no pb flags', pw.exercises.every(function(e){ return !('pb' in e); }));
+// _shareClean is the last guard: injected keys and oversize strings go.
+var inj = JSON.parse(JSON.stringify(pa)); inj.email = 'x@y.z'; inj.user_id = 'u'; inj.exercises[0].email = 'x@y.z'; inj.exercises[0].sets[0].token = 't';
+inj.totals.secret = 1; inj.title = new Array(200).join('A'); inj.exercises[0].note = new Array(400).join('n');
+var c = _shareClean(inj), jc = JSON.stringify(c); var bad2 = []; walkKeys(c, schemaFor('session'), 'root', bad2);
+ok('clean strips injected keys: ' + bad2.join(','), !bad2.length && jc.indexOf('x@y.z') === -1);
+ok('clean caps strings', c.title.length <= 60 && c.exercises[0].note.length <= 200);
+ok('clean refuses unknown kinds', _shareClean({ kind:'profile', v:1 }) === null && _shareClean(null) === null);
+// Week snapshot from the real briefing shape.
+BRIEF = { weekStartMs: NOW - 2 * DAY, done: 1, planned: 3, plannedSource: 'default', trend: { pct: 12 }, newPBs: [{ name:'Bench Press', weight:85, prev:80 }, { name:"Grandma's Secret Press", weight:22.5, prev:20 }] };
+var w = _shareClean(_shareWeekSnapshot(BRIEF, completedSessions, _shareDefaults('week'), NOW)), jw = JSON.stringify(w);
+var bad3 = []; walkKeys(w, schemaFor('week'), 'root', bad3); ok('week: only whitelisted keys ' + bad3.join(','), !bad3.length);
+ok('week: default target is not presented as a plan', w.planned === null);
+ok('week: custom names masked', jw.indexOf('Secret') === -1 && jw.indexOf('Exercise 1') !== -1);
+ok('week: sessions are date + title only', w.sessions.length === 1 && Object.keys(w.sessions[0]).join() === 'date,title');
+var w2 = _shareClean(_shareWeekSnapshot(BRIEF, completedSessions, { sessions:false, pbs:true, weights:false, trend:false, ownNames:false }, NOW));
+ok('week: weights/trend/sessions off', w2.newPBs.every(function(b){ return b.weight === null; }) && w2.trendPct === null && w2.sessions.length === 0);
+// The model the preview and the viewer draw.
+var m = _shareModel(pd); ok('model heading + stats', m.heading === 'Upper' && m.stats.some(function(x){ return x[0] === 'Volume'; }));
+var evil = _shareClean({ v:1, kind:'session', title:'<img src=x onerror=alert(1)>', exercises:[{ name:'<script>x()</script>', sets:[{ w:1, r:1 }] }] });
+var html = _shareModelHtml(_shareModel(evil));
+ok('preview escapes text', html.indexOf('<img src=x') === -1 && html.indexOf('<script>') === -1 && html.indexOf('&lt;img') !== -1);
+ok('title for the owner list', /^Upper · /.test(_shareTitle(pd)) && _shareTitle(pd).length <= 80);
+ok('flag off by default', _shareFlagOn() === false);
+JSON.stringify(fails);
+"""
+SHARE_ASYNC = {
+ 'create sends exactly the previewed payload, then stores the token for this account only': r"""
+   LS['maxgainz_p3_share'] = '1'; openShareSession(1); _share = { kind:'session', idx:1, opts:_shareDefaults('session'), days:30, link:null, busy:false, msg:'' };
+   var preview = JSON.stringify(_shareCurrentPayload());
+   RPC['rpc/share_create'] = function(o){ return { ok:true, id:'id-1', token:'AbCdEfGhIjKlMnOpQrStUvWx' }; };
+   await shareCreateLink();
+   if(CALLS.length !== 1 || CALLS[0].path !== 'rpc/share_create') return 'calls ' + JSON.stringify(CALLS);
+   var body = JSON.parse(CALLS[0].body);
+   if(JSON.stringify(body.p_payload) !== preview) return 'sent payload differs from the preview';
+   if(body.p_days !== 30 || body.p_kind !== 'session') return 'kind/days';
+   if(JSON.stringify(body).indexOf('user-7f3a') !== -1 || JSON.stringify(body).indexOf('@') !== -1) return 'PII in the request body';
+   if(!_share.link || _share.link.token !== 'AbCdEfGhIjKlMnOpQrStUvWx') return 'link not shown';
+   var st = JSON.parse(LS['maxgainz_shares_v1']); if(st.uid !== 'user-7f3a' || st.links['id-1'] !== 'AbCdEfGhIjKlMnOpQrStUvWx') return 'token not kept per account';
+   UID = 'someone-else'; if(Object.keys(_shareLinksLoad().links).length) return 'another account sees the tokens';
+   return true;""",
+ 'nothing is sent signed out, offline, twice, or with a malformed token reply': r"""
+   LS['maxgainz_p3_share'] = '1';
+   _share = { kind:'session', idx:1, opts:_shareDefaults('session'), days:30, link:null, busy:false, msg:'' };
+   AUTH = false; await shareCreateLink(); AUTH = true;
+   navigator.onLine = false; await shareCreateLink(); navigator.onLine = true;
+   if(CALLS.length) return 'sent while signed out/offline';
+   RPC['rpc/share_create'] = function(){ return { ok:true, id:'x', token:'<script>' }; };
+   var p1 = shareCreateLink(); var p2 = shareCreateLink(); await p1; await p2;
+   if(CALLS.length !== 1) return 'double send ' + CALLS.length;
+   if(_share.link) return 'accepted a malformed token';
+   RPC['rpc/share_create'] = function(){ _lastSyncErrorDetail = { status:404, text:'Could not find the function public.share_create' }; return null; };
+   await shareCreateLink(); if(!/switched on yet/.test(_share.msg)) return 'missing-SQL message: ' + _share.msg;
+   return true;""",
+ 'turning a link off calls share_revoke and forgets the token': r"""
+   LS['maxgainz_shares_v1'] = JSON.stringify({ uid:'user-7f3a', links:{ 'id-9':'AbCdEfGhIjKlMnOpQrStUvWx' } });
+   _share = { kind:'session', idx:1, opts:{}, days:30, link:{ id:'id-9', token:'AbCdEfGhIjKlMnOpQrStUvWx' }, busy:false, msg:'' };
+   RPC['rpc/share_revoke'] = function(o){ return JSON.parse(o.body).p_id === 'id-9' ? { ok:true, deleted:1 } : null; };
+   await shareRevokeCurrent();
+   if(_share.link) return 'link still shown';
+   if(JSON.parse(LS['maxgainz_shares_v1']).links['id-9']) return 'token kept after revoke';
+   RPC['rpc/share_revoke'] = function(){ return null; };
+   _share.link = { id:'id-8', token:'AbCdEfGhIjKlMnOpQrStUvWx' }; await shareRevokeCurrent();
+   if(!_share.link || !/Couldn't turn the link off/.test(_share.msg)) return 'failed revoke reported as done';
+   return true;""",
+}
+
+
+def _share_sql_keys(sql):
+    out = {}
+    for m in re.finditer(r'-- SHARE_KEYS (\w+): ([^\n]+)', sql):
+        out[m.group(1)] = m.group(2).split()
+    return out
+
+
+def gate_sharing(html, js, share_js=None, share_html=None, sql=None, toml=None, sw=None):
+    ok_all = True
+    rd = lambda p: open(p, encoding='utf-8').read() if os.path.exists(p) else ''
+    share_js = rd(SHARE_JS) if share_js is None else share_js
+    share_html = rd(SHARE_HTML) if share_html is None else share_html
+    sql = rd(SHARE_SQL) if sql is None else sql
+    toml = rd(NETLIFY_TOML) if toml is None else toml
+    sw = rd(SW_PATH) if sw is None else sw
+    problems = []
+    # (a) whitelist parity
+    sch = extract_const_object(js, 'SHARE_SCHEMA') or ''
+    client = {k: re.findall(r"'([^']+)'", v) for k, v in re.findall(r"(\w+):\s*\[([^\]]*)\]", sch)}
+    server = _share_sql_keys(sql)
+    names = {'session': 'session', 'week': 'week', 'totals': 'totals', 'exercise': 'exercise', 'set': 'set', 'pb': 'pb', 'weeksession': 'weeksession'}
+    if not client or set(client) != set(names):
+        problems.append('SHARE_SCHEMA unreadable')
+    for k in names:
+        if client.get(k) != server.get(k):
+            problems.append(f'whitelist differs for {k}: client {client.get(k)} vs SQL {server.get(k)}')
+        elif "array[" + ",".join("'" + x + "'" for x in server[k]) + "]" not in sql:
+            problems.append(f'SQL check for {k} does not use the documented key list')
+    # (b) identical renderer
+    a = extract_decl(js, '_shareModel'); b = extract_decl(share_js, '_shareModel')
+    if not a or a != b: problems.append('_shareModel differs between index.html and share.js (preview ≠ viewer)')
+    # (e) viewer isolation
+    for bad, why in [('localStorage', 'reads storage'), ('sessionStorage', 'reads storage'), ('document.cookie', 'reads cookies'), ('innerHTML', 'writes HTML'),
+                     ('insertAdjacentHTML', 'writes HTML'), ('eval(', 'evals'), ('authToken', 'touches the app JWT'), ('indexedDB', 'reads storage')]:
+        if bad in re.sub(r'(?m)^\s*//[^\n]*', '', share_js): problems.append('share.js ' + why + ' (' + bad + ')')
+    urls = re.findall(r"fetch\(([^,]+),", share_js)
+    if len(urls) != 1 or 'rpc/share_get' not in urls[0]: problems.append('share.js must fetch only rpc/share_get')
+    if "credentials: 'omit'" not in share_js or "referrerPolicy: 'no-referrer'" not in share_js: problems.append('share.js fetch must omit credentials and referrer')
+    if not re.search(r"\^#t=\(\[A-Za-z0-9_-\]\{24\}\)\$", share_js): problems.append('share.js must accept only a 24-char token from the fragment')
+    if re.search(r'<script(?![^>]*\bsrc=)[^>]*>', share_html) or 'src="share.js"' not in share_html or 'on' + 'click=' in share_html:
+        problems.append('share.html must have no inline script or handlers')
+    if 'noindex' not in share_html: problems.append('share.html must be noindex')
+    blk = re.search(r'for = "/share\.html"[\s\S]*?(?=\[\[headers\]\]|\Z)', toml)
+    hdr = blk.group(0) if blk else ''
+    if "script-src 'self'" not in hdr or "default-src 'none'" not in hdr or 'unsafe-eval' in hdr or "script-src 'self' 'unsafe-inline'" in hdr: problems.append('share.html CSP missing or weak')
+    if 'Referrer-Policy = "no-referrer"' not in hdr or 'noindex' not in hdr or 'no-store' not in hdr: problems.append('share.html headers: no-referrer / noindex / no-store')
+    if "url.pathname === '/share.html'" not in sw: problems.append('sw.js must leave the share viewer alone')
+    # (f) SQL
+    low = sql.lower()
+    sqlp = []
+    if 'alter table public.shares enable row level security' not in low: sqlp.append('RLS not enabled')
+    if 'revoke all on table public.shares from anon' not in low: sqlp.append('anon table access not revoked')
+    if re.search(r'create policy [^;]*for (insert|update|delete|all)', low): sqlp.append('a client write policy exists')
+    if re.search(r'grant select \([^)]*(payload|token_hash|user_id)', low): sqlp.append('owner list exposes payload/token hash/user id')
+    if not re.search(r'grant execute on function public\.share_get\(text\) to anon', low): sqlp.append('share_get not callable by viewers')
+    for fn in ['share_create', 'share_revoke', 'share_revoke_all', 'share_payload_ok']:
+        if re.search(r'grant execute on function public\.' + fn + r'\([^)]*\) to [^;]*anon', low): sqlp.append(fn + ' granted to anon')
+    for fn in ['share_create', 'share_get', 'share_revoke', 'share_revoke_all']:
+        body = re.search(r'create or replace function public\.' + fn + r'\([\s\S]*?\$\$;', low)
+        if not body or 'security definer' not in body.group(0) or 'set search_path' not in body.group(0): sqlp.append(fn + ' not security definer with a fixed search_path')
+    get = re.search(r'create or replace function public\.share_get\([\s\S]*?\$\$;', low); get = get.group(0) if get else ''
+    if 'expires_at > now()' not in get or 'user_id' in get or "digest(p_token, 'sha256')" not in get: sqlp.append('share_get must hash the token, enforce expiry and never return user_id')
+    if 'token_hash  bytea' not in low or re.search(r'\btoken\s+text\b', low): sqlp.append('the token itself is stored')
+    if 'gen_random_bytes(18)' not in low: sqlp.append('token not 144 random bits')
+    rv = re.search(r'create or replace function public\.share_revoke\([\s\S]*?\$\$;', low); rv = rv.group(0) if rv else ''
+    if 'delete from shares where id = p_id and user_id = uid' not in rv: sqlp.append('revoke must delete only the caller\'s row')
+    if 'share_payload_ok(p_payload, p_kind)' not in low: sqlp.append('share_create does not validate the payload')
+    problems += ['SQL: ' + x for x in sqlp]
+    # (g) wiring
+    if 'id="sessShareBtn" class="st-secondary" hidden' not in html or 'id="sharedLinksSection" hidden' not in html: problems.append('entry points not hidden by default')
+    if '_shareFlagOn()' not in (extract_decl(js, 'openSessDetail') or '') or '_shareFlagOn()' not in (extract_decl(js, 'renderWeeklyBriefing') or ''): problems.append('entry points not flag-gated')
+    if "rpc/share_create" in js.replace(extract_decl(js, 'shareCreateLink') or '', ''): problems.append('share_create called outside the Create button')
+    scl = extract_decl(js, 'shareCreateLink') or ''
+    if not re.search(r'const p = _shareCurrentPayload\(\);', scl) or 'p_payload: p,' not in scl or '_shareClean' not in (extract_decl(js, '_shareCurrentPayload') or ''):
+        problems.append('the link must send exactly the cleaned, previewed payload')
+    lo = extract_decl(js, 'authLogout') or ''
+    if 'SHARE_LINKS_KEY' not in lo: problems.append('sign-out keeps share tokens')
+    dua = extract_decl(js, 'deleteUserAccount') or ''
+    if 'rpc/share_revoke_all' not in dua or not re.search(r'if\(sessRes === null \|\| weightRes === null \|\| !shareOk\)', dua): problems.append('account deletion leaves (or ignores failure to delete) shared links')
+    handlers = re.findall(r'on\w+="[^"]*\$\{[^"]*"', (extract_decl(js, '_shareRender') or '') + (extract_decl(js, '_shareListRender') or ''))
+    badh = [h for h in handlers if not re.fullmatch(r'on\w+="\w+\(\$\{(i|d)\}(, this\.checked)?\)"', h)]
+    if badh: problems.append('share handlers interpolate more than an index: ' + badh[0])
+    for p in problems: print('  ✗ ' + p)
+    if problems: ok_all = False
+    else: print('  ✓ whitelist = SQL; preview renderer = viewer renderer; viewer isolated (no storage/HTML/JWT, token only, strict CSP, no referrer, noindex, SW bypass); SQL RLS/grants/hash/expiry/delete; wiring')
+    # (c) + (d) in jsc
+    pieces = []; missing = []
+    s = extract_const_object(js, 'SHARE_SCHEMA'); (pieces.append(s) if s else missing.append('SHARE_SCHEMA'))
+    s = extract_const_object(js, 'SHARE_OPTS'); (pieces.append(s) if s else missing.append('SHARE_OPTS'))
+    s = extract_const_line(js, 'SHARE_LINKS_KEY'); (pieces.append(s) if s else missing.append('SHARE_LINKS_KEY'))
+    for n in SHARE_FNS:
+        d = extract_decl(js, n)
+        if d and js[max(0, js.find(d) - 6):js.find(d)].endswith('async '): d = 'async ' + d
+        (pieces.append(d) if d else missing.append(n))
+    if missing:
+        print(f'  ✗ could not extract {missing}'); return False
+    base = '\n'.join(pieces).replace('const ', 'var ') + '\n' + SHARE_STUBS
+    script = base + '\nprint((function(){ try { ' + SHARE_PURE.replace('JSON.stringify(fails);', 'return JSON.stringify(fails);') + ' } catch(e){ return JSON.stringify(["threw " + e + " " + (e.stack||"")]); } })());'
+    with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as t:
+        t.write(script); path = t.name
+    try:
+        out = subprocess.run([JSC, path], capture_output=True, text=True, timeout=120)
+        raw = (out.stdout.strip() or out.stderr.strip()).split('\n')[-1]
+    finally:
+        os.unlink(path)
+    try:
+        pf = json.loads(raw)
+    except Exception:
+        pf = ['runner errored: ' + raw[:400]]
+    for f in pf[:15]: print('  ✗ ' + f)
+    if pf: ok_all = False
+    else: print('  ✓ snapshots: no PII with any options, only ticked fields, custom names masked, notes opt-in, whitelisted keys only; clean strips injections; preview escaped')
+    af = _run_jsc_scenarios(base, SHARE_ASYNC)
+    for f in af: print('  ✗ links: ' + f)
+    if af: ok_all = False
+    else: print(f'  ✓ links ({len(SHARE_ASYNC)} scenarios): sends exactly the preview, only on the button, signed in + online, once; token kept per account; revoke deletes and forgets')
+    return ok_all
+
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/20] parse')
+    print('[1/21] parse')
     p = gate_parse(js)
-    print('[2/20] invariants')
+    print('[2/21] invariants')
     inv = gate_invariants(js)
-    print('[3/20] video map')
+    print('[3/21] video map')
     vm = gate_videomap(js)
-    print('[4/20] inline handler wiring')
+    print('[4/21] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/20] auth log hygiene')
+    print('[5/21] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/20] sign-out scrub')
+    print('[6/21] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/20] safe rendering of user text')
+    print('[7/21] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/20] sync honesty')
+    print('[8/21] sync honesty')
     sy = gate_sync(js)
-    print('[9/20] media fallback + reminder copy')
+    print('[9/21] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/20] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/21] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/20] core-journey accessibility (session + dialogs)')
+    print('[11/21] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/20] Start today (first-use flow) + shortened Path wizard')
+    print('[12/21] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/20] simplified navigation (flagged)')
+    print('[13/21] simplified navigation (flagged)')
     nv = gate_nav_v2(html, js)
-    print('[14/20] Progress weekly briefing')
+    print('[14/21] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/20] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/21] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/20] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/21] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/20] Phase 2 typed sets (preview before save)')
+    print('[17/21] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
-    print('[18/20] Phase 2 weekly AI recap + measurement')
+    print('[18/21] Phase 2 weekly AI recap + measurement')
     rc = gate_recap(html, js)
-    print('[19/20] Phase 3 offline media (download, cache versioning, fallback order)')
+    print('[19/21] Phase 3 offline media (download, cache versioning, fallback order)')
     om = gate_offline_media(html, js)
-    print('[20/20] Phase 3 programme discovery (metadata, finder, why, switch preview)')
+    print('[20/21] Phase 3 programme discovery (metadata, finder, why, switch preview)')
     dc = gate_discovery(html, js)
+    print('[21/21] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
+    sh = gate_sharing(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 

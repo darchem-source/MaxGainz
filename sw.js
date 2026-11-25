@@ -136,6 +136,10 @@ self.addEventListener('fetch', e => {
   // plan forbids caching, so these must always hit the network fresh.
   if (url.pathname.startsWith('/api/')) return;
 
+  // The private-share viewer is independent of the app: never cached here and
+  // never answered with the app shell (it needs the network anyway).
+  if (url.origin === self.location.origin && (url.pathname === '/share.html' || url.pathname === '/share.js')) return;
+
   // Self-hosted exercise media: served from the offline download when present,
   // otherwise straight from the network (nothing is cached lazily — the media
   // cache only ever holds what the user chose to download). Same origin only:

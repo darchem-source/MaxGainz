@@ -536,6 +536,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
 .st-skip { display:block; width:100%; background:transparent; border:none; color:var(--text2); font-family:inherit; font-size:13px; padding:12px; cursor:pointer; text-decoration:underline; text-underline-offset:3px; min-height:44px; }
 .st-need { font-size:12px; color:var(--orange, #ff8c42); margin:-6px 0 8px; }
 .st-secondary[hidden] { display:none; }
+#shareSheetBody .btn-p:disabled, #libCards .btn-p:disabled { opacity:.45; cursor:default; }
 .st-secondary { display:block; width:100%; margin-top:8px; padding:13px; background:var(--surface2); border:0.5px solid var(--border); border-radius:12px; color:var(--text); font-family:inherit; font-size:14px; font-weight:700; cursor:pointer; min-height:48px; }
 .st-days { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; }
 .st-day { font-size:12px; font-weight:700; padding:6px 10px; border-radius:999px; background:var(--surface2); border:0.5px solid var(--border); color:var(--text2); }
@@ -1393,6 +1394,13 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
           <button onclick="openFeedbackModal()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;">📬 Send Feedback</button>
         </div>
 
+        <!-- Shared links (Phase 3, flag maxgainz_p3_share) -->
+        <div id="sharedLinksSection" hidden style="margin-top:20px;padding-top:20px;border-top:0.5px solid var(--border);">
+          <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px;">SHARED LINKS</div>
+          <div style="font-size:11px;color:var(--text2);margin-bottom:10px;line-height:1.5;">See who-can-see links you've created and turn any of them off.</div>
+          <button type="button" class="st-secondary" onclick="openSharedLinks()">Manage shared links</button>
+        </div>
+
         <!-- Data Backup -->
         <div style="margin-top:20px;padding-top:20px;border-top:0.5px solid var(--border);">
           <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px;">DATA BACKUP</div>
@@ -1570,6 +1578,26 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
     <button class="btn-p" style="width:100%;margin-bottom:8px;" onclick="downloadShareCard()">💾 Save image</button>
     <button id="shareCardNativeBtn" style="display:none;width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:12px;font-size:14px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:8px;" onclick="shareCardNative()">📲 Share to apps</button>
     <button onclick="document.getElementById('shareCardMod').classList.remove('open')" style="width:100%;background:transparent;border:none;color:var(--text2);font-size:13px;padding:8px;cursor:pointer;">Cancel</button>
+  </div>
+</div>
+
+<!-- PRIVATE SHARE SHEET (Phase 3) -->
+<div class="modal-ov" id="shareSheetMod" style="z-index:410;" onclick="if(event.target===this)closeShareSheet()">
+  <div class="modal" style="max-height:92vh;overflow-y:auto;">
+    <div class="modal-handle"></div>
+    <h2 id="shareSheetTitle" tabindex="-1" style="font-size:19px;font-weight:800;margin:0 0 4px;">Share privately</h2>
+    <p style="font-size:12px;color:var(--text2);margin:0 0 12px;">Pick exactly what to include. Nothing leaves your phone until you save an image or create a link.</p>
+    <div id="shareSheetBody"></div>
+    <button type="button" onclick="closeShareSheet()" style="width:100%;margin-top:10px;background:transparent;border:none;color:var(--text2);font-size:13px;padding:8px;cursor:pointer;">Done</button>
+  </div>
+</div>
+<div class="modal-ov" id="sharedLinksMod" style="z-index:410;" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal" style="max-height:92vh;overflow-y:auto;">
+    <div class="modal-handle"></div>
+    <h2 id="sharedLinksTitle" tabindex="-1" style="font-size:19px;font-weight:800;margin:0 0 4px;">Shared links</h2>
+    <p style="font-size:12px;color:var(--text2);margin:0 0 12px;">Each link shows a copy made when you shared it. Turning a link off deletes that copy.</p>
+    <div id="sharedLinksBody"></div>
+    <button type="button" onclick="document.getElementById('sharedLinksMod').classList.remove('open')" style="width:100%;margin-top:10px;background:transparent;border:none;color:var(--text2);font-size:13px;padding:8px;cursor:pointer;">Close</button>
   </div>
 </div>
 
@@ -2224,6 +2252,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
     <div style="font-size:19px;font-weight:800;margin-bottom:2px;" id="sessDetailTitle">Session</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:14px;" id="sessDetailSub"></div>
     <div id="sessDetailContent"></div>
+    <button type="button" id="sessShareBtn" class="st-secondary" hidden onclick="shareFromDetail()">🔗 Share this workout</button>
     <button class="btn-p" style="width:100%;margin-top:8px;" onclick="document.getElementById('sessDetailMod').classList.remove('open')">Close</button>
   </div>
 </div>
@@ -18053,6 +18082,436 @@ async function shareCardNative(){
   } catch(e){ console.warn('Share cancelled:', e); }
 }
 
+// ── shared share renderer (byte-identical in index.html and share.js — gate 21) ──
+// Pure: a whitelisted share payload → what a viewer sees, as plain strings.
+// Callers must escape (the app) or use textContent (share.js).
+function _shareModel(p){
+  const o = (p && typeof p === 'object') ? p : {};
+  const num = v => (typeof v === 'number' && isFinite(v)) ? v : null;
+  const kg = v => { const n = num(v); return n === null ? null : (Math.round(n * 100) / 100) + ' kg'; };
+  const day = s => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ''));
+    if(!m) return '';
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return Number(m[3]) + ' ' + months[Number(m[2]) - 1] + ' ' + m[1];
+  };
+  const str = (v, n) => typeof v === 'string' ? v.slice(0, n) : '';
+  const out = { heading:'', sub:'', stats:[], sections:[] };
+  if(o.kind === 'session'){
+    out.heading = str(o.title, 60) || 'Workout';
+    out.sub = [day(o.date), str(o.programme, 60)].filter(Boolean).join(' · ');
+    const t = (o.totals && typeof o.totals === 'object') ? o.totals : {};
+    if(num(o.durationMin) !== null) out.stats.push(['Time', Math.round(o.durationMin) + ' min']);
+    if(num(t.sets) !== null) out.stats.push(['Sets', String(Math.round(t.sets))]);
+    if(num(t.volumeKg) !== null) out.stats.push(['Volume', Math.round(t.volumeKg).toLocaleString('en-GB') + ' kg']);
+    const exs = Array.isArray(o.exercises) ? o.exercises.slice(0, 25) : [];
+    const pbs = exs.filter(e => e && e.pb === true).length;
+    if(pbs) out.stats.push(['PBs', String(pbs)]);
+    if(exs.length) out.sections.push({ title:'Exercises', rows: exs.map(e => {
+      const sets = Array.isArray(e && e.sets) ? e.sets.slice(0, 15) : [];
+      const detail = sets.map(st => { const r = num(st && st.r), w = kg(st && st.w); return (r === null ? '–' : r) + (w ? ' × ' + w : ''); }).join(', ');
+      return { label: str(e && e.name, 60) || 'Exercise', detail, badge: e && e.pb === true ? 'PB' : '', note: str(e && e.note, 200) };
+    }) });
+  } else if(o.kind === 'week'){
+    out.heading = 'Week of ' + (day(o.weekStart) || '—');
+    const done = num(o.done), planned = num(o.planned);
+    if(done !== null) out.stats.push(['Sessions', planned ? done + ' of ' + planned : String(done)]);
+    if(num(o.trendPct) !== null) out.stats.push(['Volume vs usual', (o.trendPct > 0 ? '+' : '') + Math.round(o.trendPct) + '%']);
+    const pbs = Array.isArray(o.newPBs) ? o.newPBs.slice(0, 20) : [];
+    if(pbs.length) out.sections.push({ title:'New PBs', rows: pbs.map(b => ({ label: str(b && b.name, 60) || 'Exercise', detail: kg(b && b.weight) || '', badge:'PB', note:'' })) });
+    const ss = Array.isArray(o.sessions) ? o.sessions.slice(0, 14) : [];
+    if(ss.length) out.sections.push({ title:'Workouts', rows: ss.map(x => ({ label: str(x && x.title, 60) || 'Workout', detail: day(x && x.date), badge:'', note:'' })) });
+  } else {
+    out.heading = 'Shared workout';
+  }
+  return out;
+}
+// ── end shared share renderer
+
+// ── PRIVATE SHARING (Phase 3 · slice 3, flag maxgainz_p3_share) ───────────
+// Share ONE session or a weekly summary as a read-only snapshot: an image
+// made on the device, and/or a private link. A link holds a COPY made now
+// (Supabase public.shares via share_create — supabase/shares.sql); the viewer
+// page share.html calls share_get with the link token only and never sees the
+// user's tables or JWT. Default private: nothing leaves the device until the
+// user presses "Create private link", and only the ticked fields go. Never
+// shared: email, user id, display name, body measurements, notes unless
+// ticked, names the user typed (custom exercises/programmes) unless ticked.
+const SHARE_SCHEMA = {
+  session: ['v','kind','date','title','programme','durationMin','totals','exercises','unit'],
+  week: ['v','kind','weekStart','done','planned','trendPct','newPBs','sessions','unit'],
+  totals: ['sets','volumeKg'],
+  exercise: ['name','sets','pb','note'],
+  set: ['w','r'],
+  pb: ['name','weight'],
+  weeksession: ['date','title']
+};
+const SHARE_LINKS_KEY = 'maxgainz_shares_v1';   // {uid, links:{id:token}} — this device, this account
+const SHARE_OPTS = {
+  session: [['exercises','Exercises and sets',true], ['weights','Weights and volume',true], ['pbs','PB markers',true], ['duration','Workout length',true], ['notes','My exercise notes',false], ['ownNames','Names I typed myself (custom exercises)',false]],
+  week: [['sessions','List of workouts',true], ['pbs','New PBs',true], ['weights','PB weights',true], ['trend','Volume trend',true], ['ownNames','Names I typed myself (custom exercises)',false]]
+};
+let _share = null;   // { kind, idx, opts:{}, days, link:{id,token}|null, busy, msg }
+
+function _shareLocalDate(ms){
+  const d = new Date(ms);
+  if(!isFinite(d.getTime())) return null;
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function _shareIsCatalogueName(n){
+  if(typeof _nlIsCatalogueName === 'function' && _nlIsCatalogueName(n)) return true;
+  if(typeof EX_ROTATION_POOLS === 'object' && EX_ROTATION_POOLS && Object.keys(EX_ROTATION_POOLS).some(k => k === n || (EX_ROTATION_POOLS[k] || []).some(p => p && p.name === n))) return true;
+  return typeof CORE_EXERCISES !== 'undefined' && Array.isArray(CORE_EXERCISES) && CORE_EXERCISES.some(c => c && c.name === n);
+}
+// Names from the app's own catalogue go as they are; anything the user typed
+// goes as "Exercise N" unless they ticked "Names I typed myself".
+function _shareNamer(ownNames){
+  const seen = {}; let k = 0;
+  return n => {
+    const s = String(n == null ? '' : n).replace(/\s+/g, ' ').trim().slice(0, 60);
+    if(!s) return 'Exercise';
+    if(ownNames || _shareIsCatalogueName(s)) return s;
+    if(!seen[s]) seen[s] = 'Exercise ' + (++k);
+    return seen[s];
+  };
+}
+function _shareNum(v, dp){ const n = Number(v); if(!isFinite(n) || n < 0 || n > 100000) return null; const f = Math.pow(10, dp || 0); return Math.round(n * f) / f; }
+function _shareProgName(key){
+  if(!key || key === 'custom') return null;
+  if(key === 'hiit') return 'HIIT';
+  return typeof _progDisplayName === 'function' ? (_progDisplayName(key) || null) : null;
+}
+// Pure: the session snapshot — built ONLY from whitelisted fields.
+function _shareSessionSnapshot(s, all, opts){
+  const o = opts || {};
+  const name = _shareNamer(!!o.ownNames);
+  const t = _sessTime(s);
+  const pbSet = o.pbs && isFinite(t) ? new Set(_prsInWindow(all || [], t, t + 1).map(p => p.name)) : null;
+  const entries = _orderedSetLogEntries(s && s.setLog);
+  let setCount = 0;
+  const exercises = entries.slice(0, 25).map(([n, v]) => {
+    const reps = Array.isArray(v && v.reps) ? v.reps : [], sw = Array.isArray(v && v.setWeights) ? v.setWeights : [];
+    const count = Math.min(15, Math.max(0, Number(v && v.sets) || reps.length));
+    setCount += count;
+    const e = { name: name(n) };
+    if(o.exercises){
+      e.sets = Array.from({ length: count }, (_, i) => ({
+        w: (o.weights && !(v && v.bw)) ? _shareNum(sw[i] != null && sw[i] !== '' ? sw[i] : (v && v.weight), 2) : null,
+        r: _shareNum(reps[i], 0)
+      }));
+    }
+    if(pbSet) e.pb = pbSet.has(n);
+    if(o.notes && v && typeof v.note === 'string' && v.note.trim()) e.note = v.note.trim().slice(0, 200);
+    return e;
+  });
+  const custom = s && s.progKey === 'custom';
+  return {
+    v: 1, kind: 'session',
+    date: isFinite(t) ? _shareLocalDate(t) : null,
+    title: (custom && !o.ownNames) ? 'Workout' : (String((s && s.day) || 'Workout').slice(0, 60)),
+    programme: _shareProgName(s && s.progKey),
+    durationMin: o.duration ? _shareNum(s && s.durationMin, 0) : null,
+    totals: { sets: setCount, volumeKg: o.weights ? _shareNum(s && s.volume, 0) : null },
+    exercises: o.exercises ? exercises : (o.pbs ? exercises.filter(e => e.pb).map(e => ({ name: e.name, pb: true })) : []),
+    unit: 'kg'
+  };
+}
+// Pure: the weekly snapshot from the real briefing (_weeklyBriefing output).
+function _shareWeekSnapshot(B, sessions, opts, nowMs){
+  const o = opts || {};
+  const name = _shareNamer(!!o.ownNames);
+  const ws = B && isFinite(B.weekStartMs) ? B.weekStartMs : _weekStartMs(nowMs);
+  const gym = (sessions || []).filter(s => s && !s.manualActivity && _sessTime(s) >= ws && _sessTime(s) <= nowMs)
+    .sort((a, b) => _sessTime(a) - _sessTime(b));
+  return {
+    v: 1, kind: 'week',
+    weekStart: _shareLocalDate(ws),
+    done: B ? B.done : gym.length,
+    planned: B && B.plannedSource === 'plan' ? B.planned : null,
+    trendPct: (o.trend && B && B.trend) ? B.trend.pct : null,
+    newPBs: (o.pbs && B) ? (B.newPBs || []).map(p => ({ name: name(p.name), weight: o.weights ? _shareNum(p.weight, 2) : null })) : [],
+    sessions: o.sessions ? gym.slice(0, 14).map(s => ({ date: _shareLocalDate(_sessTime(s)), title: (s.progKey === 'custom' && !o.ownNames) ? 'Workout' : String(s.day || 'Workout').slice(0, 60) })) : [],
+    unit: 'kg'
+  };
+}
+// Pure: the final guard before anything leaves the device — keeps ONLY the
+// whitelisted keys, right types, capped lengths (same rules as share_create).
+function _shareClean(p){
+  if(!p || typeof p !== 'object' || (p.kind !== 'session' && p.kind !== 'week')) return null;
+  const pick = (obj, keys) => { const r = {}; keys.forEach(k => { if(obj && Object.prototype.hasOwnProperty.call(obj, k) && obj[k] !== undefined) r[k] = obj[k]; }); return r; };
+  const str = (v, n) => (typeof v === 'string') ? v.slice(0, n) : null;
+  const num = v => (typeof v === 'number' && isFinite(v)) ? v : null;
+  const out = pick(p, SHARE_SCHEMA[p.kind]);
+  out.v = 1; out.unit = 'kg';
+  if(p.kind === 'session'){
+    out.date = str(out.date, 10); out.title = str(out.title, 60) || 'Workout'; out.programme = str(out.programme, 60);
+    out.durationMin = num(out.durationMin);
+    out.totals = out.totals ? pick(out.totals, SHARE_SCHEMA.totals) : null;
+    if(out.totals){ out.totals.sets = num(out.totals.sets); out.totals.volumeKg = num(out.totals.volumeKg); }
+    out.exercises = (Array.isArray(out.exercises) ? out.exercises : []).slice(0, 25).map(e => {
+      const r = pick(e, SHARE_SCHEMA.exercise);
+      r.name = str(r.name, 60) || 'Exercise';
+      if('sets' in r) r.sets = (Array.isArray(r.sets) ? r.sets : []).slice(0, 15).map(x => { const y = pick(x, SHARE_SCHEMA.set); return { w: num(y.w), r: num(y.r) }; });
+      if('pb' in r) r.pb = r.pb === true;
+      if('note' in r){ r.note = str(r.note, 200); if(!r.note) delete r.note; }
+      return r;
+    });
+  } else {
+    out.weekStart = str(out.weekStart, 10); out.done = num(out.done); out.planned = num(out.planned); out.trendPct = num(out.trendPct);
+    out.newPBs = (Array.isArray(out.newPBs) ? out.newPBs : []).slice(0, 20).map(b => { const y = pick(b, SHARE_SCHEMA.pb); return { name: str(y.name, 60) || 'Exercise', weight: num(y.weight) }; });
+    out.sessions = (Array.isArray(out.sessions) ? out.sessions : []).slice(0, 14).map(x => { const y = pick(x, SHARE_SCHEMA.weeksession); return { date: str(y.date, 10), title: str(y.title, 60) || 'Workout' }; });
+  }
+  return JSON.stringify(out).length <= 16000 ? out : null;
+}
+// Pure: the short label in the owner's "Shared links" list.
+function _shareTitle(p){
+  const m = _shareModel(p);
+  return (m.heading + (p && p.kind === 'session' && m.sub ? ' · ' + m.sub.split(' · ')[0] : '')).slice(0, 80);
+}
+
+// ── share sheet ──
+function _shareFlagOn(){ return typeof _p3FlagOn === 'function' && _p3FlagOn('share'); }
+function _shareDefaults(kind){ const o = {}; SHARE_OPTS[kind].forEach(x => { o[x[0]] = x[2]; }); return o; }
+function openShareSession(idx){
+  const s = completedSessions[idx];
+  if(!_shareFlagOn() || !s || s.manualActivity) return;
+  _share = { kind:'session', idx, opts:_shareDefaults('session'), days:30, link:null, busy:false, msg:'' };
+  _shareOpen();
+}
+function openShareWeek(){
+  if(!_shareFlagOn()) return;
+  _share = { kind:'week', idx:null, opts:_shareDefaults('week'), days:30, link:null, busy:false, msg:'' };
+  _shareOpen();
+}
+function _shareOpen(){
+  _shareRender();
+  document.getElementById('shareSheetMod').classList.add('open');
+  const h = document.getElementById('shareSheetTitle'); if(h){ try { h.focus(); } catch(e){} }
+}
+function closeShareSheet(){ document.getElementById('shareSheetMod').classList.remove('open'); _share = null; }
+function _shareBriefing(){
+  let balance = null;
+  try {
+    const bw = (userProfile && Number(userProfile.bodyWeight)) || 80;
+    const sh = _calcMuscleGroupShare(completedSessions, { windowWeeks:4, bodyweight:bw });
+    balance = _muscleBalanceVerdict(sh.share, sh.hasData);
+  } catch(e){ balance = null; }
+  return _weeklyBriefing(completedSessions, { nowMs: Date.now(), planned: _plannedPerWeek(typeof userPath !== 'undefined' ? userPath : null), balance });
+}
+// The exact payload that would be sent now (also what the preview and the image show).
+function _shareCurrentPayload(){
+  if(!_share) return null;
+  if(_share.kind === 'session'){
+    const s = completedSessions[_share.idx];
+    return s ? _shareClean(_shareSessionSnapshot(s, completedSessions, _share.opts)) : null;
+  }
+  return _shareClean(_shareWeekSnapshot(_shareBriefing(), completedSessions, _share.opts, Date.now()));
+}
+function shareSetOpt(i, on){
+  if(!_share || _share.link) return;
+  const def = SHARE_OPTS[_share.kind][i]; if(!def) return;
+  _share.opts[def[0]] = !!on;
+  _shareRender();
+  const cb = document.getElementById('shareOpt' + i); if(cb) cb.focus();
+}
+function shareSetDays(d){ if(!_share || _share.link || [7, 30, 90].indexOf(d) === -1) return; _share.days = d; _shareRender(); const b = document.getElementById('shareDays' + d); if(b) b.focus(); }
+function _shareModelHtml(m, kind){
+  return `<div class="share-prev" style="background:var(--surface2);border:1px solid var(--border);border-radius:14px;padding:14px;text-align:left;">
+    <div style="font-size:10px;font-weight:800;color:var(--accent);letter-spacing:1.2px;text-transform:uppercase;margin-bottom:6px;">Max Gainz · shared ${kind === 'week' ? 'week' : 'workout'}</div>
+    <div style="font-size:18px;font-weight:900;color:var(--text);">${esc(m.heading)}</div>
+    ${m.sub ? `<div style="font-size:12px;color:var(--text2);margin-top:2px;">${esc(m.sub)}</div>` : ''}
+    ${m.stats.length ? `<div style="display:flex;flex-wrap:wrap;gap:12px;margin:10px 0 4px;">${m.stats.map(s => `<div><div style="font-size:15px;font-weight:800;">${esc(s[1])}</div><div style="font-size:10px;color:var(--text2);">${esc(s[0])}</div></div>`).join('')}</div>` : ''}
+    ${m.sections.map(sec => `<div style="margin-top:10px;"><div style="font-size:10px;font-weight:800;color:var(--text2);letter-spacing:1.2px;text-transform:uppercase;margin-bottom:4px;">${esc(sec.title)}</div>${sec.rows.map(r => `<div style="padding:5px 0;border-top:0.5px solid var(--border);font-size:12px;"><span style="font-weight:700;">${esc(r.label)}</span>${r.badge ? ` <span style="background:rgba(200,255,0,0.15);color:var(--accent);font-size:9px;font-weight:800;padding:1px 5px;border-radius:6px;">${esc(r.badge)}</span>` : ''}${r.detail ? `<div style="color:var(--text2);">${esc(r.detail)}</div>` : ''}${r.note ? `<div style="color:var(--text2);font-style:italic;">“${esc(r.note)}”</div>` : ''}</div>`).join('')}</div>`).join('')}
+  </div>`;
+}
+function _shareRender(){
+  const el = document.getElementById('shareSheetBody');
+  if(!el || !_share) return;
+  const p = _shareCurrentPayload();
+  const m = _shareModel(p);
+  const locked = !!_share.link;
+  const opts = SHARE_OPTS[_share.kind].map((x, i) => `<label style="display:flex;gap:10px;align-items:center;padding:7px 0;font-size:13px;cursor:pointer;"><input type="checkbox" id="shareOpt${i}" ${_share.opts[x[0]] ? 'checked' : ''} ${locked ? 'disabled' : ''} onchange="shareSetOpt(${i}, this.checked)"> ${esc(x[1])}</label>`).join('');
+  const days = [7, 30, 90].map(d => `<button type="button" id="shareDays${d}" aria-pressed="${_share.days === d}" ${locked ? 'disabled' : ''} onclick="shareSetDays(${d})" style="flex:1;padding:8px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${_share.days === d ? 'var(--accent)' : 'var(--border)'};background:${_share.days === d ? 'rgba(200,255,0,0.12)' : 'transparent'};color:var(--text);">${d} days</button>`).join('');
+  const canLink = typeof isAuthenticated === 'function' && isAuthenticated();
+  const url = _share.link ? location.origin + '/share.html#t=' + _share.link.token : '';
+  const linkBox = _share.link ? `<div role="status" style="background:var(--surface2);border:1px solid var(--accent);border-radius:12px;padding:12px;margin-top:10px;text-align:left;">
+      <div style="font-size:12px;font-weight:800;margin-bottom:6px;">Private link ready — anyone with it can view this copy for ${_share.days} days</div>
+      <input id="shareLinkUrl" readonly value="${esc(url)}" aria-label="Share link" style="width:100%;box-sizing:border-box;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;padding:8px;color:var(--text);font-size:12px;">
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+        <button type="button" class="btn-p" onclick="shareCopyLink()" style="flex:1;padding:10px;">Copy link</button>
+        ${typeof navigator !== 'undefined' && navigator.share ? `<button type="button" onclick="shareSendLink()" style="flex:1;padding:10px;border-radius:10px;background:var(--surface3);border:none;color:var(--text);font-weight:700;cursor:pointer;">Send…</button>` : ''}
+        <button type="button" onclick="shareRevokeCurrent()" style="flex:1;padding:10px;border-radius:10px;background:transparent;border:0.5px solid var(--red);color:var(--red);font-weight:700;cursor:pointer;">Turn off link</button>
+      </div></div>` : '';
+  el.innerHTML = `
+    <fieldset style="border:none;margin:0 0 10px;padding:0;text-align:left;"><legend style="font-size:11px;font-weight:800;color:var(--text2);letter-spacing:1.2px;text-transform:uppercase;margin-bottom:4px;">What to include</legend>${opts}</fieldset>
+    <div style="font-size:11px;font-weight:800;color:var(--text2);letter-spacing:1.2px;text-transform:uppercase;margin:6px 0;text-align:left;" id="sharePrevLbl">What a viewer will see</div>
+    <div aria-labelledby="sharePrevLbl">${_shareModelHtml(m, p && p.kind)}</div>
+    <p style="font-size:11px;color:var(--text2);line-height:1.5;text-align:left;margin:8px 0 12px;">Never included: your name, email, body measurements or account. A link shows a copy made now — later changes don't appear.</p>
+    <button type="button" onclick="shareSaveImage()" style="width:100%;padding:12px;border-radius:12px;background:var(--surface2);border:0.5px solid var(--border);color:var(--text);font-weight:700;cursor:pointer;margin-bottom:8px;">💾 Save as image</button>
+    ${locked ? '' : `<div role="group" aria-label="Link lasts" style="display:flex;gap:6px;margin-bottom:8px;">${days}</div>
+    <button type="button" class="btn-p" ${(!canLink || _share.busy) ? 'disabled' : ''} onclick="shareCreateLink()" style="width:100%;padding:13px;">${_share.busy ? 'Creating…' : '🔗 Create private link'}</button>
+    ${canLink ? '' : `<div style="font-size:11px;color:var(--text2);margin-top:6px;">Sign in to create links. Images work without an account.</div>`}`}
+    ${linkBox}
+    ${_share.msg ? `<div role="alert" style="font-size:12px;color:var(--orange);margin-top:8px;">${esc(_share.msg)}</div>` : ''}`;
+}
+
+// ── image (made on the device; works offline and signed out) ──
+function _shareDrawCanvas(m){
+  const W = 1080, H = 1350;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d');
+  const g = x.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#0e0a05'); g.addColorStop(1, '#1c2a05');
+  x.fillStyle = g; x.fillRect(0, 0, W, H);
+  x.fillStyle = '#c8ff00'; x.fillRect(0, 0, W, 8);
+  x.textAlign = 'left';
+  x.font = 'bold 34px -apple-system, system-ui, sans-serif'; x.fillText('MAX GAINZ', 70, 100);
+  x.fillStyle = '#ffffff'; x.font = '900 72px -apple-system, system-ui, sans-serif'; x.fillText(String(m.heading).slice(0, 26), 70, 210);
+  x.fillStyle = '#9aa294'; x.font = '500 32px -apple-system, system-ui, sans-serif'; x.fillText(String(m.sub).slice(0, 50), 70, 262);
+  let sx = 70;
+  m.stats.slice(0, 4).forEach(s => {
+    x.fillStyle = '#c8ff00'; x.font = '800 54px -apple-system, system-ui, sans-serif'; x.fillText(String(s[1]).slice(0, 12), sx, 370);
+    x.fillStyle = '#9aa294'; x.font = '500 26px -apple-system, system-ui, sans-serif'; x.fillText(String(s[0]), sx, 408);
+    sx += 245;
+  });
+  let y = 490;
+  m.sections.forEach(sec => {
+    if(y > H - 120) return;
+    x.fillStyle = '#9aa294'; x.font = '800 26px -apple-system, system-ui, sans-serif'; x.fillText(String(sec.title).toUpperCase(), 70, y); y += 46;
+    sec.rows.forEach(r => {
+      if(y > H - 110) return;
+      x.fillStyle = '#ffffff'; x.font = '700 32px -apple-system, system-ui, sans-serif'; x.fillText(String(r.label).slice(0, 30) + (r.badge ? '  · ' + r.badge : ''), 70, y);
+      x.fillStyle = '#9aa294'; x.font = '500 26px -apple-system, system-ui, sans-serif'; x.fillText(String(r.detail).slice(0, 60), 70, y + 34);
+      if(r.note){ x.font = 'italic 500 24px -apple-system, system-ui, sans-serif'; x.fillText('\u201c' + String(r.note).slice(0, 64) + (r.note.length > 64 ? '\u2026' : '') + '\u201d', 70, y + 66); y += 32; }
+      y += 84;
+    });
+    y += 16;
+  });
+  x.fillStyle = '#5d6559'; x.font = '500 24px -apple-system, system-ui, sans-serif'; x.fillText('Shared from Max Gainz', 70, H - 60);
+  return c;
+}
+function shareSaveImage(){
+  const p = _shareCurrentPayload(); if(!p) return;
+  const c = _shareDrawCanvas(_shareModel(p));
+  c.toBlob(async b => {
+    if(!b) return;
+    const file = (typeof File === 'function') ? new File([b], 'max-gainz-' + (p.kind === 'week' ? 'week' : 'workout') + '.png', { type:'image/png' }) : null;
+    try {
+      if(file && navigator.canShare && navigator.canShare({ files:[file] })){ await navigator.share({ files:[file] }); return; }
+    } catch(e){ if(e && e.name === 'AbortError') return; }
+    const u = URL.createObjectURL(b); const a = document.createElement('a');
+    a.href = u; a.download = file ? file.name : 'max-gainz.png'; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(u), 2000);
+  }, 'image/png');
+}
+
+// ── links ──
+function _shareLinksLoad(){
+  let o = null; try { o = JSON.parse(localStorage.getItem(SHARE_LINKS_KEY) || 'null'); } catch(e){ o = null; }
+  const uid = typeof getCurrentUserId === 'function' ? getCurrentUserId() : null;
+  return (o && o.uid === uid && o.links && typeof o.links === 'object') ? o : { uid, links:{} };
+}
+function _shareLinksSave(o){ try { localStorage.setItem(SHARE_LINKS_KEY, JSON.stringify(o)); } catch(e){} }
+function _shareErrText(reason){
+  return ({ auth:'Sign in again to create links.', payload:'This snapshot could not be shared.', too_many:'You have 50 live links — turn some off in Profile → Shared links.',
+    rate:'You have created 20 links today — try again tomorrow.', setup:'Sharing links isn\'t switched on yet on the server.', offline:'You are offline — connect to create a link. Saving an image works offline.' })[reason] || 'Couldn\'t create the link — try again.';
+}
+async function shareCreateLink(){
+  if(!_share || _share.busy || _share.link) return;
+  if(typeof isAuthenticated !== 'function' || !isAuthenticated()){ _share.msg = _shareErrText('auth'); _shareRender(); return; }
+  if(typeof navigator !== 'undefined' && navigator.onLine === false){ _share.msg = _shareErrText('offline'); _shareRender(); return; }
+  const p = _shareCurrentPayload();
+  if(!p){ _share.msg = _shareErrText('payload'); _shareRender(); return; }
+  const mine = _share;
+  mine.busy = true; mine.msg = ''; _shareRender();
+  _lastSyncErrorDetail = null;
+  const r = await sbFetch('rpc/share_create', { method:'POST', silent:true, body: JSON.stringify({ p_kind: p.kind, p_title: _shareTitle(p), p_payload: p, p_days: mine.days }) });
+  mine.busy = false;
+  if(_share !== mine) return;   // sheet closed or replaced meanwhile
+  if(r && r.ok === true && typeof r.token === 'string' && /^[A-Za-z0-9_-]{24}$/.test(r.token) && r.id){
+    mine.link = { id: String(r.id), token: r.token };
+    const st = _shareLinksLoad(); st.links[mine.link.id] = r.token; _shareLinksSave(st);
+  } else {
+    const missing = !r && typeof _lastSyncErrorDetail === 'object' && _lastSyncErrorDetail && /share_create|PGRST202|does not exist/i.test(String(_lastSyncErrorDetail.text || ''));
+    mine.msg = _shareErrText(r && r.reason ? r.reason : missing ? 'setup' : (navigator.onLine === false ? 'offline' : ''));
+  }
+  _shareRender();
+  const b = document.querySelector(mine.link ? '#shareSheetBody .btn-p' : '#shareSheetBody [role="alert"]'); if(b && b.focus) b.focus();
+}
+async function shareCopyLink(){
+  const i = document.getElementById('shareLinkUrl'); if(!i) return;
+  try { await navigator.clipboard.writeText(i.value); showToast('Link copied'); }
+  catch(e){ i.select(); showToast('Select the link and copy it'); }
+}
+async function shareSendLink(){
+  const i = document.getElementById('shareLinkUrl'); if(!i || !navigator.share) return;
+  try { await navigator.share({ url: i.value, title: 'My workout on Max Gainz' }); } catch(e){}
+}
+async function _shareRevokeId(id){
+  const r = await sbFetch('rpc/share_revoke', { method:'POST', silent:true, body: JSON.stringify({ p_id: id }) });
+  if(r && r.ok === true){ const st = _shareLinksLoad(); delete st.links[id]; _shareLinksSave(st); return true; }
+  return false;
+}
+async function shareRevokeCurrent(){
+  if(!_share || !_share.link) return;
+  const ok = await _shareRevokeId(_share.link.id);
+  if(!_share) return;
+  if(ok){ _share.link = null; _share.msg = ''; showToast('Link turned off — it no longer opens'); }
+  else _share.msg = 'Couldn\'t turn the link off — check your connection and try again.';
+  _shareRender();
+}
+
+// ── Profile → Shared links ──
+let _shareList = [];   // rows exactly as drawn (buttons pass an index)
+async function openSharedLinks(){
+  if(!_shareFlagOn()) return;
+  document.getElementById('sharedLinksMod').classList.add('open');
+  await _shareListRender();
+  const h = document.getElementById('sharedLinksTitle'); if(h){ try { h.focus(); } catch(e){} }
+}
+async function _shareListRender(){
+  const el = document.getElementById('sharedLinksBody'); if(!el) return;
+  if(typeof isAuthenticated !== 'function' || !isAuthenticated()){ el.innerHTML = '<p style="font-size:13px;color:var(--text2);">Sign in to see and manage your links.</p>'; return; }
+  el.innerHTML = '<p role="status" style="font-size:13px;color:var(--text2);">Loading…</p>';
+  const rows = await sbFetch('shares?select=id,kind,title,created_at,expires_at,view_count&order=created_at.desc', { silent:true });
+  if(!Array.isArray(rows)){ el.innerHTML = '<p role="alert" style="font-size:13px;color:var(--orange);">Couldn\'t load your links — check your connection.</p>'; return; }
+  const now = Date.now();
+  _shareList = rows.filter(r => r && new Date(r.expires_at).getTime() > now);
+  const st = _shareLinksLoad();
+  const fmt = d => new Date(d).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+  el.innerHTML = !_shareList.length ? '<p style="font-size:13px;color:var(--text2);">No live links. Share a workout from its details, or your week from Progress.</p>'
+    : _shareList.map((r, i) => `<div style="padding:10px 0;border-top:0.5px solid var(--border);">
+        <div style="font-size:13px;font-weight:800;">${esc(r.title)}</div>
+        <div style="font-size:11px;color:var(--text2);margin:2px 0 6px;">${esc(r.kind === 'week' ? 'Weekly summary' : 'Workout')} · shared ${esc(fmt(r.created_at))} · ends ${esc(fmt(r.expires_at))} · ${Number(r.view_count) || 0} view${Number(r.view_count) === 1 ? '' : 's'}</div>
+        <div style="display:flex;gap:8px;">
+          ${st.links[r.id] ? `<button type="button" onclick="shareListCopy(${i})" style="padding:7px 10px;border-radius:8px;background:var(--surface3);border:none;color:var(--text);font-size:12px;font-weight:700;cursor:pointer;">Copy link</button>` : ''}
+          <button type="button" onclick="shareListRevoke(${i})" style="padding:7px 10px;border-radius:8px;background:transparent;border:0.5px solid var(--red);color:var(--red);font-size:12px;font-weight:700;cursor:pointer;">Turn off</button>
+        </div></div>`).join('')
+      + `<button type="button" onclick="shareRevokeAll()" style="width:100%;margin-top:12px;padding:11px;border-radius:10px;background:transparent;border:0.5px solid var(--red);color:var(--red);font-weight:700;cursor:pointer;">Turn off all links</button>`;
+}
+async function shareListCopy(i){
+  const r = _shareList[i]; const t = r && _shareLinksLoad().links[r.id]; if(!t) return;
+  try { await navigator.clipboard.writeText(location.origin + '/share.html#t=' + t); showToast('Link copied'); } catch(e){ showToast('Couldn\'t copy — try again'); }
+}
+async function shareListRevoke(i){
+  const r = _shareList[i]; if(!r) return;
+  const ok = await _shareRevokeId(r.id);
+  showToast(ok ? 'Link turned off' : 'Couldn\'t turn it off — try again');
+  await _shareListRender();
+}
+async function shareRevokeAll(){
+  if(!confirm('Turn off every shared link? Anyone holding one will no longer be able to open it.')) return;
+  const r = await sbFetch('rpc/share_revoke_all', { method:'POST', silent:true, body:'{}' });
+  if(r && r.ok === true){ _shareLinksSave({ uid: (typeof getCurrentUserId === 'function' ? getCurrentUserId() : null), links:{} }); showToast('All links turned off'); }
+  else showToast('Couldn\'t turn them off — try again');
+  await _shareListRender();
+}
+function _shareRenderEntryPoints(){
+  const on = _shareFlagOn();
+  const sec = document.getElementById('sharedLinksSection'); if(sec) sec.hidden = !on;
+}
+// Apply a ?p3= flag first (idempotent) — this listener may run before the offline module's.
+if(typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', () => { try { _p3ApplyFlagQuery(); _shareRenderEntryPoints(); } catch(e){} });
+
 // ── FORM GUIDE ──
 // v2 key — old 'maxgainz_form_guide_seen' was polluted by the first buggy
 // implementation that marked every exercise as seen immediately on render.
@@ -21202,6 +21661,7 @@ function renderWeeklyBriefing(){
     </ul>
     <div class="brief-action"><div class="more-lbl">Do this next</div>${esc(B.action.text)}</div>
     ${B.sampleNote ? `<p class="brief-note">ⓘ ${esc(B.sampleNote)}</p>` : ''}
+    ${(typeof _shareFlagOn === 'function' && _shareFlagOn()) ? '<button type="button" class="st-secondary" onclick="openShareWeek()">🔗 Share this week</button>' : ''}
   </div>`;
 }
 
@@ -27754,9 +28214,12 @@ function renderGame(){
     </div>`).join(''):'<div style="padding:20px;text-align:center;color:var(--text2);font-size:13px;">Complete sessions to earn XP</div>';
 }
 
+let _sessDetailIdx = null;
 function openSessDetail(idx){
   const s=completedSessions[idx];
   if(!s) return;
+  _sessDetailIdx = idx;
+  const shb = document.getElementById('sessShareBtn'); if(shb) shb.hidden = !(typeof _shareFlagOn === 'function' && _shareFlagOn() && !s.manualActivity);
   const d=s.date;
   document.getElementById('sessDetailTitle').textContent=s.day+(s.manualActivity?' Activity':' Day');
   document.getElementById('sessDetailSub').textContent=d.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'})+' · '+s.durationMin+'min';
@@ -27781,6 +28244,7 @@ function openSessDetail(idx){
   document.getElementById('sessDetailMod').classList.add('open');
 }
 
+function shareFromDetail(){ if(_sessDetailIdx == null) return; document.getElementById('sessDetailMod').classList.remove('open'); openShareSession(_sessDetailIdx); }
 function togDay(id){const el=document.getElementById('dd-'+id),arr=document.getElementById('arr-'+id);if(!el)return;const open=el.style.display==='block';el.style.display=open?'none':'block';arr.textContent=open?'▼':'▲';}
 function exportData(){
   const payload={
@@ -28738,6 +29202,8 @@ function authLogout(opts){
   // Offline-session metrics are per account; the downloaded media itself is
   // generic (public demo files), so the media cache stays for the next user.
   localStorage.removeItem(OFFLINE_METRICS_KEY); localStorage.removeItem(OFFLINE_SESS_KEY);
+  // Share-link tokens let this device re-copy the account's links: never for the next account.
+  localStorage.removeItem(SHARE_LINKS_KEY); _share = null; _shareList = [];
   localStorage.removeItem(AI_CACHE_KEY);
   localStorage.removeItem(AI_CONSENT_SYNC_KEY);
   localStorage.removeItem(COACH_ACCEPT_KEY);
@@ -28966,11 +29432,18 @@ async function deleteUserAccount(){
     // localStorage and promised "all your data has been removed" while the rows,
     // including the profile blob with name, email, DOB and body measurements, were
     // still sitting in Supabase.
+    // Shared links first: they are copies of this account's workouts. If the
+    // sharing functions were never installed there is nothing to delete.
+    _lastSyncErrorDetail = null;
+    const shareRes  = await sbFetch('rpc/share_revoke_all', {method: 'POST', silent: true, body: '{}'});
+    const shareNone = shareRes === null && !!_lastSyncErrorDetail && /share_revoke_all|PGRST202|does not exist/i.test(String(_lastSyncErrorDetail.text || ''));
+    const shareOk   = shareNone || (shareRes && shareRes.ok === true);
     const sessRes   = await sbFetch('sessions?user_id=eq.' + userId, {method: 'DELETE'});
     const weightRes = await sbFetch('custom_weights?user_id=eq.' + userId, {method: 'DELETE'});
 
-    if(sessRes === null || weightRes === null){
+    if(sessRes === null || weightRes === null || !shareOk){
       const stillThere = [];
+      if(!shareOk)           stillThere.push('shared links');
       if(sessRes === null)   stillThere.push('workout history');
       if(weightRes === null) stillThere.push('profile and saved weights');
       // Nothing local is touched, so the account stays usable and the user can
