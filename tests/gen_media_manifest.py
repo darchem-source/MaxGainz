@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate EX_MEDIA_FILES in index.html from exercise-media/ on disk.
+"""Regenerate EX_MEDIA_FILES in app/media.js from exercise-media/ on disk (then re-bundle index.html).
 
 Each self-hosted media id maps to [size0, hash0, size1, hash1, sizeLoop, hashLoop]
 (bytes + first 8 hex chars of sha256; 0/'' when the file does not exist).
@@ -47,21 +47,22 @@ def render(m):
 
 
 def main():
-    path = os.path.join(ROOT, 'index.html')
+    # Since Priority 7 slice 6 the manifest lives in app/media.js; index.html
+    # gets it through tools/bundle.py (run below).
+    path = os.path.join(ROOT, 'app', 'media.js')
     src = open(path, encoding='utf-8').read()
     block = render(manifest())
-    if BEGIN in src:
-        new = re.sub(re.escape(BEGIN) + r'.*?' + re.escape(END), lambda _: block, src, count=1, flags=re.S)
-    else:
-        anchor = 'const EX_VIDEO_MAP = {'
-        i = src.index(anchor)
-        new = src[:i] + block + '\n' + src[i:]
+    if BEGIN not in src or END not in src:
+        sys.exit('app/media.js has no EX_MEDIA_FILES markers')
+    new = re.sub(re.escape(BEGIN) + r'.*?' + re.escape(END), lambda _: block, src, count=1, flags=re.S)
     if new != src:
         open(path, 'w', encoding='utf-8').write(new)
         print('EX_MEDIA_FILES updated (%d ids)' % len(manifest()))
     else:
         print('EX_MEDIA_FILES already current')
-
+    sys.path.insert(0, os.path.join(ROOT, 'tools'))
+    import bundle
+    return bundle.main()
 
 if __name__ == '__main__':
     sys.exit(main())

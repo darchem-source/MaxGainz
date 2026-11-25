@@ -8,6 +8,8 @@
 //   - Supabase API: never intercepted — let it fail naturally when offline.
 //   - Self-hosted exercise-media/: served from the user's offline download
 //     (MEDIA_CACHE) when present, else network; never cached implicitly.
+//   - App modules (/app/*.js, Priority 7 slice 6): precached on install,
+//     network-first, cached copy as the offline fallback (see MODULE_FILES).
 //
 // Versioning:
 //   Bump CACHE_NAME whenever the SHELL list changes (e.g. you add a new
@@ -21,7 +23,7 @@
 //   happens when the user accepts the "Update available" banner. This
 //   avoids changing the running page out from under a user mid-workout.
 
-const CACHE_NAME = 'maxgainz-v3';   // v3: Lottie self-hosted (SHELL changed)
+const CACHE_NAME = 'maxgainz-v4';   // v4: app modules precached (SHELL changed)
 // Offline exercise media (Phase 3). A SEPARATE, long-lived cache the page fills
 // on request ("Download for offline"). Entries are keyed
 // exercise-media/{id}/{file}?v={hash8}; the page deletes entries whose hash no
@@ -40,6 +42,17 @@ const SHELL = [
   // Lottie player used for completion celebrations (self-hosted copy).
   '/vendor/lottie_light-5.12.2.min.js'
 ];
+
+// App modules (Priority 7 slice 6). Today the page still has every module
+// inlined; a LATER release may load some of them as files (step B in
+// docs/architecture.md). That release is only safe once this worker is live
+// and activated, so it precaches every module now: a page that needs them can
+// then start offline. Must equal tools/bundle.py MODULES (gate 38).
+const MODULE_FILES = [
+  '/app/rollout.js', '/app/sync.js', '/app/session.js', '/app/ai-validators.js',
+  '/app/ai.js', '/app/rules.js', '/app/media.js', '/app/profile-icons.js'
+];
+SHELL.push(...MODULE_FILES);
 
 // Hosts whose responses we cache lazily on first successful fetch.
 const STATIC_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
@@ -113,6 +126,35 @@ async function _swMediaResponse(req){
   }});
 }
 
+// App module request: network-first. The page adds ?v=<APP_VERSION> so HTTP
+// caches never serve a stale file; each fetched version is cached under its
+// own URL and older versions of that file are dropped. Offline: the exact
+// version if cached, else the copy precached at install (any version), else
+// a 504 the page can handle.
+async function _swModuleResponse(req, url){
+  const cache = await caches.open(CACHE_NAME);
+  try {
+    const res = await fetch(req);
+    if(res && res.ok){
+      const copy = res.clone();
+      try {
+        const keys = cache.keys ? await cache.keys() : [];
+        await Promise.all(keys.filter(k => {
+          const u = new URL(typeof k === 'string' ? k : k.url);
+          return u.pathname === url.pathname && u.search !== url.search && u.search !== '';
+        }).map(k => cache.delete(k)));
+        await cache.put(url.pathname + url.search, copy);
+      } catch(e){}
+      return res;
+    }
+    const hit = await cache.match(url.pathname + url.search) || await cache.match(url.pathname);
+    return hit || res;
+  } catch(e){
+    const hit = await cache.match(url.pathname + url.search) || await cache.match(url.pathname);
+    return hit || new Response('', { status: 504, headers: { 'Content-Type': 'text/plain' } });
+  }
+}
+
 // ── MESSAGE: page taps "Update available" → activate the new SW ──
 self.addEventListener('message', e => {
   if (e.data && e.data.type === 'SKIP_WAITING') {
@@ -122,6 +164,11 @@ self.addEventListener('message', e => {
   // "available offline" (an older worker would silently ignore the download).
   if (e.data && e.data.type === 'MEDIA_CAPS' && e.ports && e.ports[0]) {
     e.ports[0].postMessage({ media: MEDIA_CACHE });
+  }
+  // Before a release loads modules as files, the page can ask whether the
+  // controlling worker precaches them (an older one would not).
+  if (e.data && e.data.type === 'MODULE_CAPS' && e.ports && e.ports[0]) {
+    e.ports[0].postMessage({ modules: MODULE_FILES.slice(), cache: CACHE_NAME });
   }
   // Same idea for training-day reminders: the page only subscribes once the
   // controlling worker can actually show them (an older one would not).
@@ -233,6 +280,12 @@ self.addEventListener('fetch', e => {
   // ExerciseDB GIFs/V2 clips never reach this branch.
   if (url.origin === self.location.origin && url.pathname.includes('/exercise-media/') && e.request.method === 'GET') {
     e.respondWith(_swMediaResponse(e.request));
+    return;
+  }
+
+  // App modules: network-first with the precached copy as the offline fallback.
+  if (url.origin === self.location.origin && url.pathname.startsWith('/app/') && url.pathname.endsWith('.js') && e.request.method === 'GET') {
+    e.respondWith(_swModuleResponse(e.request, url));
     return;
   }
 

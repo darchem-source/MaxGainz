@@ -7679,86 +7679,186 @@ def gate_rules_module(html, js, root=None):
     for p in problems: print('  ✗ ' + p)
     return not problems
 
+# ── GATE 38: module files are safe to load later (Priority 7, slice 6) ─────
+# Step A of the two-step release in docs/architecture.md: sw.js precaches every
+# module and serves /app/*.js network-first (per version) with the cached copy
+# as the offline fallback; the page still inlines everything (step B is a
+# separate, later release). The real sw.js runs in jsc against a Cache API stub.
+SW_MODULE_STUBS = r"""
+function mk(name){ var m = new Map(); return { m: m,
+  put: function(k, r){ var u = typeof k === 'string' ? k : k.url; PUTS.push([name, u]); m.set(u, r); return Promise.resolve(); },
+  match: function(k, o){ var u = typeof k === 'string' ? k : k.url; if(m.has(u)) return Promise.resolve(m.get(u)); return Promise.resolve(undefined); },
+  keys: function(){ return Promise.resolve(Array.from(m.keys()).map(function(u){ return { url: (u.charAt(0) === '/' ? 'https://app.test' : '') + u }; })); },
+  delete: function(k){ var u = typeof k === 'string' ? k : k.url; u = u.replace('https://app.test', ''); var had = m.delete(u); return Promise.resolve(had); } }; }
+var NET = 'ok';
+function fetch(r){ var u = typeof r === 'string' ? r : r.url; FETCHED.push(u);
+  if(NET === 'down') return Promise.reject(new TypeError('offline'));
+  return Promise.resolve(new Response('body:' + u, { status: NET === '500' ? 500 : 200, headers: { 'content-type': 'text/javascript' } })); }
+function req2(u, method){ return { url: u, method: method || 'GET', mode: 'no-cors', headers: { get: function(){ return null; } } }; }
+function fire2(u, method){ var ev = { request: req2(u, method), p: null, respondWith: function(p){ this.p = Promise.resolve(p); }, waitUntil: function(){} }; L.fetch(ev); return ev; }
+async function install(){ var P = null; L.install({ waitUntil: function(p){ P = p; } }); await P; }
+function cached(k){ return C[CACHE_NAME] && C[CACHE_NAME].m.has(k); }
+"""
+
+SW_MODULE_SCENARIOS = {
+    'install precaches the shell and every module': r"""
+      await install();
+      return MODULE_FILES.length >= 8 && MODULE_FILES.every(cached) && cached('/index.html') && cached('/');
+    """,
+    'online: network-first, cached per version, older versions dropped, install copy kept': r"""
+      await install(); FETCHED.length = 0;
+      var r1 = await fire2('https://app.test/app/media.js?v=1').p;
+      var r2 = await fire2('https://app.test/app/media.js?v=2').p;
+      return r1._b === 'body:https://app.test/app/media.js?v=1' && r2._b === 'body:https://app.test/app/media.js?v=2' && FETCHED.length === 2
+        && !cached('/app/media.js?v=1') && cached('/app/media.js?v=2') && cached('/app/media.js');
+    """,
+    'offline: exact version, else the install copy, else 504': r"""
+      await install(); await fire2('https://app.test/app/media.js?v=2').p;
+      NET = 'down';
+      var exact = await fire2('https://app.test/app/media.js?v=2').p;
+      var other = await fire2('https://app.test/app/media.js?v=9').p;
+      var none = await fire2('https://app.test/app/nothing.js?v=1').p;
+      return exact._b === 'body:https://app.test/app/media.js?v=2' && other._b === 'body:/app/media.js' && none.status === 504;
+    """,
+    'a server error falls back to the cached copy and caches nothing': r"""
+      await install(); NET = '500'; PUTS.length = 0;
+      var r = await fire2('https://app.test/app/rules.js?v=5').p;
+      return r._b === 'body:/app/rules.js' && PUTS.length === 0;
+    """,
+    'only same-origin GETs of /app/*.js are handled': r"""
+      return fire2('https://cdn.test/app/x.js').p === null && fire2('https://app.test/app/x.js', 'POST').p === null
+        && fire2('https://app.test/app/notes.txt').p === null && fire2('https://app.test/application.js').p === null;
+    """,
+    'MODULE_CAPS lists every precached module': r"""
+      var got = null; L.message({ data: { type: 'MODULE_CAPS' }, ports: [{ postMessage: function(m){ got = m; } }] });
+      return got && JSON.stringify(got.modules) === JSON.stringify(MODULE_FILES) && got.cache === CACHE_NAME;
+    """,
+}
+
+def gate_module_files(html, js, root=None):
+    root = root or ROOT
+    problems = []
+    sys.path.insert(0, os.path.join(root, 'tools'))
+    import importlib; bundle = importlib.import_module('bundle'); importlib.reload(bundle)
+    swp = os.path.join(root, 'sw.js')
+    sw = open(swp, encoding='utf-8').read() if os.path.exists(swp) else ''
+    if not sw: print('  ✗ sw.js missing'); return False
+    m = re.search(r'const MODULE_FILES = \[([\s\S]*?)\];', sw)
+    listed = re.findall(r"'([^']+)'", m.group(1)) if m else []
+    want = ['/' + x for x in bundle.MODULES]
+    if listed != want: problems.append(f'sw.js MODULE_FILES must equal tools/bundle.py MODULES in order: {listed} vs {want}')
+    if 'SHELL.push(...MODULE_FILES)' not in sw: problems.append('sw.js does not precache MODULE_FILES (SHELL.push)')
+    if re.search(r"const CACHE_NAME = 'maxgainz-v[0-3]'", sw): problems.append('CACHE_NAME not bumped after the SHELL changed')
+    for x in bundle.MODULES:
+        if not os.path.exists(os.path.join(root, x)): problems.append(f'{x} missing (it is precached and served)')
+    toml_p = os.path.join(root, 'netlify.toml')
+    toml = open(toml_p, encoding='utf-8').read() if os.path.exists(toml_p) else ''
+    if not re.search(r'for = "/app/\*"\s*\n\s*\[headers\.values\]\s*\n\s*Cache-Control = "no-cache"', toml): problems.append('netlify.toml: /app/* must be served with Cache-Control: no-cache')
+    # step B is a separate release: until then the page must not load module files
+    if re.search(r'<script[^>]+src=["\']/?app/', html) or re.search(r"""import\(\s*['"`]/?app/""", html):
+        problems.append('index.html loads a module file — step B needs its own release after this worker is live (docs/architecture.md)')
+    # lazy candidates: data only, load with no globals at all
+    for x in getattr(bundle, 'LAZY_CANDIDATES', []):
+        if x not in bundle.MODULES: problems.append(f'{x} is a lazy candidate but not in MODULES'); continue
+        p, src = _module_bundle_problems(html, x, root)
+        problems += p
+        if src is None: continue
+        code = re.sub(r'//[^\n]*', '', re.sub(r"'(?:\\.|[^'\\\n])*'|\"(?:\\.|[^\"\\\n])*\"", "''", src))
+        if re.search(r'\bfunction\b|=>|\blet\b|\bvar\b', code): problems.append(f'{x} must be data only (const literals)')
+        if os.path.exists(JSC):
+            problems += [f'{x} ' + f for f in _run_jsc_scenarios(src + '\n', {'loads with no globals at all': 'return true;'})]
+    if os.path.exists(JSC):
+        base = SW_STUBS + SW_MODULE_STUBS + sw + '\n'
+        problems += ['sw.js ' + f for f in _run_jsc_scenarios(base, SW_MODULE_SCENARIOS)]
+    else: problems.append(f'jsc not found at {JSC}')
+    if not problems:
+        print(f'  ✓ sw.js precaches all {len(want)} modules and serves /app/*.js network-first per version with an offline fallback '
+              f'({len(SW_MODULE_SCENARIOS)} scenarios); /app/* no-cache; lazy candidates are data only; the page still inlines everything (step B not shipped)')
+    for p in problems: print('  ✗ ' + p)
+    return not problems
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/37] parse')
+    print('[1/38] parse')
     p = gate_parse(js)
-    print('[2/37] invariants')
+    print('[2/38] invariants')
     inv = gate_invariants(js)
-    print('[3/37] video map')
+    print('[3/38] video map')
     vm = gate_videomap(js)
-    print('[4/37] inline handler wiring')
+    print('[4/38] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/37] auth log hygiene')
+    print('[5/38] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/37] sign-out scrub')
+    print('[6/38] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/37] safe rendering of user text')
+    print('[7/38] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/37] sync honesty')
+    print('[8/38] sync honesty')
     sy = gate_sync(js)
-    print('[9/37] media fallback + reminder copy')
+    print('[9/38] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/37] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/38] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/37] core-journey accessibility (session + dialogs)')
+    print('[11/38] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/37] Start today (first-use flow) + shortened Path wizard')
+    print('[12/38] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/37] simplified navigation (default, reversible, one-time notice)')
+    print('[13/38] simplified navigation (default, reversible, one-time notice)')
     nv = gate_nav_v2(html, js)
-    print('[14/37] Progress weekly briefing')
+    print('[14/38] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/37] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/38] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/37] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/38] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/37] Phase 2 typed sets (preview before save)')
+    print('[17/38] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
-    print('[18/37] Phase 2 weekly AI recap + measurement')
+    print('[18/38] Phase 2 weekly AI recap + measurement')
     rc = gate_recap(html, js)
-    print('[19/37] Phase 3 offline media (download, cache versioning, fallback order)')
+    print('[19/38] Phase 3 offline media (download, cache versioning, fallback order)')
     om = gate_offline_media(html, js)
-    print('[20/37] Phase 3 programme discovery (metadata, finder, why, switch preview)')
+    print('[20/38] Phase 3 programme discovery (metadata, finder, why, switch preview)')
     dc = gate_discovery(html, js)
-    print('[21/37] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
+    print('[21/38] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
     sh = gate_sharing(html, js)
-    print('[22/37] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
+    print('[22/38] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
     lf = gate_leftovers(html, js)
-    print('[23/37] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
+    print('[23/38] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
     rm = gate_reminders(html, js)
-    print('[24/37] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
+    print('[24/38] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
     rs = gate_reminders_server(html, js)
-    print('[25/37] Profile & settings information model (flagged)')
+    print('[25/38] Profile & settings information model (flagged)')
     pv = gate_profile_v2(html, js)
-    print('[26/37] rollout registry + configuration in Data health')
+    print('[26/38] rollout registry + configuration in Data health')
     ro = gate_rollout(html, js)
-    print('[27/37] Today headline metric (context-sensitive, pinnable)')
+    print('[27/38] Today headline metric (context-sensitive, pinnable)')
     tm = gate_today_metric(html, js)
-    print('[28/37] authentication forms (Enter, password managers, errors, local data kept)')
+    print('[28/38] authentication forms (Enter, password managers, errors, local data kept)')
     af = gate_auth_forms(html, js)
-    print('[29/37] product-wide accessibility (click targets, state, dialog names)')
+    print('[29/38] product-wide accessibility (click targets, state, dialog names)')
     ax = gate_a11y_product(html, js)
-    print('[30/37] offline coverage explained (what works in the gym, what removal deletes)')
+    print('[30/38] offline coverage explained (what works in the gym, what removal deletes)')
     oc = gate_offline_coverage(html, js)
-    print('[31/37] feedback operational controls (bounded payloads, safe retries, rate limits, receipt)')
+    print('[31/38] feedback operational controls (bounded payloads, safe retries, rate limits, receipt)')
     fo = gate_feedback_ops(html, js)
-    print('[32/37] controlled AI beta (cohort, explanations, outcomes, failure review)')
+    print('[32/38] controlled AI beta (cohort, explanations, outcomes, failure review)')
     ab = gate_ai_beta(html, js)
-    print('[33/37] extracted modules (app/rollout.js: verbatim bundle, works standalone, one source of truth)')
+    print('[33/38] extracted modules (app/rollout.js: verbatim bundle, works standalone, one source of truth)')
     md = gate_modules(html, js)
-    print('[34/37] sync module (app/sync.js: verbatim bundle, no duplicate declarations, works standalone)')
+    print('[34/38] sync module (app/sync.js: verbatim bundle, no duplicate declarations, works standalone)')
     sm = gate_sync_module(html, js)
-    print('[35/37] session module (app/session.js: state, pure session logic and transitions, works standalone)')
+    print('[35/38] session module (app/session.js: state, pure session logic and transitions, works standalone)')
     ss = gate_session_module(html, js)
-    print('[36/37] AI modules (app/ai-validators.js one source for app + server; app/ai.js client works standalone)')
+    print('[36/38] AI modules (app/ai-validators.js one source for app + server; app/ai.js client works standalone)')
     am = gate_ai_module(html, js)
-    print('[37/37] rules module (app/rules.js: data contracts + pure training rules, works standalone)')
+    print('[37/38] rules module (app/rules.js: data contracts + pure training rules, works standalone)')
     ru = gate_rules_module(html, js)
+    print('[38/38] module files (sw.js precaches + serves app modules; lazy candidates data-only; page still inlined)')
+    mf2 = gate_module_files(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af and ax and oc and fo and ab and md and sm and ss and am and ru:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af and ax and oc and fo and ab and md and sm and ss and am and ru and mf2:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 
