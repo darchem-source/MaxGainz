@@ -2639,6 +2639,13 @@ AI_CLIENT_CONSTS = ['AI_FLAG_KEYS', 'AI_CONSENT_VERSION', 'AI_AUDIT_KEY', 'AI_ME
                     'AI_PREFS_KEY', 'AI_CLIENT_DAILY_CALLS', 'AI_TIMEOUT_MS', 'AI_AUDIT_MAX', 'AI_KEEP_DAYS',
                     'AI_AUDIT_EVENTS', 'AI_REASON_LABELS', 'AI_CONSENT_SYNC_KEY']
 
+def _ai_beta_deps(js):
+    """Source for the Priority 6 beta helpers that _aiCall and the AI surfaces use."""
+    out = [extract_const_array(js, 'AI_BETA_SURFACES') or '', extract_const_line(js, 'AI_COHORT_KEY') or '', extract_const_line(js, 'AI_INTRO_KEY') or '',
+           extract_const_object(js, 'AI_INTRO_TEXT') or '', extract_const_object(js, 'AI_LAT_LABELS') or '']
+    out += [extract_decl(js, f) or '' for f in ['_aiLatencyBucket', '_aiIntroHtml', '_aiIntroSeen', '_aiIntro', '_aiBetaApply']]
+    return '\n'.join(out) + '\nfunction _renderAiSettings(){}\n'
+
 AI_FIXTURES = r"""
 var CF = {ex:'{EX}', unit:'kg', last:{daysAgo:4, weight:80, reps:[8,8,8], rpe:8}, target:{sets:3, reps:'6–8'},
   decision:{action:'increase', rule:'A_topRange', from:80, to:82.5, confidence:'medium'}, guard:{rpeCeiling:9, fallbackWeight:80}, note:null};
@@ -3080,7 +3087,7 @@ def gate_ai_foundation(html, js, core=None, adapter=None, sql=None):
         client = '\n'.join(pieces) + '\n' + '\n'.join(extract_async_decl(js, f) or '' for f in
                  ['_aiFlagOn', '_aiUid', '_aiStoreGet', '_aiStorePut', '_aiMetricBump', '_aiCapped', '_aiAuditAdd', '_aiPost', '_aiCall',
                   '_aiSetServerConsent', '_aiSaveLocalPrefs', '_aiApplyConsent', '_aiRetryConsentSync', '_aiAdoptServerOff'])
-        problems += _run_jsc_scenarios(client + '\n' + AI_CALL_PRELUDE, AI_CALL_SCENARIOS)
+        problems += _run_jsc_scenarios(client + '\n' + _ai_beta_deps(js) + AI_CALL_PRELUDE, AI_CALL_SCENARIOS)
     # d) server handler in jsc
     cs = _ai_core_script(core)
     if not cs: problems.append('core.mjs has no trailing export block')
@@ -3351,7 +3358,7 @@ def gate_coach_card(html, js):
     for h in re.findall(r'\son[a-z]+="([^"]*)"', rc):
         if not re.fullmatch(r'coach(Accept|Adjust|Why|Undo)\(\)', h): lint.append(f'coach card handler takes data: {h}')
     # every ${ (nested ones included) must start with esc( or a known-safe name/ternary
-    safe = ('esc(', 'body}', 'actions}', 'why}', "cache.text ? '<span", "c.pain ? '' :", "changes ? 'Accept ' + esc(")
+    safe = ('esc(', 'body}', 'actions}', 'why}', "cache.text ? '<span", "c.pain ? '' :", "changes ? 'Accept ' + esc(", "_aiIntro('coach')}")
     for m in re.finditer(r'\$\{', rc):
         nxt = rc[m.end():m.end() + 40].lstrip()
         if not nxt.startswith(safe): lint.append(f'_renderCoachCard interpolates without esc(): ${{{nxt[:40]}')
@@ -3714,7 +3721,7 @@ def gate_recap(html, js):
         try: problems += json.loads(out)
         except Exception: problems.append('recap pure runner errored: ' + out[:300])
         glue = '\n'.join([extract_const_line(js, 'AI_CACHE_KEY'), extract_const_line(js, 'RECAP_MAX_GENS_PER_DAY'), extract_const_line(js, 'AI_CONSENT_VERSION')]
-                         + [extract_async_decl(js, f) or '' for f in AI_SHARED + ['esc', '_recapFacts', '_recapAiHtml', '_recapCacheAll', '_recapCachePut', '_recapHtml', '_renderRecap', '_recapRequest']])
+                         + [extract_async_decl(js, f) or '' for f in AI_SHARED + ['esc', '_recapFacts', '_recapAiHtml', '_recapCacheAll', '_recapCachePut', '_recapHtml', '_renderRecap', '_recapRequest']] + [_ai_beta_deps(js)])
         out, _ = run_jxa(glue + '\n' + RECAP_GLUE_PRELUDE + RECAP_GLUE_ASSERTIONS)
         try: problems += json.loads(out)
         except Exception: problems.append('recap glue runner errored: ' + out[:300])
@@ -3731,7 +3738,9 @@ def gate_recap(html, js):
     rh = extract_decl(js, '_recapHtml') or ''
     for m in re.finditer(r'\$\{', rh):
         nxt = rh[m.end():m.end() + 30].lstrip()
-        if not nxt.startswith('_recapAiHtml('): lint.append(f'_recapHtml interpolates without escaping: ${{{nxt[:30]}')
+        if not nxt.startswith(('_recapAiHtml(', "_aiIntro('recap')}", 'rate}')): lint.append(f'_recapHtml interpolates without escaping: ${{{nxt[:30]}')
+    rm = re.search(r"const rate = ([\s\S]*?);\n", rh)
+    if not rm or '${' in rm.group(1) or 'entry.' in rm.group(1).replace('entry.rated', ''): lint.append('the recap rating markup must be static')
     problems += lint
     for f in problems: print('  ✗ ' + f)
     if problems: return False
@@ -6775,74 +6784,195 @@ def gate_feedback_ops(html, js, sql=None):
     for p in problems: print('  ✗ ' + p)
     return not problems
 
+# ── Gate 32: controlled AI beta (Priority 6) ───────────────────────────────
+BETA_PURE = r"""
+var P = [];
+function eq(l, g, w){ if(JSON.stringify(g) !== JSON.stringify(w)) P.push(l + ' — got ' + JSON.stringify(g) + ', want ' + JSON.stringify(w)); }
+eq('enrolment plan', [_aiBetaPlan(true, null, null), _aiBetaPlan(true, '1', 'beta'), _aiBetaPlan(true, '0', null), _aiBetaPlan(false, '1', 'beta'), _aiBetaPlan(false, '1', null), _aiBetaPlan(null, '1', 'beta'), _aiBetaPlan(null, null, null)],
+  ['enrol', 'none', 'none', 'leave', 'none', 'none', 'none']);
+eq('latency buckets', [_aiLatencyBucket(0), _aiLatencyBucket(999), _aiLatencyBucket(1000), _aiLatencyBucket(3999), _aiLatencyBucket(6999), _aiLatencyBucket(7000), _aiLatencyBucket(50, true), _aiLatencyBucket(NaN)], ['a', 'a', 'b', 'c', 'd', 'e', 'e', 'e']);
+eq('bucket metric names are valid', ['a','b','c','d','e'].every(function(b){ return /^[a-z_]{1,40}$/.test('lat_recap_' + b); }), true);
+var h = _aiIntroHtml('coach', {});
+eq('intro: shown until acknowledged, explains data + control', [/role="note"/.test(h), /onclick="aiIntroDone\('coach'\)"/.test(h), /never your name, email/.test(h), /Nothing changes until you tap Accept/.test(h)], [true, true, true, true]);
+eq('intro: hidden once seen; unknown surface → nothing', [_aiIntroHtml('coach', { coach:1 }), _aiIntroHtml('x', {})], ['', '']);
+eq('every beta surface has an intro saying what leaves the device', AI_BETA_SURFACES.every(function(x){ return AI_INTRO_TEXT[x] && /AI/.test(AI_INTRO_TEXT[x]) && /^Beta:/.test(AI_INTRO_TEXT[x]); }), true);
+var rows = _aiBetaRows({ coach_shown:10, coach_accepted:4, coach_adjusted:1, coach_dismissed:3, coach_undone:1, fb_coach:2, valfail_coach:1, lat_coach_a:5, lat_coach_e:1, nl_local_ok:3, nl_ai_ok:2, nl_confirmed:4, nl_cancelled:1, recap_ai_shown:2, recap_helpful:2, recap_unhelpful:1, intro_coach:1 });
+eq('report: coach row', rows[0][1], '10 shown · 4 accepted · 1 edited · 3 dismissed · 1 undone · 2 fell back · 1 failed checks · latency <1 s 5 · >7 s / timed out 1');
+eq('report: typed sets row', rows[1][1].slice(0, 49), '5 shown · 4 accepted · 0 edited · 1 dismissed · 0');
+eq('report: recap helpful + intros', [rows[3][1], rows[4][1]], ['2 yes · 1 no', 'coach yes · nl no · recap no']);
+var E = [
+  { id:'a_1', t:Date.UTC(2026,10,20), kind:'coach', source:'deterministic', fallback:'invalid', check:'ungrounded', latMs:1500, model:'claude-haiku-5-5', prompt:'coach-v2', facts:{ ex:'Bench Press', weight:100, note:'my knee hurts' }, out:{ text:'Lift 999 kg' }, events:[{ t:1, e:'shown' }, { t:2, e:'secret' }] },
+  { id:'a_2', t:Date.UTC(2026,10,21), kind:'recap', fallback:'off' },
+  { id:'a_3', t:Date.UTC(2026,10,21), kind:'nl', fallback:'timeout', latMs:7100, model:'<script>' },
+  { id:'a_4', t:Date.UTC(2026,10,22), kind:'coach', source:'ai', fallback:null, out:{ text:'fine' } } ];
+var X = _aiFailureExport(E), J = JSON.stringify(X);
+eq('failure export: only real failures', X.length, 2);
+eq('failure export: codes only', X[0], { day:'2026-11-20', kind:'coach', reason:'invalid', check:'ungrounded', latency:'1–2 s', model:'claude-haiku-5-5', prompt:'coach-v2', events:['shown'] });
+eq('failure export: no facts, wording, ids, notes or junk', [/Bench|100|knee|999|a_1|secret|script/.test(J), X[1].model, X[1].latency], [false, null, '>7 s / timed out']);
+eq('failure export capped', _aiFailureExport(new Array(80).join('x').split('x').map(function(_, i){ return { id:'a_' + i, t:Date.UTC(2026,10,20), kind:'nl', fallback:'error' }; })).length, 50);
+eq('server reason mapped', [_aiReasonFor(403, { reason:'not_in_beta' }), AI_REASON_LABELS.not_in_beta], ['not_in_beta', 'not in the beta']);
+JSON.stringify(P);
+"""
+BETA_CALL = {
+  'latency bucket + per-surface counters on a good answer': r"""
+    __impl = function(){ return resp(200, { ok:true, out:COUT, model:'m', prompt:'p', costMicroUsd:1 }); };
+    var r = await _aiCall('coach', CF);
+    return (r.ok && metric('lat_coach_a') === 1 && typeof audit()[0].latMs === 'number' && metric('fb_coach') === 0) || [r, __ls['maxgainz_ai_metrics_v1']];""",
+  'a reply that fails the checks is a validation failure, with the reason kept': r"""
+    __impl = function(){ return resp(200, { ok:true, out:{ text:'Go for 300 kg on {EX} today.' } }); };
+    var r = await _aiCall('coach', CF); var a = audit();
+    return (!r.ok && r.reason === 'invalid' && metric('valfail_coach') === 1 && metric('fb_coach') === 1 && a[0].check && a[0].out === null) || [r, a];""",
+  'server-side check failure is counted too': r"""
+    __impl = function(){ return resp(200, { ok:false, reason:'invalid', detail:'ungrounded' }); };
+    var r = await _aiCall('recap', RF); var a = audit();
+    return (metric('valfail_recap') === 1 && a[0].check === 'ungrounded') || [r, a];""",
+  'not in the beta: falls back and the cohort-enrolled surfaces switch off': r"""
+    __ls['maxgainz_ai_cohort'] = 'beta';
+    __impl = function(){ return resp(403, { ok:false, reason:'not_in_beta' }); };
+    var r = await _aiCall('coach', CF);
+    return (r.reason === 'not_in_beta' && !__ls['maxgainz_ai_v1'] && !__ls['maxgainz_ai_cohort']) || [r, __ls];""",
+  'a device that turned AI on by URL is not switched off by the beta check': r"""
+    delete __ls['maxgainz_ai_cohort'];
+    __impl = function(){ return resp(403, { ok:false, reason:'not_in_beta' }); };
+    var r = await _aiCall('coach', CF);
+    return (r.reason === 'not_in_beta' && __ls['maxgainz_ai_v1'] === '1') || [r, __ls];""",
+  'timeout lands in the slowest bucket': r"""
+    __impl = function(u, o){ return new Promise(function(res, rej){ o.signal.addEventListener('abort', function(){ rej(new Error('aborted')); }); }); };
+    var p = _aiCall('nl', NF); fireTimers(); var r = await p;
+    return (r.reason === 'timeout' && metric('lat_nl_e') === 1) || [r, __ls['maxgainz_ai_metrics_v1']];""",
+}
+
+def gate_ai_beta(html, js, sql=None, core=None):
+    problems = []
+    pure = [extract_const_object(js, n) or '' for n in ['AI_FLAG_KEYS', 'AI_REASON_LABELS']] + [extract_const_array(js, 'AI_AUDIT_EVENTS') or '', extract_decl(js, 'esc') or '', extract_decl(js, '_aiDayKey') or '', extract_decl(js, '_aiReasonFor') or '', extract_decl(js, '_aiBetaPlan') or '', extract_decl(js, '_aiBetaRows') or '', extract_decl(js, '_aiFailureExport') or '']
+    if not all(pure): problems.append('beta functions not found')
+    else:
+        out, _ = run_jxa('\n'.join(pure) + '\n' + _ai_beta_deps(js) + BETA_PURE)
+        try: problems += json.loads(out)
+        except Exception: problems.append('beta runner errored: ' + out[:300])
+    # _aiCall with the gate-15 harness
+    pieces = []
+    for n in AI_CLIENT_CONSTS:
+        v = extract_const_object(js, n) or extract_const_array(js, n) or extract_const_line(js, n)
+        if v: pieces.append(v)
+    pieces += [extract_decl(js, f) or '' for f in AI_SHARED + AI_CLIENT_PURE]
+    client = '\n'.join(pieces) + '\n' + '\n'.join(extract_async_decl(js, f) or '' for f in
+             ['_aiFlagOn', '_aiUid', '_aiStoreGet', '_aiStorePut', '_aiMetricBump', '_aiCapped', '_aiAuditAdd', '_aiPost', '_aiCall', '_aiAdoptServerOff', '_aiSaveLocalPrefs', '_aiRetryConsentSync', '_aiSetServerConsent'])
+    problems += ['call ' + f for f in _run_jsc_scenarios(client + '\n' + _ai_beta_deps(js) + AI_CALL_PRELUDE, BETA_CALL)]
+    # wiring
+    for need, why in [("${_aiIntro('coach')}", 'coach card explains itself'), ("${_aiIntro('recap')}", 'recap explains itself'), ("ni.innerHTML = _aiIntro('nl')", 'typed sets explain themselves'),
+                      ('onclick="recapRate(1)"', 'recap asks whether it helped'), ("_coachEvent('dismissed', 'coach_dismissed')", '"Got it" counts as dismissed'),
+                      ('onclick="aiCopyFailures()"', 'failed cases can be copied for review'), ("setTimeout(() => { _aiBetaSync(); }, 2000)", 'enrolment checked at sign-in')]:
+        if need not in js and need not in html: problems.append(f'missing: {why}')
+    ih = extract_decl(js, '_aiIntroHtml') or ''
+    if '<p>${esc(AI_INTRO_TEXT[surface])}</p>' not in ih or "if(!AI_INTRO_TEXT[surface] ||" not in ih: problems.append('intro text must be escaped and the surface whitelisted (it reaches an inline handler)')
+    q = extract_decl(js, '_aiApplyFlagQuery') or ''
+    if "localStorage.setItem(AI_FLAG_KEYS.master, '0')" not in q: problems.append("?ai=0 must store '0' so beta enrolment never overrides a device opt-out")
+    lo = extract_decl(js, 'authLogout') or ''
+    if "localStorage.getItem(AI_COHORT_KEY) === 'beta'" not in lo: problems.append('signing out must remove beta surfaces the account switched on')
+    sy = extract_async_decl(js, '_aiBetaSync') or ''
+    if "sbFetch('rpc/ai_beta_status'" not in sy or 'fetch(' in sy.replace('sbFetch(', ''): problems.append('enrolment must use the ai_beta_status RPC only')
+    # deterministic text stays visible: the coach body is always the app's own text until AI wording validates
+    rc = extract_decl(js, '_renderCoachCardInner') or ''
+    if "cache.text ? _coachAiHtml(cache.text, c.name) : esc(_coachText(c))" not in rc: problems.append('the coach card must show the app\'s own text while AI is loading or unavailable')
+    # server
+    if core is None: core = open(AI_CORE, encoding='utf-8').read() if os.path.exists(AI_CORE) else ''
+    if "if(r === 'not_in_beta') return fail(403, 'not_in_beta');" not in core: problems.append('the AI function must pass not_in_beta through')
+    if sql is None:
+        pth = os.path.join(ROOT, 'supabase', 'ai_beta.sql')
+        sql = open(pth, encoding='utf-8').read() if os.path.exists(pth) else ''
+    if not sql: problems.append('supabase/ai_beta.sql is missing')
+    else:
+        usage = open(os.path.join(ROOT, 'supabase', 'ai_usage.sql'), encoding='utf-8').read()
+        def reserve(src):
+            i = src.find('create or replace function public.ai_reserve('); j = src.find('$$;', i)
+            return src[i:j + 3] if i != -1 and j != -1 else ''
+        rb, ru = reserve(sql), reserve(usage)
+        stripped = re.sub(r"  -- Priority 6: only the beta cohort \(BEGIN ai_beta check\)[\s\S]*?  -- \(END ai_beta check\)\n", '', rb)
+        if not rb or stripped != ru: problems.append('ai_beta.sql must re-create ai_reserve exactly as ai_usage.sql plus the marked cohort check')
+        chk = rb[rb.find('BEGIN ai_beta check'):rb.find('END ai_beta check')]
+        if "if not exists (select 1 from ai_beta b where b.user_id = uid) then" not in chk or "'reason', 'not_in_beta'" not in chk: problems.append('ai_reserve must refuse accounts outside ai_beta')
+        if rb.find('BEGIN ai_beta check') > rb.find('insert into ai_usage_global'): problems.append('the cohort check must run before anything is reserved')
+        flat = re.sub(r'\s+', ' ', re.sub(r'--[^\n]*', '', sql))
+        for need, why in [('alter table public.ai_beta enable row level security', 'cohort RLS'), ('revoke all on public.ai_beta from anon, authenticated', 'cohort not readable'),
+                          ("return jsonb_build_object('ok', true, 'member', exists (select 1 from ai_beta b where b.user_id = uid))", 'status reveals only the caller'),
+                          ('revoke all on function public.ai_beta_status() from anon', 'status not for anon'), ('grant execute on function public.ai_reserve(text, boolean) to authenticated', 'reserve grant kept')]:
+            if need not in flat: problems.append(f'ai_beta.sql: {why}')
+        if re.search(r'create policy[^;]*ai_beta', flat): problems.append('ai_beta.sql: the cohort table must have no API policies')
+    if not problems: print('  ✓ cohort enforced server-side (ai_reserve + ai_beta), enrol/leave/opt-out on device; first-use explanations; shown/accepted/edited/dismissed/undone/fallback/failed-check/latency recorded; recap helpful?; codes-only failure export; own text stays')
+    for p in problems: print('  ✗ ' + p)
+    return not problems
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/31] parse')
+    print('[1/32] parse')
     p = gate_parse(js)
-    print('[2/31] invariants')
+    print('[2/32] invariants')
     inv = gate_invariants(js)
-    print('[3/31] video map')
+    print('[3/32] video map')
     vm = gate_videomap(js)
-    print('[4/31] inline handler wiring')
+    print('[4/32] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/31] auth log hygiene')
+    print('[5/32] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/31] sign-out scrub')
+    print('[6/32] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/31] safe rendering of user text')
+    print('[7/32] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/31] sync honesty')
+    print('[8/32] sync honesty')
     sy = gate_sync(js)
-    print('[9/31] media fallback + reminder copy')
+    print('[9/32] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/31] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/32] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/31] core-journey accessibility (session + dialogs)')
+    print('[11/32] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/31] Start today (first-use flow) + shortened Path wizard')
+    print('[12/32] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/31] simplified navigation (default, reversible, one-time notice)')
+    print('[13/32] simplified navigation (default, reversible, one-time notice)')
     nv = gate_nav_v2(html, js)
-    print('[14/31] Progress weekly briefing')
+    print('[14/32] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/31] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/32] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/31] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/32] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/31] Phase 2 typed sets (preview before save)')
+    print('[17/32] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
-    print('[18/31] Phase 2 weekly AI recap + measurement')
+    print('[18/32] Phase 2 weekly AI recap + measurement')
     rc = gate_recap(html, js)
-    print('[19/31] Phase 3 offline media (download, cache versioning, fallback order)')
+    print('[19/32] Phase 3 offline media (download, cache versioning, fallback order)')
     om = gate_offline_media(html, js)
-    print('[20/31] Phase 3 programme discovery (metadata, finder, why, switch preview)')
+    print('[20/32] Phase 3 programme discovery (metadata, finder, why, switch preview)')
     dc = gate_discovery(html, js)
-    print('[21/31] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
+    print('[21/32] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
     sh = gate_sharing(html, js)
-    print('[22/31] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
+    print('[22/32] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
     lf = gate_leftovers(html, js)
-    print('[23/31] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
+    print('[23/32] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
     rm = gate_reminders(html, js)
-    print('[24/31] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
+    print('[24/32] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
     rs = gate_reminders_server(html, js)
-    print('[25/31] Profile & settings information model (flagged)')
+    print('[25/32] Profile & settings information model (flagged)')
     pv = gate_profile_v2(html, js)
-    print('[26/31] rollout registry + configuration in Data health')
+    print('[26/32] rollout registry + configuration in Data health')
     ro = gate_rollout(html, js)
-    print('[27/31] Today headline metric (context-sensitive, pinnable)')
+    print('[27/32] Today headline metric (context-sensitive, pinnable)')
     tm = gate_today_metric(html, js)
-    print('[28/31] authentication forms (Enter, password managers, errors, local data kept)')
+    print('[28/32] authentication forms (Enter, password managers, errors, local data kept)')
     af = gate_auth_forms(html, js)
-    print('[29/31] product-wide accessibility (click targets, state, dialog names)')
+    print('[29/32] product-wide accessibility (click targets, state, dialog names)')
     ax = gate_a11y_product(html, js)
-    print('[30/31] offline coverage explained (what works in the gym, what removal deletes)')
+    print('[30/32] offline coverage explained (what works in the gym, what removal deletes)')
     oc = gate_offline_coverage(html, js)
-    print('[31/31] feedback operational controls (bounded payloads, safe retries, rate limits, receipt)')
+    print('[31/32] feedback operational controls (bounded payloads, safe retries, rate limits, receipt)')
     fo = gate_feedback_ops(html, js)
+    print('[32/32] controlled AI beta (cohort, explanations, outcomes, failure review)')
+    ab = gate_ai_beta(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af and ax and oc and fo:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af and ax and oc and fo and ab:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 

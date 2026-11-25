@@ -329,6 +329,7 @@ async function handleAiRequest(req, deps){
     const r = res && res.reason;
     if(r === 'user_cap' || r === 'global_cap') return fail(429, r);
     if(r === 'consent_off') return fail(403, 'consent_off');
+    if(r === 'not_in_beta') return fail(403, 'not_in_beta');   // supabase/ai_beta.sql: cohort only
     if(r === 'auth') return fail(401, 'auth');
     return fail(503, 'limits_unavailable');
   }

@@ -408,6 +408,8 @@ button.chip { font-family:inherit; }
 #s-active button:not(.sc-btn):not(.wadj-btn):not(.set-bub):not(.chip):not(.dp-chip):not(.day-badge) { min-height:44px; }
 /* ── Phase 1: session progressive disclosure + stable bottom bar ── */
 [data-a11y="1"]:focus-visible, [role="switch"]:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:8px; }
+.ai-intro { background:rgba(200,255,0,0.06); border:0.5px solid rgba(200,255,0,0.3); border-radius:10px; padding:10px 12px; margin:8px 0; font-size:12px; line-height:1.45; color:var(--text2); }
+.ai-intro p { margin:0 0 8px; }
 .sr-only { position:absolute !important; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
 /* Sticky above the fixed .nav. The sticky edge is measured inside .tab-content's
    padding-bottom (90px + safe area), so bottom:-12px - safe area puts the bar's
@@ -1839,6 +1841,7 @@ details.pf-sec:not([open]){gap:0;}
       <input id="nlInput" class="nl-input" type="text" maxlength="140" autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="go" aria-describedby="nlHint" onkeydown="if(event.key==='Enter'){event.preventDefault();nlRead();}">
       <button type="button" class="btn-p" style="padding:12px 18px;" onclick="nlRead()">Check</button>
     </div>
+    <div id="nlIntro"></div>
     <div id="nlResult" class="nl-result" role="status" aria-live="polite"></div>
   </div>
 </div>
@@ -3378,6 +3381,7 @@ function loadAuthState(){
 
 // Save auth state to localStorage
 function saveAuthState(user, token, refreshToken){
+  if(user && typeof _aiBetaSync === 'function') setTimeout(() => { _aiBetaSync(); }, 2000);
   currentUser = user;
   authToken = token;
   authRefreshToken = refreshToken || null;
@@ -5328,7 +5332,7 @@ function saveLocalFallback() { saveLocalCache(); }
 // still decide behaviour; gate 26 runs them against this registry so the two
 // can never disagree. mode: 'optIn' = on only when the key is '1';
 // 'optOut' = on unless the key is '0'. requires = another entry that must be on.
-const APP_VERSION = '2026.11.25.7';   // bump on every production push (shown in Data health)
+const APP_VERSION = '2026.11.25.8';   // bump on every production push (shown in Data health)
 const ROLLOUT_REGISTRY = [
   { id:'nav_v2', key:'maxgainz_nav_v2', mode:'optOut', label:'Simplified navigation',
     audience:'Everyone since 25 Nov 2026 (existing users get a one-time notice)', killSwitch:"Profile → Simplified navigation: Off, or 'Use classic navigation' on the notice (stores '0')",
@@ -5349,7 +5353,7 @@ const ROLLOUT_REGISTRY = [
     audience:'Beta testers via ?p3=share', killSwitch:'?p3=0 (removes the key)',
     scope:'device + account', owner:'Phase 3', removeWhen:'Decide default-on after 4 weeks of beta links with no privacy reports → then delete this key' },
   { id:'ai_v1', key:'maxgainz_ai_v1', mode:'optIn', label:'AI features (master)',
-    audience:'Controlled AI beta via ?ai=', killSwitch:'?ai=0 on a device; AI_ENABLED unset on the server refuses every call',
+    audience:'Accounts in the ai_beta table (enrolled at sign-in; consent still required); ?ai= for testing', killSwitch:"?ai=0 on a device (stores '0': never re-enrolled); remove the account from ai_beta; AI_ENABLED unset on the server refuses every call",
     scope:'device + account consent', owner:'Phase 2 · AI', removeWhen:'Priority 6 beta proves value → replace with account-level cohort, then delete this key' },
   { id:'ai_coach', key:'maxgainz_ai_coach', mode:'optIn', requires:'ai_v1', label:'AI Today coach card',
     audience:'Controlled AI beta', killSwitch:'?ai=0', scope:'device', owner:'Phase 2 · AI', removeWhen:'With ai_v1' },
@@ -7213,14 +7217,14 @@ function _aiApplyFlagQuery(){
   if(!f) return;
   try {
     Object.keys(AI_FLAG_KEYS).forEach(k => {
-      if(k === 'master') { if(f.master) localStorage.setItem(AI_FLAG_KEYS.master, '1'); else localStorage.removeItem(AI_FLAG_KEYS.master); }
+      if(k === 'master') { if(f.master) localStorage.setItem(AI_FLAG_KEYS.master, '1'); else { localStorage.setItem(AI_FLAG_KEYS.master, '0'); localStorage.removeItem(AI_COHORT_KEY); } }
       else if(f[k]) localStorage.setItem(AI_FLAG_KEYS[k], '1');
       else if(!f.master) localStorage.removeItem(AI_FLAG_KEYS[k]);
     });
     history.replaceState(null, '', location.pathname + location.hash);
   } catch(e){}
 }
-if(typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', () => { _aiApplyFlagQuery(); try { _renderAiSettings(); } catch(e){} });
+if(typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', () => { _aiApplyFlagQuery(); try { _renderAiSettings(); } catch(e){} setTimeout(() => { _aiBetaSync(); }, 1500); });
 
 // Device-level rollout flag (like maxgainz_nav_v2). Features need master + own flag.
 function _aiFlagOn(name){
@@ -7228,6 +7232,112 @@ function _aiFlagOn(name){
     if(localStorage.getItem(AI_FLAG_KEYS.master) !== '1') return false;
     return name === 'master' ? true : localStorage.getItem(AI_FLAG_KEYS[name]) === '1';
   } catch(e){ return false; }
+}
+
+// ── Priority 6: controlled AI beta ─────────────────────────────────────────
+// Cohort = accounts listed in the server table ai_beta (supabase/ai_beta.sql);
+// ai_reserve refuses everyone else, so the cohort is enforced server-side.
+// On sign-in the app asks ai_beta_status and, for members, turns the three
+// beta surfaces on for this device (marked maxgainz_ai_cohort='beta' so they
+// go away again if the account leaves the beta or signs out). Members still
+// have to switch AI coaching on themselves (consent). ?ai=0 stores '0' — this
+// device then never re-enrols. ?ai=… still works for testing.
+const AI_BETA_SURFACES = ['coach', 'nl', 'recap'];
+const AI_COHORT_KEY = 'maxgainz_ai_cohort';
+const AI_INTRO_KEY = 'maxgainz_ai_intro_v1';
+const AI_INTRO_TEXT = {
+  coach: "Beta: this tip comes from the app's own progression rules. With AI coaching on, AI only rewrites the wording, using this exercise's recent weights and reps and the rule's suggestion — never your name, email or notes (unless you allow notes). Nothing changes until you tap Accept, and you can undo it.",
+  nl: "Beta: type a set like “80 kg x 5”. The app reads it itself first; only if it can't, and AI coaching is on, the sentence and your exercise names go to AI to read. You always see a preview — nothing is saved until you confirm.",
+  recap: "Beta: AI writes this from the numbers in the briefing below (sessions, best lifts, balance) — not from your notes or profile. The briefing's numbers are the source of truth."
+};
+// Pure: what enrolment should do. member: true / false / null (unknown — offline or SQL not run).
+function _aiBetaPlan(member, masterRaw, cohortRaw){
+  if(masterRaw === '0') return 'none';                       // this device opted out
+  if(member === true) return masterRaw === '1' ? 'none' : 'enrol';
+  if(member === false) return cohortRaw === 'beta' ? 'leave' : 'none';
+  return 'none';
+}
+function _aiBetaApply(plan){
+  try {
+    if(plan === 'enrol'){
+      Object.keys(AI_FLAG_KEYS).forEach(k => localStorage.setItem(AI_FLAG_KEYS[k], '1'));
+      localStorage.setItem(AI_COHORT_KEY, 'beta');
+    } else if(plan === 'leave'){
+      if(localStorage.getItem(AI_COHORT_KEY) !== 'beta') return;
+      Object.keys(AI_FLAG_KEYS).forEach(k => localStorage.removeItem(AI_FLAG_KEYS[k]));
+      localStorage.removeItem(AI_COHORT_KEY);
+    } else return;
+  } catch(e){ return; }
+  try { _renderAiSettings(); } catch(e){}
+  try { if(typeof renderToday === 'function') renderToday(); } catch(e){}
+}
+async function _aiBetaSync(){
+  if(typeof isAuthenticated !== 'function' || !isAuthenticated() || typeof sbFetch !== 'function') return;
+  let member = null;
+  try { const r = await sbFetch('rpc/ai_beta_status', { method:'POST', silent:true, body:'{}' }); member = r && r.ok === true ? r.member === true : null; } catch(e){ member = null; }
+  let m = null, c = null;
+  try { m = localStorage.getItem(AI_FLAG_KEYS.master); c = localStorage.getItem(AI_COHORT_KEY); } catch(e){}
+  _aiBetaApply(_aiBetaPlan(member, m, c));
+}
+// Pure: latency bucket letter (metric names are letters only).
+function _aiLatencyBucket(ms, timedOut){
+  if(timedOut || !(ms >= 0)) return 'e';
+  return ms < 1000 ? 'a' : ms < 2000 ? 'b' : ms < 4000 ? 'c' : ms < 7000 ? 'd' : 'e';
+}
+const AI_LAT_LABELS = { a:'<1 s', b:'1–2 s', c:'2–4 s', d:'4–7 s', e:'>7 s / timed out' };
+// Pure: one-time explanation for a surface ('' once acknowledged on this device).
+function _aiIntroHtml(surface, seen){
+  if(!AI_INTRO_TEXT[surface] || (seen && seen[surface])) return '';
+  return `<div class="ai-intro" role="note" id="aiIntro_${surface}"><p>${esc(AI_INTRO_TEXT[surface])}</p><button type="button" class="coach-btn" onclick="aiIntroDone('${surface}')">Got it</button></div>`;
+}
+function _aiIntroSeen(){ try { const o = JSON.parse(localStorage.getItem(AI_INTRO_KEY) || '{}'); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; } catch(e){ return {}; } }
+function _aiIntro(surface){ return _aiIntroHtml(surface, _aiIntroSeen()); }
+function aiIntroDone(surface){
+  if(!AI_INTRO_TEXT[surface]) return;
+  const o = _aiIntroSeen(); o[surface] = 1;
+  try { localStorage.setItem(AI_INTRO_KEY, JSON.stringify(o)); } catch(e){}
+  _aiMetricBump('intro_' + surface);
+  const el = document.getElementById('aiIntro_' + surface);
+  const host = el && el.parentElement;
+  if(el) el.remove();
+  const f = host && host.querySelector('button, [tabindex="0"]'); if(f) f.focus();
+}
+// Pure: the beta report — one row per surface over a window of metrics.
+function _aiBetaRows(t){
+  const g = k => t[k] || 0;
+  const lat = s => ['a', 'b', 'c', 'd', 'e'].filter(b => g('lat_' + s + '_' + b)).map(b => AI_LAT_LABELS[b] + ' ' + g('lat_' + s + '_' + b)).join(' · ') || 'no calls';
+  const row = (label, s, shown, acc, edit, dis, undo) => [label, shown + ' shown · ' + acc + ' accepted · ' + edit + ' edited · ' + dis + ' dismissed · ' + undo + ' undone · '
+    + g('fb_' + s) + ' fell back · ' + g('valfail_' + s) + ' failed checks · latency ' + lat(s)];
+  return [
+    row('Beta: coach tip', 'coach', g('coach_shown'), g('coach_accepted'), g('coach_adjusted'), g('coach_dismissed'), g('coach_undone')),
+    row('Beta: typed sets', 'nl', g('nl_local_ok') + g('nl_ai_ok') + g('nl_clarify'), g('nl_confirmed'), g('nl_edited'), g('nl_cancelled'), 0),
+    row('Beta: weekly recap', 'recap', g('recap_ai_shown'), g('recap_helpful'), 0, g('recap_unhelpful'), 0),
+    ['Beta: recap helpful?', g('recap_helpful') + ' yes · ' + g('recap_unhelpful') + ' no'],
+    ['Beta: explanations read', AI_BETA_SURFACES.map(s => s + ' ' + (g('intro_' + s) ? 'yes' : 'no')).join(' · ')]
+  ];
+}
+// Pure: failed cases for review — only codes, never facts, wording, ids or names.
+function _aiFailureExport(entries){
+  const skip = ['flag', 'off', 'signed_out', 'offline', 'not_in_beta'];
+  return (Array.isArray(entries) ? entries : []).filter(e => e && (e.check || (e.fallback && skip.indexOf(e.fallback) === -1)))
+    .slice(-50).map(e => ({
+      day: _aiDayKey(e.t), kind: AI_BETA_SURFACES.indexOf(e.kind) !== -1 ? e.kind : 'other',
+      reason: typeof e.fallback === 'string' && /^[a-z_]{1,20}$/.test(e.fallback) ? e.fallback : null,
+      check: typeof e.check === 'string' && /^[a-z _]{1,30}$/.test(e.check) ? e.check : null,
+      latency: typeof e.latMs === 'number' ? AI_LAT_LABELS[_aiLatencyBucket(e.latMs, e.fallback === 'timeout')] : null,
+      model: typeof e.model === 'string' && /^[a-z0-9.-]{1,40}$/.test(e.model) ? e.model : null,
+      prompt: typeof e.prompt === 'string' && /^[a-z0-9._-]{1,20}$/.test(e.prompt) ? e.prompt : null,
+      events: (e.events || []).map(x => x && x.e).filter(x => AI_AUDIT_EVENTS.indexOf(x) !== -1)
+    }));
+}
+async function aiCopyFailures(){
+  const list = _aiFailureExport(_aiStoreGet(AI_AUDIT_KEY, 'audit').entries);
+  const text = JSON.stringify({ app: typeof APP_VERSION === 'string' ? APP_VERSION : '', cases: list }, null, 1);
+  let ok = false;
+  try { if(navigator.clipboard && navigator.clipboard.writeText){ await navigator.clipboard.writeText(text); ok = true; } } catch(e){ ok = false; }
+  const out = document.getElementById('aiFailOut');
+  if(out){ out.hidden = ok; if(!ok) out.value = text; }
+  showToast(ok ? '📋 ' + list.length + ' failed case' + (list.length === 1 ? '' : 's') + ' copied (no workout details)' : 'Select the text below to copy it');
 }
 
 // Pure: the account's AI consent, normalised. Anything unexpected → off.
@@ -7337,8 +7447,8 @@ function _aiAuditAdd(entry){
   _aiStorePut(AI_AUDIT_KEY, st);
   return id;
 }
-const AI_REASON_LABELS = { off:'AI off', signed_out:'signed out', offline:'offline', cap:'daily limit', timeout:'slow reply', invalid:'failed checks', refusal:'declined', pain:'pain mentioned', auth:'sign-in expired', unavailable:'service off', error:'error' };
-const AI_AUDIT_EVENTS = ['shown', 'accepted', 'adjusted', 'undone', 'why', 'confirmed', 'cancelled', 'edited'];
+const AI_REASON_LABELS = { off:'AI off', signed_out:'signed out', offline:'offline', cap:'daily limit', timeout:'slow reply', invalid:'failed checks', refusal:'declined', pain:'pain mentioned', auth:'sign-in expired', unavailable:'service off', not_in_beta:'not in the beta', error:'error' };
+const AI_AUDIT_EVENTS = ['shown', 'accepted', 'adjusted', 'undone', 'why', 'confirmed', 'cancelled', 'edited', 'dismissed', 'helpful', 'unhelpful'];
 function _aiAuditEvent(id, ev){
   if(AI_AUDIT_EVENTS.indexOf(ev) === -1) return false;
   const st = _aiStoreGet(AI_AUDIT_KEY, 'audit');
@@ -7360,6 +7470,7 @@ function _aiReasonFor(status, body){
   if(r === 'consent_off') return 'off';
   if(r === 'auth' || status === 401) return 'auth';
   if(r === 'disabled' || r === 'not_configured' || r === 'limits_unavailable') return 'unavailable';
+  if(r === 'not_in_beta') return 'not_in_beta';
   return 'error';
 }
 
@@ -7392,8 +7503,12 @@ async function _aiCall(task, factsIn, feature){
     const fallback = (reason, extra) => {
       const id = _aiAuditAdd(Object.assign({}, base, { source:'deterministic', fallback: reason }, extra || {}));
       _aiMetricBump('fallback_' + reason);
+      if(AI_BETA_SURFACES.indexOf(task) !== -1) _aiMetricBump('fb_' + task);
+      if(reason === 'invalid' && AI_BETA_SURFACES.indexOf(task) !== -1) _aiMetricBump('valfail_' + task);
       return { ok:false, reason, auditId:id };
     };
+    const t0 = Date.now();
+    const lat = () => { const ms = Date.now() - t0; base.latMs = ms; if(AI_BETA_SURFACES.indexOf(task) !== -1) _aiMetricBump('lat_' + task + '_' + _aiLatencyBucket(ms, timedOut)); };
     if(why) return fallback(why);
     // Notes go out only with the separate notes consent (the server checks too).
     const prefs = _aiPrefsNormalize(userPreferences.ai);
@@ -7405,7 +7520,8 @@ async function _aiCall(task, factsIn, feature){
     if(factErr) return fallback(factErr === 'pain' ? 'pain' : 'invalid');
 
     _aiMetricBump('calls');
-    let res = null, body = null, timedOut = false;
+    let res = null, body = null;
+    var timedOut = false;   // var: read by lat() above
     for(let attempt = 0; attempt < 2; attempt++){
       const ctl = typeof AbortController === 'function' ? new AbortController() : null;
       const timer = setTimeout(() => { timedOut = true; if(ctl) ctl.abort(); }, AI_TIMEOUT_MS);
@@ -7415,7 +7531,7 @@ async function _aiCall(task, factsIn, feature){
       }
       catch(e){ res = null; }
       finally { clearTimeout(timer); }
-      if(!res || timedOut) return fallback(timedOut ? 'timeout' : (typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'error'));
+      if(!res || timedOut){ lat(); return fallback(timedOut ? 'timeout' : (typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'error')); }
       // An expired session token: refresh once (bounded) and retry once.
       if(attempt === 0 && res.status === 401 && typeof refreshAuthToken === 'function'){
         const refreshed = await Promise.race([refreshAuthToken(), new Promise(r => setTimeout(() => r(false), 5000))]);
@@ -7423,6 +7539,7 @@ async function _aiCall(task, factsIn, feature){
       }
       break;
     }
+    lat();
     const meta = body && typeof body === 'object' ? {
       model: typeof body.model === 'string' ? body.model.slice(0, 40) : null,
       prompt: typeof body.prompt === 'string' ? body.prompt.slice(0, 20) : null,
@@ -7433,10 +7550,11 @@ async function _aiCall(task, factsIn, feature){
       const reason = _aiReasonFor(res.status, body);
       if(reason === 'cap') _aiMetricBump('capped');
       if(reason === 'off') _aiAdoptServerOff();
-      return fallback(reason, meta);
+      if(reason === 'not_in_beta') _aiBetaApply('leave');
+      return fallback(reason, Object.assign({ check: reason === 'invalid' && body && typeof body.detail === 'string' ? body.detail.slice(0, 30) : null }, meta));
     }
     const chk = _aiCheckOutput(task, body.out, facts);
-    if(!chk.ok) return fallback('invalid', Object.assign({ out: null }, meta));
+    if(!chk.ok) return fallback('invalid', Object.assign({ out: null, check: String(chk.reason || '').slice(0, 30) }, meta));
     const id = _aiAuditAdd(Object.assign({}, base, meta, { source:'ai', out: body.out, fallback:null }));
     _aiMetricBump('ai_ok');
     return { ok:true, out: body.out, auditId:id, model: meta.model, prompt: meta.prompt };
@@ -7568,7 +7686,10 @@ function _aiHealthHtml(){
   const audit = _aiStoreGet(AI_AUDIT_KEY, 'audit').entries.length;
   return `<div style="margin-top:14px;font-size:11px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:1px;">AI outcomes · this device</div>
     ${rows.map(r => `<div style="display:flex;gap:10px;padding:8px 0;border-top:0.5px solid var(--border);font-size:12px;line-height:1.4;"><div style="flex:0 0 38%;color:var(--text2);">${esc(r[0])}</div><div style="flex:1;color:var(--text);">${esc(r[1])}</div></div>`).join('')}
-    <div style="font-size:11px;color:var(--text2);margin-top:6px;">${esc(audit)} suggestion record${audit === 1 ? '' : 's'} kept on this device for ${esc(AI_KEEP_DAYS)} days. Nothing here is uploaded.</div>`;
+    ${_aiBetaRows(_aiMetricsSummary(st, now, 28)).map(r => `<div style="display:flex;gap:10px;padding:8px 0;border-top:0.5px solid var(--border);font-size:12px;line-height:1.4;"><div style="flex:0 0 38%;color:var(--text2);">${esc(r[0])}</div><div style="flex:1;color:var(--text);">${esc(r[1])}</div></div>`).join('')}
+    <div style="font-size:11px;color:var(--text2);margin-top:6px;">${esc(audit)} suggestion record${audit === 1 ? '' : 's'} kept on this device for ${esc(AI_KEEP_DAYS)} days. Nothing here is uploaded.</div>
+    <button type="button" onclick="aiCopyFailures()" style="margin-top:8px;width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:10px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;">Copy failed AI cases for review (codes only — no workout details)</button>
+    <textarea id="aiFailOut" hidden readonly aria-label="Failed AI cases" style="width:100%;height:120px;margin-top:6px;font-size:11px;background:var(--surface2);color:var(--text);border:0.5px solid var(--border);border-radius:8px;"></textarea>`;
 }
 
 
@@ -7820,6 +7941,7 @@ function _renderCoachCardInner(){
   const why = _coachWhyLines(c).map(l => `<li>${esc(l)}</li>`).join('');
   return `<section class="coach-card" id="coachCard" aria-labelledby="coachTitle">
     <div class="coach-head"><h2 class="coach-title" id="coachTitle">Coach tip</h2>${cache.text ? '<span class="coach-tag" title="Numbers from your log; wording by AI">✨ AI-worded</span>' : ''}</div>
+    ${_aiIntro('coach')}
     <p class="coach-text" id="coachText" aria-live="polite">${body}</p>
     ${actions}
     <ul class="coach-why" id="coachWhy" hidden>${why}</ul>
@@ -7859,8 +7981,13 @@ function coachAccept(){
     if(_sessionRunning()) _coachApplyAccepted();
     showToast('✅ ' + c.st.suggested + ' ' + c.unit + ' set for ' + c.name + ' — undo any time');
   } else {
+    // "Got it" on a tip that changes nothing = acknowledged without acting (dismissed).
     const cache = _coachCacheGet();
     if(cache){ cache.ack = true; _coachCachePut(cache); }
+    _coachEvent('dismissed', 'coach_dismissed');
+    renderToday();
+    const b0 = document.querySelector('#coachCard .coach-btn'); if(b0) b0.focus();
+    return;
   }
   _coachEvent('accepted', 'coach_accepted');
   renderToday();
@@ -8286,6 +8413,7 @@ function _nlSetLine(s, bw){
 function _nlRender(){
   const el = document.getElementById('nlResult');
   if(!el) return;
+  const ni = document.getElementById('nlIntro'); if(ni && !document.getElementById('aiIntro_nl')) ni.innerHTML = _aiIntro('nl');
   const p = _nlState && _nlState.parse;
   el.removeAttribute('aria-busy');
   if(!p){ el.innerHTML = ''; return; }
@@ -8359,12 +8487,27 @@ function _recapCachePut(entry){
 function _recapHtml(entry){
   const t = entry && entry.text;
   if(!t) return '';
+  // Static markup only (no data): asked once per summary.
+  const rate = entry.rated ? '<p class="coach-done" role="status">Thanks — noted.</p>'
+    : '<span class="recap-src" style="margin:0 6px 0 0;">Was this summary helpful?</span><button type="button" class="coach-btn" onclick="recapRate(1)">Yes</button><button type="button" class="coach-btn" onclick="recapRate(0)">No</button>';
   return `<section class="recap-card" aria-labelledby="recapTitle">
     <div class="coach-head"><h3 class="coach-title" id="recapTitle">Your week in words</h3><span class="coach-tag" title="Written by AI from the numbers below">✨ AI summary</span></div>
     <p class="recap-head">${_recapAiHtml(t.headline, entry.names)}</p>
     <p class="coach-text" style="margin:0;">${_recapAiHtml(t.body, entry.names)}</p>
     <p class="recap-src">From your logged data only — the briefing below has the numbers.</p>
+    ${_aiIntro('recap')}
+    <div class="coach-actions" id="recapRate">${rate}</div>
   </section>`;
+}
+function recapRate(yes){
+  const all = _recapCacheAll(), c = all.recap;
+  if(!c || c.rated) return;
+  c.rated = yes ? 'yes' : 'no';
+  _recapCachePut(c);
+  _aiMetricBump(yes ? 'recap_helpful' : 'recap_unhelpful');
+  if(c.auditId) _aiAuditEvent(c.auditId, yes ? 'helpful' : 'unhelpful');
+  const el = document.getElementById('recapRate');
+  if(el){ el.innerHTML = '<p class="coach-done" role="status" tabindex="-1">Thanks — noted.</p>'; const p = el.querySelector('p'); if(p) p.focus(); }
 }
 // Called by renderWeeklyBriefing with the briefing it just drew. Returns the
 // summary HTML if one is ready; otherwise asks (at most a few times a day) and
@@ -30918,6 +31061,8 @@ function authLogout(opts){
   // cached wording describe its training: none may carry over to the next
   // account. (The rollout flags are device-level, like the nav flag.)
   if(typeof userPreferences === 'object' && userPreferences) userPreferences.ai = _aiPrefsNormalize(null);
+  // Beta surfaces this account's enrolment switched on leave with it.
+  try { if(localStorage.getItem(AI_COHORT_KEY) === 'beta'){ Object.keys(AI_FLAG_KEYS).forEach(k => localStorage.removeItem(AI_FLAG_KEYS[k])); localStorage.removeItem(AI_COHORT_KEY); } } catch(e){}
   localStorage.removeItem(AI_PREFS_KEY);
   localStorage.removeItem(AI_AUDIT_KEY);
   localStorage.removeItem(AI_METRICS_KEY);
