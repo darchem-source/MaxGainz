@@ -5127,6 +5127,9 @@ def gate_reminders(html, js, sw=None, root=None):
     except Exception as e:
         problems.append('manifest.webmanifest missing or invalid: ' + str(e)[:80])
     if '<link rel="manifest" href="/manifest.webmanifest">' not in html: problems.append('index.html does not link the manifest')
+    toml_src = open(os.path.join(root, 'netlify.toml'), encoding='utf-8').read() if os.path.exists(os.path.join(root, 'netlify.toml')) else ''
+    if not re.search(r'for = "/manifest\.webmanifest"\s*\[headers\.values\]\s*Content-Type = "application/manifest\+json"', toml_src):
+        problems.append('netlify.toml must serve manifest.webmanifest as application/manifest+json')
     # in-app alert copy stays honest
     if 'Allow alerts when you open the app' not in html or 'never sent while the app is closed' not in html:
         problems.append('in-app alert copy must say it only appears when the app is open')

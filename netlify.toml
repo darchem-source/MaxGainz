@@ -31,3 +31,12 @@
   [headers.values]
     Cache-Control = "no-cache"
     X-Content-Type-Options = "nosniff"
+
+# Web app manifest (Phase 4: iOS needs it to treat a Home Screen install as an
+# app that can receive Web Push). Served with its proper type, revalidated.
+[[headers]]
+  for = "/manifest.webmanifest"
+  [headers.values]
+    Content-Type = "application/manifest+json"
+    Cache-Control = "no-cache"
+    X-Content-Type-Options = "nosniff"
