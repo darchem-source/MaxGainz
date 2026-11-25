@@ -4893,56 +4893,336 @@ def gate_leftovers(html, js, sw=None, vendor=None):
     return ok_all
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Gate 23 — Phase 4 training-day reminders (server-sent Web Push)
+#   (a) opt-in default off: settings normalise to enabled:false for any input,
+#       the card is hidden without the ?p4=reminders flag, no permission or
+#       subscribe call happens outside the user's tap handler;
+#   (b) payload privacy: sw.js shows only its own fixed text — injected names,
+#       weights, notes or markup in a push never reach the notification; labels
+#       come from one fixed list, identical in index.html and sw.js;
+#   (h) capability: iOS outside the Home Screen gets install steps (no toggle),
+#       old iOS / unsupported / blocked / old worker / signed out each get their
+#       own message; the toggle only exists in the 'ok' state.
+# ─────────────────────────────────────────────────────────────────────────────
+P4_CONSTS = ['P4_FLAG_KEYS', 'PUSH_PREFS_KEY', 'PUSH_DEFAULT_HOUR', 'PUSH_WEEKDAYS', 'PUSH_LABELS', 'PUSH_LABEL_TEXT']
+P4_PURE = ['_p4FlagsFromQuery', '_pushPrefsNormalize', '_pushPathDays', '_pushEffectiveDays', '_pushLabelFor', '_pushCapability',
+           '_pushMetricsSummary', '_pushMetricsText', '_pushHourLabel', '_pushDaysText', '_pushCardHtml', 'esc']
+
+P4_DOM_ASSERTIONS = r"""
+var fails = [];
+function t(c, m){ if(!c) fails.push(m); }
+var LS = {}; var localStorage = { getItem: function(k){ return LS.hasOwnProperty(k) ? LS[k] : null; }, setItem: function(k, v){ LS[k] = String(v); }, removeItem: function(k){ delete LS[k]; } };
+var card = { hidden: true, innerHTML: '', style: {}, contains: function(){ return false; }, querySelector: function(){ return null; } };
+var sact = { classList: { contains: function(){ return SACT; } } }; var SACT = false; var went = [];
+var document = { activeElement: null, getElementById: function(id){ return id === 'remindersCard' ? card : (id === 's-active' ? sact : {}); } };
+function goTab(t){ went.push(t); }
+var _pushSwOk = true, _pushSwCheckedAt = 0, _pushBusy = false, _pushMetricsCache = null;
+function _pushCheckSw(){ return Promise.resolve(true); }
+function _pushEnv(){ return { ua:'Mozilla/5.0 (X11; Linux x86_64) Chrome/125', maxTouchPoints:0, standalone:false, hasSW:true, hasPush:true, hasNotification:true, permission:'default', swPush:true, signedIn:true }; }
+function _pushActivePath(){ return null; }
+function _pushTz(){ return 'Europe/London'; }
+renderRemindersCard();
+t(card.hidden === true && card.innerHTML === '', 'card must stay hidden without the flag');
+LS[P4_FLAG_KEYS.reminders] = '1'; renderRemindersCard();
+t(card.hidden === false && /Training-day reminders/.test(card.innerHTML) && /aria-checked="false"/.test(card.innerHTML), 'flag on: card shown, switch off');
+delete LS[P4_FLAG_KEYS.reminders]; LS[PUSH_PREFS_KEY] = JSON.stringify({ enabled:true, hour:7, days:[1] });
+renderRemindersCard();
+t(card.hidden === false && /aria-checked="true"/.test(card.innerHTML), 'flag off but reminders on: the off switch must stay reachable');
+LS = {}; renderRemindersCard(); t(card.hidden === true, 'flag off and reminders off: hidden again');
+SACT = true; _pushOpenToday(); t(went.length === 0, 'a notification tap must not leave the workout screen');
+SACT = false; _pushOpenToday(); t(went.join() === 'today', 'a notification tap opens Today');
+JSON.stringify(fails);
+"""
+
+P4_PURE_ASSERTIONS = r"""
+var fails = [];
+function t(c, m){ if(!c) fails.push(m); }
+// (a) default off
+[null, undefined, 0, 'x', [], {}, {enabled:'true'}, {enabled:1}, {enabled:'yes'}].forEach(function(o){
+  t(_pushPrefsNormalize(o).enabled === false, 'enabled must default to false for ' + JSON.stringify(o)); });
+t(_pushPrefsNormalize({enabled:true}).enabled === true, 'explicit opt-in must survive');
+var d0 = _pushPrefsNormalize(null);
+t(d0.hour === 18 && d0.daysMode === 'path' && d0.days.length === 0, 'defaults ' + JSON.stringify(d0));
+t(_pushPrefsNormalize({hour:24}).hour === 18 && _pushPrefsNormalize({hour:-1}).hour === 18 && _pushPrefsNormalize({hour:7.5}).hour === 18 && _pushPrefsNormalize({hour:0}).hour === 0, 'hour bounds');
+t(JSON.stringify(_pushPrefsNormalize({days:[7,1,1,0,8,'2',3.5,3]}).days) === '[1,3,7]', 'days cleaned ' + JSON.stringify(_pushPrefsNormalize({days:[7,1,1,0,8,'2',3.5,3]}).days));
+// flags
+t(_p4FlagsFromQuery('') === null && _p4FlagsFromQuery('?p3=all') === null, 'no p4 → null');
+t(_p4FlagsFromQuery('?p4=reminders').reminders === true && _p4FlagsFromQuery('?p4=1').reminders === true, 'p4 on');
+t(_p4FlagsFromQuery('?p4=0').reminders === false && _p4FlagsFromQuery('?p4=off').reminders === false, 'p4 off');
+t(_p4FlagsFromQuery('?p4=bogus') === null, 'unknown p4 value ignored');
+// Path days
+var path = { coreSchedule:{ preferredDays:['Monday','Wednesday','Friday'] }, addOns:[{ type:'HIIT', preferredDays:['Saturday','Monday'] }] };
+t(JSON.stringify(_pushPathDays(path)) === '[1,3,5,6]', 'path days ' + JSON.stringify(_pushPathDays(path)));
+t(JSON.stringify(_pushPathDays(null)) === '[]', 'no path → no days');
+t(JSON.stringify(_pushEffectiveDays(_pushPrefsNormalize({daysMode:'path', days:[2]}), path)) === '[1,3,5,6]', 'follow path');
+t(JSON.stringify(_pushEffectiveDays(_pushPrefsNormalize({daysMode:'path', days:[2]}), null)) === '[2]', 'no path → own pick');
+t(JSON.stringify(_pushEffectiveDays(_pushPrefsNormalize({daysMode:'custom', days:[2,4]}), path)) === '[2,4]', 'custom wins');
+// labels only from the fixed list
+['Upper', 'Lower', 'Full Body', 'Push A', 'Pull B', 'Legs A', 'Tabata Burner', 'Zone 2 Run', "Max's secret 140kg PR day", '<img src=x onerror=alert(1)>', '', null, 'Deadlift Heavy'].forEach(function(n){
+  var l = _pushLabelFor(n); t(PUSH_LABELS.indexOf(l) !== -1, 'label outside the list for ' + n + ': ' + l); });
+t(_pushLabelFor('Upper') === 'upper' && _pushLabelFor('Legs A') === 'legs' && _pushLabelFor('Full Body') === 'full', 'label mapping');
+t(Object.keys(PUSH_LABEL_TEXT).sort().join() === PUSH_LABELS.slice().sort().join(), 'every label has text and nothing else');
+// (h) capability matrix
+var IPH = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 Version/17.4 Mobile/15E148 Safari/604.1';
+var IPAD = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.4 Safari/605.1.15';
+var AND = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/125.0 Mobile Safari/537.36';
+var MAC = IPAD;
+function env(o){ var b = { ua:AND, maxTouchPoints:5, standalone:false, hasSW:true, hasPush:true, hasNotification:true, permission:'default', swPush:true, signedIn:true }; for(var k in o) b[k] = o[k]; return b; }
+var cases = [
+  [env({ua:IPH}), 'ios-install'],
+  [env({ua:IPH + ' Instagram 300.0'}), 'ios-inapp'],
+  [env({ua:IPH.replace('Safari/604.1', '[FBAN/FBIOS;FBAV/450.0]')}), 'ios-inapp'],
+  [env({ua:IPAD, maxTouchPoints:5, standalone:true}), 'ok'],
+  [env({ua:IPAD, maxTouchPoints:5, standalone:true, hasPush:false}), 'ios-old'],
+  [env({ua:IPAD, maxTouchPoints:5}), 'ios-install'],
+  [env({ua:MAC, maxTouchPoints:0}), 'ok'],
+  [env({ua:IPH, standalone:true, hasPush:false, hasNotification:false}), 'ios-old'],
+  [env({ua:IPH, standalone:true}), 'ok'],
+  [env({ua:IPH, standalone:true, signedIn:false}), 'signed-out'],
+  [env({}), 'ok'],
+  [env({hasPush:false}), 'unsupported'],
+  [env({hasSW:false}), 'unsupported'],
+  [env({permission:'denied'}), 'denied'],
+  [env({swPush:false}), 'sw-old'],
+  [env({swPush:null}), 'checking'],
+  [env({signedIn:false}), 'signed-out'],
+];
+cases.forEach(function(c, i){ var got = _pushCapability(c[0]); t(got === c[1], 'capability case ' + i + ': want ' + c[1] + ' got ' + got); });
+// the toggle exists only when the device can really receive reminders
+['ios-install','ios-inapp','ios-old','unsupported','denied','sw-old','checking','signed-out','ok'].forEach(function(cap){
+  var h = _pushCardHtml({ cap:cap, prefs:_pushPrefsNormalize(null), pathDays:[], pathDaysPath:null, tz:'Europe/London', metrics:{shown:0, opened:0}, busy:false });
+  var has = /id="pushToggleBtn"/.test(h);
+  t(has === (cap === 'ok'), 'toggle present=' + has + ' for ' + cap);
+  if(cap === 'ios-install') t(/Add to Home Screen/.test(h), 'iOS install steps missing');
+  if(cap === 'ok') t(/aria-checked="false"/.test(h) && /role="switch"/.test(h), 'switch must start off and be a switch');
+  t(/never in a notification/.test(h) && /already logged a workout/.test(h), 'plain promise missing for ' + cap);
+});
+// time zone text is escaped
+var hz = _pushCardHtml({ cap:'ok', prefs:_pushPrefsNormalize({enabled:true}), pathDays:[], pathDaysPath:null, tz:'<b>x</b>', metrics:null, busy:false });
+t(hz.indexOf('<b>x</b>') === -1, 'time zone not escaped');
+JSON.stringify(fails);
+"""
+
+P4_SW_SCENARIOS = {
+ 'push shows only fixed text, whatever the payload says': r"""
+   var shown = []; self.registration = { showNotification: function(t, o){ shown.push([t, o]); return Promise.resolve(); } };
+   var evil = [
+     { v:1, kind:'train', label:'upper', date:'2026-11-25', title:'Max lifted 140kg', body:'notes: knee hurts', name:'Max Darche', weight:140 },
+     { v:1, kind:'train', label:'<img src=x onerror=1>', date:'"><script>' },
+     { v:2, kind:'test', label:'upper' },
+     'garbage', null, { v:1, kind:'admin', label:'hasOwnProperty' }, { v:1, kind:'train', label:'__proto__' }
+   ];
+   for(var i = 0; i < evil.length; i++){
+     var w = null; var raw = evil[i];
+     L.push({ data: raw === null ? null : { json: function(){ if(typeof raw === 'string') throw new Error('bad'); return raw; } }, waitUntil: function(p){ w = p; } });
+     await w;
+   }
+   var allowedTitles = ['Time to train', 'Test reminder'];
+   var allowedBodies = Object.keys(PUSH_LABEL_TEXT).map(function(k){ return PUSH_LABEL_TEXT[k]; }).concat(['Reminders are working on this device.']);
+   for(var j = 0; j < shown.length; j++){
+     var tt = shown[j][0], o = shown[j][1];
+     if(allowedTitles.indexOf(tt) === -1) return 'title leaked: ' + tt;
+     if(allowedBodies.indexOf(o.body) === -1) return 'body leaked: ' + o.body;
+     if(!/^mg-(train|test)(-\d{4}-\d{2}-\d{2})?$/.test(o.tag)) return 'tag leaked: ' + o.tag;
+     var blob = JSON.stringify(o) + tt;
+     if(/140|knee|Darche|script|onerror|admin/.test(blob)) return 'payload content reached the notification: ' + blob;
+   }
+   if(shown.length !== evil.length) return 'every push must show exactly one notification (' + shown.length + ')';
+   if(shown[0][1].body !== 'Upper day today' || shown[0][1].tag !== 'mg-train-2026-11-25') return 'valid payload not honoured ' + JSON.stringify(shown[0]);
+   if(shown[2][0] !== 'Time to train') return 'unknown version must fall back to the generic reminder';
+   var m = await (await (await caches.open(PUSH_META_CACHE)).match(PUSH_METRICS_PATH)).json();
+   var day = m.days[Object.keys(m.days)[0]];
+   if(day.shown !== evil.length) return 'shown count ' + JSON.stringify(m);
+   return true;""",
+ 'tap opens Today in this app only': r"""
+   var opened = [], focused = 0, posted = [];
+   var other = { url:'https://evil.test/x', focus: function(){ focused += 100; }, postMessage: function(m){ posted.push(['evil', m]); } };
+   var mine = { url:'https://app.test/?x', focus: function(){ focused += 1; return Promise.resolve(); }, postMessage: function(m){ posted.push(['mine', m]); } };
+   var viewer = { url:'https://app.test/share#tok', focus: function(){ focused += 1000; }, postMessage: function(m){ posted.push(['viewer', m]); } };
+   var list = [other, viewer];
+   self.clients.matchAll = function(){ return Promise.resolve(list); };
+   self.clients.openWindow = function(u){ opened.push(u); return Promise.resolve(); };
+   var closed = 0; var w = null;
+   L.notificationclick({ notification: { close: function(){ closed++; }, data: { go:'https://evil.test', url:'https://evil.test', href:'https://evil.test' } }, waitUntil: function(p){ w = p; } }); await w;
+   if(opened.join() !== '/?go=today' || focused) return 'no own window: must open /?go=today ' + JSON.stringify(opened) + ' focused ' + focused;
+   list = [viewer, other, mine];
+   L.notificationclick({ notification: { close: function(){ closed++; }, data: {} }, waitUntil: function(p){ w = p; } }); await w;
+   if(focused !== 1 || opened.length !== 1) return 'must focus the own window, not open another ' + focused;
+   if(posted.length !== 1 || posted[0][0] !== 'mine' || posted[0][1].type !== 'OPEN_TODAY') return 'OPEN_TODAY to the own window only ' + JSON.stringify(posted);
+   if(closed !== 2) return 'notification not closed';
+   var m = await (await (await caches.open(PUSH_META_CACHE)).match(PUSH_METRICS_PATH)).json();
+   if(m.days[Object.keys(m.days)[0]].opened !== 2) return 'opened count';
+   return true;""",
+ 'answers PUSH_CAPS; activate keeps the reminder counts': r"""
+   var got = null; L.message({ data: { type:'PUSH_CAPS' }, ports: [{ postMessage: function(m){ got = m; } }] });
+   if(!got || got.push !== 1 || got.meta !== PUSH_META_CACHE) return 'PUSH_CAPS reply ' + JSON.stringify(got);
+   C[PUSH_META_CACHE] = mk(PUSH_META_CACHE); C['maxgainz-v1'] = mk('maxgainz-v1');
+   var w = null; L.activate({ waitUntil: function(p){ w = p; } }); await w;
+   if(!C[PUSH_META_CACHE]) return 'activate deleted the reminder counts';
+   return true;""",
+}
+
+P4_SW_EXTRA_STUBS = r"""
+self.registration = { showNotification: function(){ return Promise.resolve(); } };
+Response.prototype.json = function(){ return Promise.resolve(JSON.parse(this._b)); };
+"""
+
+def _p4_obj_literal(src, name):
+    m = re.search(r'const\s+' + re.escape(name) + r'\s*=\s*(\{[^\n]*\});', src)
+    return m.group(1) if m else None
+
+def gate_reminders(html, js, sw=None, root=None):
+    root = root or ROOT
+    if sw is None:
+        sw = open(SW_PATH, encoding='utf-8').read() if os.path.exists(SW_PATH) else ''
+    problems = []
+    # (b) label text identical in app and worker; meta cache name identical
+    a, b = _p4_obj_literal(js, 'PUSH_LABEL_TEXT'), _p4_obj_literal(sw, 'PUSH_LABEL_TEXT')
+    if not a or not b or a != b: problems.append('PUSH_LABEL_TEXT differs between index.html and sw.js')
+    m1 = re.search(r"const PUSH_META_CACHE = '([^']+)'", js); m2 = re.search(r"const PUSH_META_CACHE = '([^']+)'", sw)
+    if not (m1 and m2) or m1.group(1) != m2.group(1) or re.match(r'^maxgainz-v\d+$', m1.group(1)):
+        problems.append('PUSH_META_CACHE must be identical in index.html and sw.js and not look like a shell cache')
+    # (a) static: the card is behind the flag; permission is only asked from the tap handler
+    rc = extract_decl(js, 'renderRemindersCard') or ''
+    if "_p4FlagOn('reminders')" not in rc: problems.append('renderRemindersCard is not behind the ?p4=reminders flag')
+    if '<div id="remindersCard" hidden></div>' not in html: problems.append('#remindersCard must start hidden')
+    for fn in re.findall(r'function\s+(\w+)\s*\(', js):
+        body = extract_decl(js, fn) or ''
+        if ('requestPermission(' in body or 'pushManager.subscribe(' in body) and fn not in ('requestNotificationPermission', 'pushToggleReminders', '_pushSubscribe'):
+            problems.append(f'{fn} asks for notification permission or subscribes outside the opt-in tap')
+    # permission / subscribe only inside the opt-in handlers (any syntax: scan every call site)
+    decls = [(m.start(), m.group(1)) for m in re.finditer(r'\n(?:async\s+)?function\s+(\w+)\s*\(', js)]
+    def _owner(pos):
+        own = None
+        for st, nm in decls:
+            if st < pos: own = nm
+            else: break
+        return own
+    for pat in ['requestPermission(', 'pushManager.subscribe(']:
+        for m in re.finditer(re.escape(pat), js):
+            fn = _owner(m.start())
+            if fn not in ('requestNotificationPermission', 'pushToggleReminders', '_pushSubscribe'):
+                problems.append(f'{pat} called inside {fn} (only the opt-in tap handlers may ask or subscribe)')
+    for nm in ['pushToggleReminders', '_pushSubscribe']:
+        for m in re.finditer(r'\b' + nm + r'\(', js):
+            line_start = js.rfind('\n', 0, m.start()) + 1
+            ctx = js[line_start:m.start()]
+            if re.match(r'\s*(async\s+)?function\s+$', ctx): continue        # the definition
+            if 'onclick="' in ctx and ctx.rfind('onclick="') > ctx.rfind('"', 0, ctx.rfind('onclick="') + 1): continue
+            if nm == '_pushSubscribe' and _owner(m.start()) in ('pushToggleReminders', '_pushSyncPrefs'): continue
+            problems.append(f'{nm}() is called outside a tap handler (in {_owner(m.start())})')
+    # sign-out clears this account's reminder settings and the device's counts
+    lo = extract_decl(js, 'authLogout') or ''
+    if 'localStorage.removeItem(PUSH_PREFS_KEY)' not in lo or 'caches.delete(PUSH_META_CACHE)' not in lo:
+        problems.append('authLogout must remove PUSH_PREFS_KEY and the PUSH_META_CACHE counts')
+    if '_pushSwOk === false' not in rc:
+        problems.append('renderRemindersCard must re-check a "no" from the service worker (it may take control later)')
+    # manifest (iOS needs it for Home Screen web apps)
+    man_path = os.path.join(root, 'manifest.webmanifest')
+    try:
+        man = json.load(open(man_path, encoding='utf-8'))
+        if man.get('display') not in ('standalone', 'fullscreen') or not man.get('icons') or man.get('start_url') != '/':
+            problems.append('manifest.webmanifest must be standalone with icons and start_url "/"')
+    except Exception as e:
+        problems.append('manifest.webmanifest missing or invalid: ' + str(e)[:80])
+    if '<link rel="manifest" href="/manifest.webmanifest">' not in html: problems.append('index.html does not link the manifest')
+    # in-app alert copy stays honest
+    if 'Allow alerts when you open the app' not in html or 'never sent while the app is closed' not in html:
+        problems.append('in-app alert copy must say it only appears when the app is open')
+    # pure logic (JXA)
+    pieces = []
+    for c in P4_CONSTS:
+        line = extract_const_line(js, c)
+        if not line: problems.append(f'const {c} not found'); continue
+        pieces.append(line)
+    for fn in P4_PURE:
+        src = extract_decl(js, fn)
+        if not src: problems.append(f'function {fn} not found'); continue
+        pieces.append(src)
+    cc = extract_const_object(js, '_PUSH_CAP_COPY')
+    if not cc: problems.append('const _PUSH_CAP_COPY not found')
+    else: pieces.append(cc)
+    if not problems:
+        out, _ = run_jxa('\n'.join(pieces) + '\n' + P4_PURE_ASSERTIONS)
+        try: fails = json.loads(out)
+        except Exception: fails = ['pure-logic runner errored: ' + out[:300]]
+        problems += fails
+        if not fails: print('  ✓ opt-in defaults off; labels only from the fixed list; capability matrix (iOS install / in-app browser / old iOS / unsupported / blocked / old worker / signed out); toggle only when deliverable')
+        dom = []
+        for fn in ['renderRemindersCard', '_pushOpenToday', '_pushLoadPrefs', '_p4FlagOn', '_pushPathDays']:
+            src = extract_decl(js, fn)
+            if not src: problems.append(f'function {fn} not found')
+            else: dom.append(src)
+        if len(dom) == 5:
+            out2, _ = run_jxa('\n'.join(pieces) + '\n' + '\n'.join(dom) + '\n' + P4_DOM_ASSERTIONS)
+            try: f3 = json.loads(out2)
+            except Exception: f3 = ['card runner errored: ' + out2[:300]]
+            problems += f3
+            if not f3: print('  ✓ card hidden without the flag (but never hides the off switch); a tap never leaves the workout screen')
+    # sw.js (jsc)
+    if not os.path.exists(JSC): problems.append(f'jsc not found at {JSC}')
+    elif sw:
+        sw_base = SW_STUBS + P4_SW_EXTRA_STUBS + sw.replace("self.addEventListener('install'", "self.addEventListener('install_disabled'") + '\n'
+        f2 = _run_jsc_scenarios(sw_base, P4_SW_SCENARIOS)
+        problems += ['sw.js: ' + f for f in f2]
+        if not f2: print('  ✓ sw.js shows only its own fixed text (injected names/weights/notes/markup never reach a notification); tap opens Today in this app only; counts kept on device')
+    for p in problems: print('  ✗ ' + p)
+    return not problems
+
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/22] parse')
+    print('[1/23] parse')
     p = gate_parse(js)
-    print('[2/22] invariants')
+    print('[2/23] invariants')
     inv = gate_invariants(js)
-    print('[3/22] video map')
+    print('[3/23] video map')
     vm = gate_videomap(js)
-    print('[4/22] inline handler wiring')
+    print('[4/23] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/22] auth log hygiene')
+    print('[5/23] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/22] sign-out scrub')
+    print('[6/23] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/22] safe rendering of user text')
+    print('[7/23] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/22] sync honesty')
+    print('[8/23] sync honesty')
     sy = gate_sync(js)
-    print('[9/22] media fallback + reminder copy')
+    print('[9/23] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/22] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/23] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/22] core-journey accessibility (session + dialogs)')
+    print('[11/23] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/22] Start today (first-use flow) + shortened Path wizard')
+    print('[12/23] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/22] simplified navigation (flagged)')
+    print('[13/23] simplified navigation (flagged)')
     nv = gate_nav_v2(html, js)
-    print('[14/22] Progress weekly briefing')
+    print('[14/23] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/22] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/23] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/22] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/23] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/22] Phase 2 typed sets (preview before save)')
+    print('[17/23] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
-    print('[18/22] Phase 2 weekly AI recap + measurement')
+    print('[18/23] Phase 2 weekly AI recap + measurement')
     rc = gate_recap(html, js)
-    print('[19/22] Phase 3 offline media (download, cache versioning, fallback order)')
+    print('[19/23] Phase 3 offline media (download, cache versioning, fallback order)')
     om = gate_offline_media(html, js)
-    print('[20/22] Phase 3 programme discovery (metadata, finder, why, switch preview)')
+    print('[20/23] Phase 3 programme discovery (metadata, finder, why, switch preview)')
     dc = gate_discovery(html, js)
-    print('[21/22] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
+    print('[21/23] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
     sh = gate_sharing(html, js)
-    print('[22/22] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
+    print('[22/23] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
     lf = gate_leftovers(html, js)
+    print('[23/23] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
+    rm = gate_reminders(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 
