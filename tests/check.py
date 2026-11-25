@@ -3762,6 +3762,7 @@ OFFLINE_FNS = ['isLibraryProgramme', 'getLibraryProgramme', '_p3FlagsFromQuery',
                '_offlineMediaSet', '_offlineSetBytes', '_offlineCacheKey', '_offlineParseKey',
                '_offlineStaleKeys', '_offlineStatus', '_offlineSpaceCheck', '_offlineStateLoad',
                '_offlineStateGet', '_offlineStatePut', '_offlineProgKey', '_offlineSetForKey',
+               '_offlineExFiles', '_offlineCoverage', '_offlineCovLine', '_offlineRemovePreview',
                '_offlinePathsToRemove', '_offlineNeededPaths', '_exMediaUrl', '_offlineFmtMB', '_offlineHasCacheApi', '_offlineReadCache',
                '_offlineDeletePaths', '_offlineSha8', '_offlineIsQuota', '_offlineFetchOne',
                'offlineDownload', 'offlineAddVideo', 'offlineCancel', '_offlineRemoveKey', '_offlineMetric', '_offlineIsOffline',
@@ -3797,7 +3798,7 @@ function isPathActive(){ return !!userPath && userPath.status !== 'completed'; }
 var todayProg = 'ULF';
 var sessStartTime = null;
 var _offlineCached = null, _offlineJob = null, _offlineTier = 'images', _offlineLastMsg = '';
-var _offlineCacheErr = false, _offlineSwOk = null, _offlineStaleSeen = new Set(), _offlineOtherSnap = [];
+var _offlineCacheErr = false, _offlineSwOk = null, _offlineStaleSeen = new Set(), _offlineOtherSnap = [], _offlineCovOpen = false, _offlineConfirmKey = null;
 function _progDisplayName(k){ return k; }
 // ── Cache API stub (absolute keys, like the browser) ──
 var CFG = { quotaAt: null, puts: 0, corrupt: {}, short: {}, fail404: {}, abortAfter: null, fetched: [] };
@@ -4154,6 +4155,23 @@ def _offline_manifest_ok(js, root):
     return have == want
 
 
+def _offline_base(js):
+    pieces = []; missing = []
+    for n in OFFLINE_CONSTS_OBJ:
+        s = extract_const_object(js, n); (pieces.append(s) if s else missing.append(n))
+    for n in OFFLINE_CONSTS_ARR:
+        s = extract_const_array(js, n); (pieces.append(s) if s else missing.append(n))
+    for n in OFFLINE_CONSTS_LINE:
+        s = extract_const_line(js, n); (pieces.append(s) if s else missing.append(n))
+    ml = re.search(r'const EX_MEDIA_LOOPS = new Set\(\[[\s\S]*?\]\);', js)
+    if ml: pieces.append(ml.group(0))
+    else: missing.append('EX_MEDIA_LOOPS')
+    for n in OFFLINE_FNS:
+        s = extract_decl(js, n)
+        if s and js[max(0, js.find(s) - 6):js.find(s)].endswith('async '): s = 'async ' + s
+        (pieces.append(s) if s else missing.append(n))
+    return '\n'.join(pieces).replace('const ', 'var ') + '\n' + OFFLINE_STUBS, missing
+
 def gate_offline_media(html, js, sw=None, root=None):
     ok_all = True
     root = root or ROOT
@@ -4176,23 +4194,9 @@ def gate_offline_media(html, js, sw=None, root=None):
     if fails: ok_all = False
     else: print('  ✓ sw.js: downloads served (incl. byte ranges, 416), misses never cached, ExerciseDB//api/Supabase untouched, activate spares the download')
     # (c)+(d)+(e) index.html logic
-    pieces = []; missing = []
-    for n in OFFLINE_CONSTS_OBJ:
-        s = extract_const_object(js, n); (pieces.append(s) if s else missing.append(n))
-    for n in OFFLINE_CONSTS_ARR:
-        s = extract_const_array(js, n); (pieces.append(s) if s else missing.append(n))
-    for n in OFFLINE_CONSTS_LINE:
-        s = extract_const_line(js, n); (pieces.append(s) if s else missing.append(n))
-    ml = re.search(r'const EX_MEDIA_LOOPS = new Set\(\[[\s\S]*?\]\);', js)
-    if ml: pieces.append(ml.group(0))
-    else: missing.append('EX_MEDIA_LOOPS')
-    for n in OFFLINE_FNS:
-        s = extract_decl(js, n)
-        if s and js[max(0, js.find(s) - 6):js.find(s)].endswith('async '): s = 'async ' + s
-        (pieces.append(s) if s else missing.append(n))
+    base, missing = _offline_base(js)
     if missing:
         print(f'  ✗ could not extract {missing}'); return False
-    base = '\n'.join(pieces).replace('const ', 'var ') + '\n' + OFFLINE_STUBS
     # pure
     script = base + '\nprint((function(){ try { ' + OFFLINE_PURE.replace('JSON.stringify(fails);', 'return JSON.stringify(fails);') + ' } catch(e){ return JSON.stringify(["threw " + e + " " + (e.stack||"")]); } })());'
     with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as t:
@@ -6556,70 +6560,163 @@ def gate_a11y_product(html, js):
     for p in problems: print('  ✗ ' + p)
     return not problems
 
+# ── Gate 30: offline coverage explained (Priority 4) ──────────────────────
+OFFLINE_COV = r"""
+var P = [];
+function eq(l, g, w){ if(JSON.stringify(g) !== JSON.stringify(w)) P.push(l + ' — got ' + JSON.stringify(g) + ', want ' + JSON.stringify(w)); }
+function ok(l, c){ if(!c) P.push(l); }
+var F = function(p, h, z){ return { path:p, hash:h || 'aaaaaaaa', size:z || 100 }; };
+var LK = { A:{ img:[F('A/0.jpg'), F('A/1.jpg')], loop:F('A/loop.mp4', 'bbbbbbbb', 1000), online:true, cues:'specific' },
+           B:{ img:[F('B/0.jpg'), F('B/1.jpg')], loop:null, online:false, cues:'specific' },
+           C:{ img:[], loop:null, online:true, cues:'specific' },
+           D:{ img:[], loop:null, online:false, cues:'general' } };
+var look = function(n){ return LK[n]; }, N = ['A', 'B', 'C', 'D'];
+function M(paths){ var m = new Map(); paths.forEach(function(p){ m.set(p[0], p[1] || 'aaaaaaaa'); }); return m; }
+// all-image download
+var ci = _offlineCoverage(N, 'images', null, look);
+eq('images tier: what the download gives', [ci.planned, ci.total], [{ video:0, images:2, text:2 }, 4]);
+eq('unknown cache: nothing claimed as saved', [ci.now, ci.rows.map(function(r){ return r.saved; })], [{ video:0, images:0, text:4 }, [false, false, true, true]]);
+var all = M([['A/0.jpg'], ['A/1.jpg'], ['B/0.jpg'], ['B/1.jpg']]);
+eq('all images saved', _offlineCoverage(N, 'images', all, look).now, { video:0, images:2, text:2 });
+// full download with video loops
+var cf = _offlineCoverage(N, 'full', null, look);
+eq('full tier: loops where they exist', cf.planned, { video:1, images:1, text:2 });
+eq('full tier bytes per exercise', cf.rows.map(function(r){ return r.bytes; }), [1200, 200, 0, 0]);
+eq('images saved but loop missing → images now, full not saved', [_offlineCoverage(N, 'full', all, look).now.video, _offlineCoverage(N, 'full', all, look).rows[0].saved], [0, false]);
+var withLoop = M([['A/0.jpg'], ['A/1.jpg'], ['A/loop.mp4', 'bbbbbbbb'], ['B/0.jpg'], ['B/1.jpg']]);
+eq('loop saved → video now', _offlineCoverage(N, 'full', withLoop, look).now, { video:1, images:1, text:2 });
+// mixed self-hosted / external: external is never "downloaded"
+eq('online-only demo counts as text offline', [cf.rows[2].planned, cf.rows[2].now, cf.onlineOnly], ['text', 'text', 1]);
+// stale cache / corrupt or half-saved files are not counted
+eq('stale hash not counted', _offlineCoverage(N, 'images', M([['A/0.jpg', 'ffffffff'], ['A/1.jpg']]), look).now.images, 0);
+eq('"stale" marker not counted', _offlineCoverage(N, 'images', M([['B/0.jpg', 'stale'], ['B/1.jpg']]), look).now.images, 0);
+eq('one frame of two is not "images"', _offlineCoverage(N, 'images', M([['B/0.jpg']]), look).rows[1].now, 'text');
+// text fallback for every exercise
+ok('every exercise has cues (specific or general)', cf.rows.every(function(r){ return r.cues === 'specific' || r.cues === 'general'; }) && cf.generalCues === 1);
+eq('a lookup that knows nothing → text', _offlineCoverage(['Z'], 'full', null, function(){ return null; }).rows[0], { name:'Z', planned:'text', now:'text', saved:true, online:false, cues:'general', bytes:0 });
+eq('count line', [_offlineCovLine({ video:1, images:26, text:7 }), _offlineCovLine({ video:0, images:0, text:0 })], ['1 with a video loop · 26 with images · 7 with text cues only', 'no exercises']);
+// real data: ULF with the real manifest
+var names = _offlineProgrammeNames('ULF', null), ri = _offlineCoverage(names, 'images', null, _offlineExFiles), rf = _offlineCoverage(names, 'full', null, _offlineExFiles);
+ok('ULF: every exercise is listed', ri.total === names.length && names.length > 20);
+ok('ULF: images tier never promises video', ri.planned.video === 0);
+ok('ULF: full tier adds loops only where files exist', rf.planned.video > 0 && rf.planned.video + rf.planned.images === ri.planned.images);
+ok('ULF: coverage bytes never exceed the download', rf.rows.reduce(function(a, r){ return a + r.bytes; }, 0) <= _offlineSetBytes(_offlineSetForKey('ULF', 'full')));
+ok('ULF: text rows carry no bytes', rf.rows.filter(function(r){ return r.planned === 'text'; }).every(function(r){ return r.bytes === 0; }));
+// removal preview: only cached files no other download needs
+LS[OFFLINE_STATE_KEY] = JSON.stringify({ v:1, progs:{ ULF:{ tier:'images', at:1 }, PPL:{ tier:'images', at:1 } } });
+var st = _offlineStateGet(), cache = new Map();
+_offlineSetForKey('ULF', 'images').concat(_offlineSetForKey('PPL', 'images')).forEach(function(f){ cache.set(f.path, f.hash); });
+var pv = _offlineRemovePreview(st, 'ULF', cache);
+var ulfOnly = _offlineSetForKey('ULF', 'images').filter(function(f){ return !_offlineSetForKey('PPL', 'images').some(function(g){ return g.path === f.path; }); });
+eq('remove preview: exactly the ULF-only files', [pv.files, pv.bytes], [ulfOnly.length, _offlineSetBytes(ulfOnly)]);
+eq('remove preview names who shares', pv.sharedWith, ['PPL']);
+eq('nothing cached → nothing to free', _offlineRemovePreview(st, 'ULF', null).files, 0);
+// the card
+_offlineSwOk = true; _offlineCached = cache; LS[OFFLINE_STATE_KEY] = JSON.stringify({ v:1, progs:{ ULF:{ tier:'images', at:1 }, PPL:{ tier:'images', at:1 } } });
+userPath = { programme:'ULF', status:'active' };
+var c1 = _offlineCardInner();
+ok('ready card: coverage line + View coverage control', /In the gym without signal: /.test(c1) && /aria-expanded="false" aria-controls="offlineCovList"/.test(c1) && !/offlineCovList"/.test(c1.replace('aria-controls="offlineCovList"', '')));
+_offlineCovOpen = true; var c2 = _offlineCardInner();
+ok('coverage list: grouped, every exercise listed', /aria-expanded="true"/.test(c2) && /id="offlineCovList"/.test(c2) && (c2.match(/<li>/g) || []).length === names.length && /Online-only demos are never stored/.test(c2));
+_offlineConfirmKey = 'ULF'; var c3 = _offlineCardInner();
+ok('remove asks first and says what goes and what stays', /role="alertdialog"/.test(c3) && /onclick="offlineRemoveConfirm\(\)"/.test(c3) && /onclick="offlineRemoveCancel\(\)"/.test(c3) && /also use stay/.test(c3) && /not affected/.test(c3) && !/onclick="offlineRemoveActive\(\)"/.test(c3));
+_offlineConfirmKey = null; _offlineCovOpen = false; delete LS[OFFLINE_STATE_KEY]; _offlineCached = new Map();
+var c4 = _offlineCardInner();
+ok('before download: what you will have, per tier', /id="offlineCovSummary"/.test(c4) && /After download, in the gym without signal: /.test(c4) && (ri.planned.text ? /show text cues — those work for every exercise/.test(c4) : !/show text cues/.test(c4)));
+_offlineCached = null; var c5 = _offlineCardInner();
+ok('unknown cache never claims coverage', /Checking this device/.test(c5) && !/In the gym without signal/.test(c5));
+JSON.stringify(P);
+"""
+
+def gate_offline_coverage(html, js):
+    problems = []
+    base, missing = _offline_base(js)
+    if missing: problems.append(f'could not extract {missing}')
+    else:
+        script = base + '\nprint((function(){ try { ' + OFFLINE_COV.replace('JSON.stringify(P);', 'return JSON.stringify(P);') + ' } catch(e){ return JSON.stringify(["threw " + e + " " + (e.stack||"")]); } })());'
+        with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as t:
+            t.write(script); path = t.name
+        try:
+            out = subprocess.run([JSC, path], capture_output=True, text=True, timeout=120)
+            raw = (out.stdout.strip() or out.stderr.strip()).split('\n')[-1]
+        finally: os.unlink(path)
+        try: problems += json.loads(raw)
+        except Exception: problems.append('coverage runner errored: ' + raw[:300])
+    ci = extract_decl(js, '_offlineCardInner') or ''
+    if '${esc(r.name)}' not in ci or '${esc(_offlineCovLine(cov.now))}' not in ci: problems.append('exercise names and coverage lines must be escaped')
+    for fn, need in [('offlineRemoveActive', '_offlineConfirmKey = k'), ('offlineRemoveConfirm', '_offlineRemoveKey(k)'), ('offlineRemoveCancel', '_offlineConfirmKey = null'), ('offlineToggleCoverage', '_offlineCovOpen = !_offlineCovOpen')]:
+        if need not in (extract_decl(js, fn) or ''): problems.append(f'{fn} must {need}')
+    if '_offlineRemoveKey' in (extract_decl(js, 'offlineRemoveActive') or ''): problems.append('Remove must ask before deleting')
+    if not problems: print('  ✓ per-exercise coverage (video loop / images / text) before and after download; external demos never counted; stale/corrupt/half files not counted; text cues for all; removal preview; escaped card')
+    for p in problems: print('  ✗ ' + p)
+    return not problems
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/29] parse')
+    print('[1/30] parse')
     p = gate_parse(js)
-    print('[2/29] invariants')
+    print('[2/30] invariants')
     inv = gate_invariants(js)
-    print('[3/29] video map')
+    print('[3/30] video map')
     vm = gate_videomap(js)
-    print('[4/29] inline handler wiring')
+    print('[4/30] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/29] auth log hygiene')
+    print('[5/30] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/29] sign-out scrub')
+    print('[6/30] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/29] safe rendering of user text')
+    print('[7/30] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/29] sync honesty')
+    print('[8/30] sync honesty')
     sy = gate_sync(js)
-    print('[9/29] media fallback + reminder copy')
+    print('[9/30] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/29] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/30] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/29] core-journey accessibility (session + dialogs)')
+    print('[11/30] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/29] Start today (first-use flow) + shortened Path wizard')
+    print('[12/30] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/29] simplified navigation (default, reversible, one-time notice)')
+    print('[13/30] simplified navigation (default, reversible, one-time notice)')
     nv = gate_nav_v2(html, js)
-    print('[14/29] Progress weekly briefing')
+    print('[14/30] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/29] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/30] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/29] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/30] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/29] Phase 2 typed sets (preview before save)')
+    print('[17/30] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
-    print('[18/29] Phase 2 weekly AI recap + measurement')
+    print('[18/30] Phase 2 weekly AI recap + measurement')
     rc = gate_recap(html, js)
-    print('[19/29] Phase 3 offline media (download, cache versioning, fallback order)')
+    print('[19/30] Phase 3 offline media (download, cache versioning, fallback order)')
     om = gate_offline_media(html, js)
-    print('[20/29] Phase 3 programme discovery (metadata, finder, why, switch preview)')
+    print('[20/30] Phase 3 programme discovery (metadata, finder, why, switch preview)')
     dc = gate_discovery(html, js)
-    print('[21/29] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
+    print('[21/30] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
     sh = gate_sharing(html, js)
-    print('[22/29] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
+    print('[22/30] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
     lf = gate_leftovers(html, js)
-    print('[23/29] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
+    print('[23/30] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
     rm = gate_reminders(html, js)
-    print('[24/29] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
+    print('[24/30] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
     rs = gate_reminders_server(html, js)
-    print('[25/29] Profile & settings information model (flagged)')
+    print('[25/30] Profile & settings information model (flagged)')
     pv = gate_profile_v2(html, js)
-    print('[26/29] rollout registry + configuration in Data health')
+    print('[26/30] rollout registry + configuration in Data health')
     ro = gate_rollout(html, js)
-    print('[27/29] Today headline metric (context-sensitive, pinnable)')
+    print('[27/30] Today headline metric (context-sensitive, pinnable)')
     tm = gate_today_metric(html, js)
-    print('[28/29] authentication forms (Enter, password managers, errors, local data kept)')
+    print('[28/30] authentication forms (Enter, password managers, errors, local data kept)')
     af = gate_auth_forms(html, js)
-    print('[29/29] product-wide accessibility (click targets, state, dialog names)')
+    print('[29/30] product-wide accessibility (click targets, state, dialog names)')
     ax = gate_a11y_product(html, js)
+    print('[30/30] offline coverage explained (what works in the gym, what removal deletes)')
+    oc = gate_offline_coverage(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af and ax:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af and ax and oc:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 

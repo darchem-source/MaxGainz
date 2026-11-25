@@ -5328,7 +5328,7 @@ function saveLocalFallback() { saveLocalCache(); }
 // still decide behaviour; gate 26 runs them against this registry so the two
 // can never disagree. mode: 'optIn' = on only when the key is '1';
 // 'optOut' = on unless the key is '0'. requires = another entry that must be on.
-const APP_VERSION = '2026.11.25.5';   // bump on every production push (shown in Data health)
+const APP_VERSION = '2026.11.25.6';   // bump on every production push (shown in Data health)
 const ROLLOUT_REGISTRY = [
   { id:'nav_v2', key:'maxgainz_nav_v2', mode:'optOut', label:'Simplified navigation',
     audience:'Everyone since 25 Nov 2026 (existing users get a one-time notice)', killSwitch:"Profile → Simplified navigation: Off, or 'Use classic navigation' on the notice (stores '0')",
@@ -20321,6 +20321,8 @@ let _offlineCacheErr = false; // the Cache API exists but refused us (private mo
 let _offlineSwOk = null;     // does the CONTROLLING service worker serve the media cache? null = not checked
 let _offlineStaleSeen = new Set(); // paths purged this page-load because the app shipped a newer version
 let _offlineOtherSnap = [];  // the "Also on this device" keys exactly as last drawn (Remove buttons index into it)
+let _offlineCovOpen = false; // "View coverage" list expanded
+let _offlineConfirmKey = null; // programme whose Remove is waiting for confirmation
 const OFFLINE_JOB_KEY = 'maxgainz_offline_job'; // cross-tab heartbeat while a download runs
 
 // Pure: rollout flags from a ?p3= query value. 'all'/'1' → every Phase 3
@@ -20504,6 +20506,54 @@ function _offlinePathsToRemove(state, key){
   Object.keys(state.progs).forEach(k => { if(k !== key) _offlineSetForKey(k, state.progs[k].tier).forEach(f => keep.add(f.path)); });
   const mine = state.progs[key] ? _offlineSetForKey(key, 'full') : [];
   return mine.map(f => f.path).filter(p => !keep.has(p));
+}
+// ── Offline coverage (Priority 4): what each exercise has in the gym ──
+// Pure: the self-hosted files one exercise can use offline, and what it has
+// besides. External demos (ExerciseDB video/GIF) are online-only and never
+// counted as downloadable. Every exercise always has text cues (its own or
+// general ones), so the worst case offline is "text cues".
+function _offlineExFiles(name){
+  const e = _exVideoEntry(name, EX_VIDEO_MAP);
+  const row = e ? EX_MEDIA_FILES[e.slug] : null;
+  const f = file => { const sl = OFFLINE_FILE_SLOTS.find(x => x[0] === file); return row && sl && row[sl[1]] > 0 ? { path:e.slug + '/' + file, size:row[sl[1]], hash:row[sl[1] + 1] } : null; };
+  const img = row ? [f('0.jpg'), f('1.jpg')].filter(Boolean) : [];
+  const loop = row && EX_MEDIA_LOOPS.has(e.slug) ? f('loop.mp4') : null;
+  const own = o => !!o && Object.prototype.hasOwnProperty.call(o, name);
+  let db = null; try { db = typeof _findEXDBEntry === 'function' ? _findEXDBEntry(name) : null; } catch(err){ db = null; }
+  return { img, loop, online: own(typeof EX_V2_ID_MAP === 'object' ? EX_V2_ID_MAP : null) || own(typeof EX_GIF_MAP === 'object' ? EX_GIF_MAP : null),
+    cues: db && Array.isArray(db.cues) && db.cues.length ? 'specific' : 'general' };
+}
+// Pure: per-exercise coverage at a tier. lookup = _offlineExFiles (injectable).
+// planned = what the download gives; now = what works offline with this cache
+// (null cache = unknown → nothing counted as saved).
+function _offlineCoverage(names, tier, cached, lookup){
+  const has = f => !!cached && !!f && cached.get(f.path) === f.hash;
+  const rows = (names || []).map(name => {
+    const L = lookup(name) || { img:[], loop:null, online:false, cues:'general' };
+    const img = Array.isArray(L.img) ? L.img : [];
+    const planned = tier === 'full' && L.loop && img.length ? 'video' : img.length ? 'images' : 'text';
+    const imgsSaved = img.length > 0 && img.every(has);
+    const now = imgsSaved && L.loop && has(L.loop) ? 'video' : imgsSaved ? 'images' : 'text';
+    const need = planned === 'video' ? img.concat([L.loop]) : planned === 'images' ? img : [];
+    return { name, planned, now, saved: need.every(has), online: !!L.online, cues: L.cues === 'specific' ? 'specific' : 'general', bytes: need.reduce((a, f) => a + f.size, 0) };
+  });
+  const count = k => ({ video: rows.filter(r => r[k] === 'video').length, images: rows.filter(r => r[k] === 'images').length, text: rows.filter(r => r[k] === 'text').length });
+  return { rows, total: rows.length, planned: count('planned'), now: count('now'), generalCues: rows.filter(r => r.cues === 'general').length,
+    onlineOnly: rows.filter(r => r.planned === 'text' && r.online).length };
+}
+// Pure: one line of counts, e.g. "12 with video loops · 26 with images · 7 text cues only".
+function _offlineCovLine(c){
+  const part = (n, one, many) => n ? n + ' ' + (n === 1 ? one : many) : '';
+  return [part(c.video, 'with a video loop', 'with video loops'), part(c.images, 'with images', 'with images'), part(c.text, 'with text cues only', 'with text cues only')].filter(Boolean).join(' · ') || 'no exercises';
+}
+// Pure: what Remove would delete for `key`: only files the cache holds and no
+// other recorded download needs. { files, bytes, sharedWith:[keys] }.
+function _offlineRemovePreview(state, key, cached){
+  const paths = _offlinePathsToRemove(state, key).filter(p => !!cached && cached.has(p) && cached.get(p) !== 'stale');
+  const sizeOf = p => { const [id, f] = p.split('/'); const row = EX_MEDIA_FILES[id]; const sl = OFFLINE_FILE_SLOTS.find(x => x[0] === f); return row && sl ? row[sl[1]] || 0 : 0; };
+  const mine = new Set(state.progs[key] ? _offlineSetForKey(key, 'full').map(f => f.path) : []);
+  const sharedWith = Object.keys(state.progs).filter(k => k !== key && _offlineSetForKey(k, state.progs[k].tier).some(f => mine.has(f.path))).sort();
+  return { files: paths.length, bytes: paths.reduce((a, p) => a + sizeOf(p), 0), sharedWith };
 }
 function _offlineFmtMB(bytes){
   if(bytes >= 1e9) return (Math.round(bytes / 1e8) / 10) + ' GB';
@@ -20697,9 +20747,14 @@ async function _offlineRemoveKey(key){
   _offlineRenderCard();
   if(typeof showToast === 'function') showToast('Offline media removed');
 }
-function offlineRemoveActive(){ const k = _offlineProgKey(); if(k) _offlineRemoveKey(k); }
+// Remove asks first and says exactly what goes (and what stays).
+function offlineRemoveActive(){ const k = _offlineProgKey(); if(k && !_offlineJob){ _offlineConfirmKey = k; _offlineRenderCard(); _offlineFocus('offlineRemoveYes'); } }
 // Index-based so no programme name ever reaches an inline handler.
-function offlineRemoveOther(i){ const k = _offlineOtherSnap[i]; if(k && _offlineStateGet().progs[k]) _offlineRemoveKey(k); }
+function offlineRemoveOther(i){ const k = _offlineOtherSnap[i]; if(k && _offlineStateGet().progs[k] && !_offlineJob){ _offlineConfirmKey = k; _offlineRenderCard(); _offlineFocus('offlineRemoveYes'); } }
+function offlineRemoveConfirm(){ const k = _offlineConfirmKey; _offlineConfirmKey = null; if(k) _offlineRemoveKey(k); }
+function offlineRemoveCancel(){ _offlineConfirmKey = null; _offlineRenderCard(); _offlineFocus('offlineCovBtn'); }
+function offlineToggleCoverage(){ _offlineCovOpen = !_offlineCovOpen; _offlineRenderCard(); _offlineFocus('offlineCovBtn'); }
+function _offlineFocus(id){ const b = document.getElementById(id); if(b) b.focus(); }
 function _offlineOtherKeys(){ const a = _offlineProgKey(); return Object.keys(_offlineStateGet().progs).filter(k => k !== a).sort(); }
 function _offlineKeyName(k){
   if(k.indexOf('HIIT:') === 0){ const s = (typeof HIIT_SERIES === 'object' && HIIT_SERIES) ? HIIT_SERIES[k.slice(5)] : null; return s ? s.name : 'HIIT'; }
@@ -20723,6 +20778,9 @@ function _offlineCardInner(){
   const files = tierNow === 'full' ? full : imgs;
   const s = _offlineStatus(files, _offlineCached);
   const name = esc(_offlineKeyName(key));
+  const exNames = key.indexOf('HIIT:') === 0 ? _offlineProgrammeNames('HIIT', key.slice(5)) : _offlineProgrammeNames(key, null);
+  const cov = _offlineCoverage(exNames, tierNow, _offlineCached, _offlineExFiles);
+  const covNow = `<div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.45;">In the gym without signal: ${esc(_offlineCovLine(cov.now))} (of ${cov.total} exercises).</div>`;
   let status, actions = '';
   const btn = 'padding:10px 14px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;';
   const btnUpd = `<button type="button" class="btn-p" onclick="offlineApplyUpdate()" style="${btn}">Update the app</button>`;
@@ -20739,25 +20797,46 @@ function _offlineCardInner(){
       <div id="offlineProgText" aria-live="polite" style="font-size:12px;color:var(--text2);margin-bottom:10px;">${_offlineProgText(j)}</div>`;
     actions = `<button type="button" onclick="offlineCancel()" style="${btn}background:transparent;border:0.5px solid var(--border);color:var(--text);">Cancel</button>`;
   } else if(mine && s.state === 'ready'){
-    status = `<div style="font-size:13px;margin-bottom:10px;"><span style="color:var(--green);font-weight:800;">✓ Available offline</span> · ${name} · ${tierNow === 'full' ? 'images + video' : 'images'} · ${_offlineFmtMB(_offlineSetBytes(files))}</div>`;
+    status = `<div style="font-size:13px;margin-bottom:6px;"><span style="color:var(--green);font-weight:800;">✓ Available offline</span> · ${name} · ${tierNow === 'full' ? 'images + video' : 'images'} · ${_offlineFmtMB(_offlineSetBytes(files))}</div>` + covNow;
     actions = (tierNow === 'images' ? `<button type="button" onclick="offlineAddVideo()" style="${btn}background:var(--surface3);border:none;color:var(--text);">Add video (+${_offlineFmtMB(_offlineSetBytes(full) - _offlineSetBytes(imgs))})</button> ` : '')
       + `<button type="button" onclick="offlineRemoveActive()" style="${btn}background:transparent;border:0.5px solid var(--border);color:var(--text);">Remove</button>`;
   } else if(mine && s.state !== 'unknown'){
     const what = s.state === 'update' ? 'Update available' : 'Partly downloaded';
-    status = `<div style="font-size:13px;margin-bottom:10px;"><span style="color:var(--orange);font-weight:800;">${what}</span> · ${s.missing} of ${s.total} files missing (${_offlineFmtMB(s.bytesMissing)}). The browser may have cleared some to save space.</div>`;
+    status = `<div style="font-size:13px;margin-bottom:6px;"><span style="color:var(--orange);font-weight:800;">${what}</span> · ${s.missing} of ${s.total} files missing (${_offlineFmtMB(s.bytesMissing)}). The browser may have cleared some to save space.</div>` + covNow;
     actions = `<button type="button" class="btn-p" onclick="offlineDownload()" style="${btn}">Download ${_offlineFmtMB(s.bytesMissing)}</button> <button type="button" onclick="offlineRemoveActive()" style="${btn}background:transparent;border:0.5px solid var(--border);color:var(--text);">Remove</button>`;
   } else if(s.state === 'unknown'){
     status = `<div style="font-size:13px;color:var(--text2);margin-bottom:10px;">Checking this device…</div>`;
   } else {
     const opt = (t, label, bytes) => `<button type="button" role="radio" aria-checked="${_offlineTier === t}" onclick="offlineSetTier('${t}')" style="${btn}flex:1;text-align:left;border:1px solid ${_offlineTier === t ? 'var(--accent)' : 'var(--border)'};background:${_offlineTier === t ? 'rgba(200,255,0,0.08)' : 'transparent'};color:var(--text);"><div>${label}</div><div style="font-size:11px;font-weight:600;color:var(--text2);">${_offlineFmtMB(bytes)}</div></button>`;
     status = `<div style="font-size:13px;color:var(--text2);margin-bottom:10px;line-height:1.5;">Save the demos for <strong style="color:var(--text);">${name}</strong> on this device so form guides work in a gym with no signal. Logging never needs a connection.</div>
-      <div role="radiogroup" aria-label="Download size" style="display:flex;gap:8px;margin-bottom:10px;">${opt('images', 'Images only', _offlineSetBytes(imgs))}${opt('full', 'Images + video', _offlineSetBytes(full))}</div>`;
+      <div role="radiogroup" aria-label="Download size" style="display:flex;gap:8px;margin-bottom:10px;">${opt('images', 'Images only', _offlineSetBytes(imgs))}${opt('full', 'Images + video', _offlineSetBytes(full))}</div>
+      <div id="offlineCovSummary" aria-live="polite" style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.45;">After download, in the gym without signal: ${esc(_offlineCovLine(cov.planned))} (of ${cov.total} exercises).${cov.planned.text ? ' The rest have no demo files, so they show text cues — those work for every exercise.' : ''}</div>`;
     actions = `<button type="button" class="btn-p" onclick="offlineDownload()" style="${btn}width:100%;">Download for offline (${_offlineFmtMB(_offlineSetBytes(_offlineTier === 'full' ? full : imgs))})</button>`;
   }
+  // Remove confirmation: exactly what goes and what stays.
+  if(_offlineConfirmKey && !_offlineJob && st.progs[_offlineConfirmKey]){
+    const pv = _offlineRemovePreview(st, _offlineConfirmKey, _offlineCached);
+    const cname = esc(_offlineKeyName(_offlineConfirmKey));
+    const shared = pv.sharedWith.length ? ' Files that ' + pv.sharedWith.map(k => esc(_offlineKeyName(k))).join(', ') + ' also use stay.' : '';
+    status = `<div role="alertdialog" aria-labelledby="offlineRemoveQ" aria-describedby="offlineRemoveWhat" style="font-size:13px;margin-bottom:10px;line-height:1.5;">
+      <div id="offlineRemoveQ" style="font-weight:800;margin-bottom:4px;">Remove offline demos for ${cname}?</div>
+      <div id="offlineRemoveWhat" style="color:var(--text2);">Frees ${_offlineFmtMB(pv.bytes)} (${pv.files} file${pv.files === 1 ? '' : 's'}) on this device.${shared} Form cues, your workouts and logging are not affected.</div></div>`;
+    actions = `<button type="button" id="offlineRemoveYes" onclick="offlineRemoveConfirm()" style="${btn}background:var(--red);border:none;color:#fff;">Remove demos</button> <button type="button" onclick="offlineRemoveCancel()" style="${btn}background:transparent;border:0.5px solid var(--border);color:var(--text);">Keep</button>`;
+  }
+  // "View coverage": every exercise, grouped by what it has offline right now (or after download).
+  const showNow = !!mine && s.state !== 'unknown';
+  const groups = [['video', 'Video loop'], ['images', 'Images'], ['text', 'Text cues only']];
+  const covList = _offlineCovOpen ? `<div id="offlineCovList" style="margin-top:10px;font-size:12px;">${groups.map(([lv, lbl]) => {
+      const rs = cov.rows.filter(r => (showNow ? r.now : r.planned) === lv);
+      if(!rs.length) return '';
+      return `<div style="font-weight:800;color:var(--text);margin:8px 0 4px;">${lbl} (${rs.length})</div><ul style="margin:0;padding-left:18px;color:var(--text2);line-height:1.6;">`
+        + rs.map(r => `<li>${esc(r.name)}${lv === 'text' && r.online ? ' <span style="opacity:.8;">— demo needs signal</span>' : ''}${r.cues === 'general' ? ' <span style="opacity:.8;">— general cues</span>' : ''}</li>`).join('') + '</ul>';
+    }).join('')}<div style="color:var(--text2);margin-top:6px;">${showNow ? 'What works on this device right now.' : 'What the download will give you.'} Online-only demos are never stored.</div></div>` : '';
+  const covBtn = cov.total ? `<button type="button" id="offlineCovBtn" onclick="offlineToggleCoverage()" aria-expanded="${_offlineCovOpen}" aria-controls="offlineCovList" style="${btn}padding:8px 0;background:transparent;border:none;color:var(--accent);">${_offlineCovOpen ? 'Hide' : 'View'} coverage (${cov.total} exercises)</button>` : '';
   _offlineOtherSnap = _offlineOtherKeys();
   const others = _offlineOtherSnap.map((k, i) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;color:var(--text2);margin-top:8px;"><span>Also on this device: ${esc(_offlineKeyName(k))}</span><button type="button" onclick="offlineRemoveOther(${i})" style="${btn}padding:6px 10px;font-size:12px;background:transparent;border:0.5px solid var(--border);color:var(--text);">Remove</button></div>`).join('');
   const msg = _offlineLastMsg ? `<div role="status" style="font-size:12px;color:var(--orange);margin-top:8px;">${esc(_offlineLastMsg)}</div>` : '';
-  return title + `<div style="background:var(--surface2);border-radius:14px;padding:14px;">${status}<div style="display:flex;gap:8px;flex-wrap:wrap;">${actions}</div>${msg}${others}<div id="offlineStorage" style="font-size:11px;color:var(--text2);margin-top:10px;"></div></div>`;
+  return title + `<div style="background:var(--surface2);border-radius:14px;padding:14px;">${status}<div style="display:flex;gap:8px;flex-wrap:wrap;">${actions}</div>${msg}${covBtn}${covList}${others}<div id="offlineStorage" style="font-size:11px;color:var(--text2);margin-top:10px;"></div></div>`;
 }
 // The saved tier only becomes 'full' once the video download has succeeded.
 function offlineAddVideo(){ if(_offlineJob) return; _offlineTier = 'full'; offlineDownload(); }
