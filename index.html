@@ -2399,7 +2399,7 @@ details.pf-sec:not([open]){gap:0;}
 // still decide behaviour; gate 26 runs them against this registry so the two
 // can never disagree. mode: 'optIn' = on only when the key is '1';
 // 'optOut' = on unless the key is '0'. requires = another entry that must be on.
-const APP_VERSION = '2026.11.25.15';   // bump on every production push (shown in Data health)
+const APP_VERSION = '2026.11.25.16';   // bump on every production push (shown in Data health)
 const ROLLOUT_REGISTRY = [
   { id:'nav_v2', key:'maxgainz_nav_v2', mode:'optOut', label:'Simplified navigation',
     audience:'Everyone since 25 Nov 2026 (existing users get a one-time notice)', killSwitch:"Profile → Simplified navigation: Off, or 'Use classic navigation' on the notice (stores '0')",
@@ -3844,7 +3844,10 @@ function _buildSessionRecord(input){
     if(done>0){
       const rl=repsLogged[i]||{}, sw=setWeights[i]||{};
       for(let s=0;s<done;s++){
-        const w=sw[s]||ex.weight||0;
+        // Same sanitising as the setLog weight below: object/string weights
+        // (some HIIT definitions) count as 0 instead of making volume NaN.
+        const _w=sw[s]||ex.weight||0;
+        const w=(typeof _w==='number'&&isFinite(_w)&&_w>=0)?_w:0;
         const r=rl[s]||parseInt((ex.reps||'8').split('–')[0])||8;
         volume+=w*r;
       }

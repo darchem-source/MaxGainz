@@ -7301,15 +7301,14 @@ SESSION_MODULE_SCENARIOS = {
     'saved record: logged weights, rep fallback, bodyweight, rest, RPE, notes, top lifts': r"""
       const exs = [{ name: 'Bench', weight: 90, reps: '8–10', sets: 3 }, { name: 'Dips', weight: 0, reps: '10', bw: true, sets: 2 },
         { name: 'Row', weight: 50, reps: '8–10', sets: 3 }, { name: 'Curl', weight: 12, reps: '12', sets: 3 }, { name: 'Odd', weight: { kg: '12-15' }, reps: '10', sets: 1 }];
-      // 'Odd' (object weight, as some HIIT definitions have) is left out of the
-      // volume case: it makes volume NaN — known, kept as-is in slice 3b (no behaviour change).
+      // 'Odd' (object weight, as some HIIT definitions have) must count as 0 volume, not NaN.
       const r = _buildSessionRecord({ sessExs: exs, setsDone: { 0: [0, 1], 1: [0], 2: [0], 4: [0] }, repsLogged: { 0: { 0: 8, 1: 6 }, 1: { 0: 12 }, 4: { 0: 10 } },
         setWeights: { 0: { 0: 80, 1: 80 }, 1: { 0: 60 } }, setTimestamps: { 0: { 0: 1000, 1: 91000 } }, rpeLogged: { 0: { 0: 8 } },   // Dips: BW +60
         equipOverride: { 2: 'dumbbell' }, _exerciseNotes: { Bench: 'ok' }, sessTimeSec: 1830 });
       const L = r.setLog;
-      const v = _buildSessionRecord({ sessExs: exs.slice(0, 4), setsDone: { 0: [0, 1], 1: [0], 2: [0] }, repsLogged: { 0: { 0: 8, 1: 6 }, 1: { 0: 12 } },
+      const v = _buildSessionRecord({ sessExs: exs, setsDone: { 0: [0, 1], 1: [0], 2: [0], 4: [0] }, repsLogged: { 0: { 0: 8, 1: 6 }, 1: { 0: 12 }, 4: { 0: 10 } },
         setWeights: { 0: { 0: 80, 1: 80 }, 1: { 0: 0 } }, setTimestamps: {}, rpeLogged: {}, equipOverride: {}, _exerciseNotes: {}, sessTimeSec: 60 });
-      return r.dMin === 31 && v.volume === 80 * 8 + 80 * 6 + 0 + 50 * 8 && Object.keys(L).join() === 'Bench,Dips,Row,Odd'
+      return r.dMin === 31 && isFinite(r.volume) && v.volume === 80 * 8 + 80 * 6 + 0 + 50 * 8 + 0 && Object.keys(L).join() === 'Bench,Dips,Row,Odd'
         && JSON.stringify(L.Bench) === '{"ord":0,"sets":2,"reps":[8,6],"weight":80,"bw":false,"setWeights":[80,80],"equipOverride":null,"note":"ok","restSecs":[90],"rpe":[8]}'
         && L.Dips.bw === true && L.Dips.weight === 60 && L.Dips.restSecs === undefined && L.Row.weight === 50 && L.Row.equipOverride === 'dumbbell'
         && L.Odd.weight === 0 && JSON.stringify(r.topLifts) === '[{"name":"Bench","weight":80},{"name":"Row","weight":50}]'

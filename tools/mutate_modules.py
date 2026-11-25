@@ -62,6 +62,7 @@ SESSION_MUTANTS = [
     ('completion time overwritten', "  if(setTimestamps[exIdx][setIdx] === undefined) setTimestamps[exIdx][setIdx] = nowMs;", "  setTimestamps[exIdx][setIdx] = nowMs;"),
     ('finished workout still reported active', "  return finalized === true ? 'finished' : 'active';", "  return 'active';"),
     ('saved weight is the planned one', "      const _exW = _loggedW.length ? Math.max(..._loggedW) : _exWPlanned;", "      const _exW = _exWPlanned;"),
+    ('object weight makes volume NaN', "        const w=(typeof _w==='number'&&isFinite(_w)&&_w>=0)?_w:0;", "        const w=_w;"),
     ('volume ignores the rep fallback', "        const r=rl[s]||parseInt((ex.reps||'8').split('–')[0])||8;", "        const r=rl[s]||0;"),
     ('bodyweight in top lifts', "    .filter(([, e]) => !e.bw && e.weight > 0)", "    .filter(([, e]) => e.weight > 0)"),
     ('duration rounds to zero', "  const dMin=Math.max(1,Math.round(sessTimeSec/60));", "  const dMin=Math.round(sessTimeSec/60);"),
