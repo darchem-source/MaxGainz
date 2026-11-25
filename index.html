@@ -5715,12 +5715,12 @@ function _pushLabelFor(name){
 
 // Pure: what this device can do. env = { ua, maxTouchPoints, standalone,
 // hasSW, hasPush, hasNotification, permission, swPush (true/false/null), signedIn }.
-//   ok · ios-install · ios-old · unsupported · denied · sw-old · checking · signed-out
+//   ok · ios-install · ios-inapp · ios-old · unsupported · denied · sw-old · checking · signed-out
 function _pushCapability(env){
   env = env || {};
   const ua = String(env.ua || '');
   const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && Number(env.maxTouchPoints) > 1);
-  if(ios && !env.standalone) return 'ios-install';
+  if(ios && !env.standalone) return /FBAN|FBAV|Instagram|Line\/|LinkedInApp|Twitter|Snapchat|Pinterest|MicroMessenger|\bGSA\//.test(ua) ? 'ios-inapp' : 'ios-install';
   if(!env.hasSW || !env.hasPush || !env.hasNotification) return ios ? 'ios-old' : 'unsupported';
   if(env.permission === 'denied') return 'denied';
   if(env.swPush === null || env.swPush === undefined) return 'checking';
@@ -5730,6 +5730,7 @@ function _pushCapability(env){
 }
 
 let _pushSwOk = null;   // does the CONTROLLING service worker handle pushes? null = not checked yet
+let _pushSwCheckedAt = 0; // a "no" is re-checked (the worker may take control later), a "yes" is kept
 function _pushEnv(){
   const nav = typeof navigator !== 'undefined' ? navigator : {};
   let standalone = nav.standalone === true;
@@ -5751,6 +5752,7 @@ function _pushEnv(){
 async function _pushCheckSw(){
   try {
     const sw = typeof navigator !== 'undefined' ? navigator.serviceWorker : null;
+    _pushSwCheckedAt = Date.now();
     if(!sw || !sw.controller || typeof MessageChannel === 'undefined'){ _pushSwOk = false; return false; }
     const ok = await new Promise(resolve => {
       const ch = new MessageChannel();
@@ -5803,10 +5805,11 @@ function _pushDaysText(days){
 
 const _PUSH_CAP_COPY = {
   'ios-install': '<b>On iPhone and iPad, reminders need the app on your Home Screen</b> (iOS 16.4 or later).<ol style="margin:6px 0 0 18px;padding:0;"><li>Tap the Share button <span aria-hidden="true">(□↑)</span>.</li><li>Choose <b>Add to Home Screen</b>.</li><li>Open Max Gainz from the new icon and come back here.</li></ol>',
-  'ios-old': 'Reminders need iOS or iPadOS 16.4 or later, with Max Gainz opened from your Home Screen. Update iOS in Settings → General → Software Update, then try again.',
+  'ios-inapp': '<b>Open Max Gainz in Safari first.</b> This in-app browser can\'t add apps to your Home Screen. Use its menu to open the page in Safari, then tap Share → <b>Add to Home Screen</b> and open Max Gainz from the new icon.',
+  'ios-old': 'Reminders need iOS or iPadOS 16.4 or later, with Max Gainz opened from your Home Screen. Update iOS in Settings → General → Software Update. If Max Gainz was on your Home Screen before, remove the icon and add it again from Safari.',
   'unsupported': 'This browser can\'t receive notifications while the app is closed. Chrome, Edge, Firefox or Safari on a computer, or Chrome on Android, can.',
   'denied': 'Notifications are blocked for Max Gainz. Allow them in your browser or system settings, then come back here.',
-  'sw-old': 'Max Gainz needs to finish updating on this device first. Accept the "Update available" banner, or close and reopen the app, then come back here.',
+  'sw-old': 'Max Gainz needs to finish setting up on this device first. Close the app completely and open it again (or accept the "Update available" banner if you see one), then come back here.',
   'checking': 'Checking this device…',
   'signed-out': 'Sign in to use reminders. They\'re linked to your account so we can skip days you\'ve already trained.'
 };
@@ -5840,8 +5843,8 @@ function _pushCardHtml(st){
   }).join('');
   const mode = hasPath ? `
       <div role="radiogroup" aria-label="Which days" style="display:flex;gap:6px;margin-top:10px;">
-        <button type="button" role="radio" aria-checked="${followPath ? 'true' : 'false'}" onclick="pushSetDaysMode('path')" style="flex:1;padding:8px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${followPath ? 'var(--accent)' : 'var(--border)'};background:transparent;color:var(--text);">My Path's days</button>
-        <button type="button" role="radio" aria-checked="${followPath ? 'false' : 'true'}" onclick="pushSetDaysMode('custom')" style="flex:1;padding:8px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${!followPath ? 'var(--accent)' : 'var(--border)'};background:transparent;color:var(--text);">Pick days</button>
+        <button type="button" id="pushModePath" role="radio" aria-checked="${followPath ? 'true' : 'false'}" onclick="pushSetDaysMode('path')" style="flex:1;padding:8px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${followPath ? 'var(--accent)' : 'var(--border)'};background:transparent;color:var(--text);">My Path's days</button>
+        <button type="button" id="pushModeCustom" role="radio" aria-checked="${followPath ? 'false' : 'true'}" onclick="pushSetDaysMode('custom')" style="flex:1;padding:8px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${!followPath ? 'var(--accent)' : 'var(--border)'};background:transparent;color:var(--text);">Pick days</button>
       </div>` : '';
   const m = st.metrics;
   const settings = `
@@ -5853,7 +5856,7 @@ function _pushCardHtml(st){
       <div style="display:flex;gap:4px;margin-top:8px;" role="group" aria-label="Reminder days">${chips}</div>
       ${!days.length ? `<div style="font-size:11px;color:${p.enabled ? 'var(--red)' : 'var(--text2)'};margin-top:6px;">${p.enabled ? 'No days picked, so no reminders will be sent.' : 'Pick the days you want a reminder.'}</div>` : ''}
       <div style="font-size:11px;color:var(--text2);margin-top:8px;">Times are in ${esc(st.tz || 'this device\'s time zone')} (from this device).</div>
-      ${on ? `<button type="button" onclick="pushSendTest()" ${st.busy ? 'disabled' : ''} style="width:100%;margin-top:10px;background:transparent;border:1px solid var(--border);border-radius:10px;padding:9px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;">Send a test notification</button>` : ''}
+      ${on ? `<button type="button" id="pushTestBtn" onclick="pushSendTest()" ${st.busy ? 'disabled' : ''} style="width:100%;margin-top:10px;background:transparent;border:1px solid var(--border);border-radius:10px;padding:9px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;">Send a test notification</button>` : ''}
       <div id="pushMetricsLine" style="font-size:10px;color:var(--text2);margin-top:8px;">${_pushMetricsText(m)}</div>`;
   return head + promise + settings + `<div id="pushStatus" role="status" aria-live="polite" style="font-size:11px;color:var(--text2);margin-top:6px;"></div>`;
 }
@@ -5873,8 +5876,13 @@ function renderRemindersCard(){
   const el = typeof document !== 'undefined' ? document.getElementById('remindersCard') : null;
   if(!el) return;
   const prefs = _pushLoadPrefs();
-  if(!_p4FlagOn('reminders')){ el.hidden = true; el.innerHTML = ''; return; }
-  if(_pushSwOk === null) _pushCheckSw().then(() => renderRemindersCard());
+  // Behind the flag — except that a device with reminders ON always sees the
+  // card, so turning the flag off never strands someone without an off switch.
+  if(!_p4FlagOn('reminders') && !prefs.enabled){ el.hidden = true; el.innerHTML = ''; return; }
+  if(_pushSwOk === null || (_pushSwOk === false && Date.now() - _pushSwCheckedAt > 3000)){
+    const before = _pushSwOk;
+    _pushCheckSw().then(ok => { if(ok !== before) renderRemindersCard(); });
+  }
   const path = _pushActivePath();
   // Keep keyboard focus on the control the user just used (the card is redrawn).
   const ae = document.activeElement;
@@ -5924,7 +5932,8 @@ async function pushSendTest(){}
 // Notification tap (sw.js) → Today, in either navigation.
 function _pushOpenToday(){
   try {
-    if(typeof _sessionTabShown === 'function' && _sessionTabShown()) return;   // never yank the user out of a running workout
+    const s = document.getElementById('s-active');
+    if(s && s.classList.contains('active')) return;   // never pull the user off the workout screen
     goTab('today', document.getElementById('nav-today'));
   } catch(e){}
 }
@@ -5942,6 +5951,10 @@ if(typeof document !== 'undefined') document.addEventListener('DOMContentLoaded'
   try {
     if(typeof navigator !== 'undefined' && navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', ev => {
       if(ev && ev.data && ev.data.type === 'OPEN_TODAY') _pushOpenToday();
+    });
+    if(typeof navigator !== 'undefined' && navigator.serviceWorker) navigator.serviceWorker.addEventListener('controllerchange', () => {
+      _pushSwOk = null;
+      if(document.getElementById('remindersCard') && !document.getElementById('remindersCard').hidden) renderRemindersCard();
     });
   } catch(e){}
 });
@@ -29622,9 +29635,9 @@ function authLogout(opts){
   localStorage.removeItem(AI_PREFS_KEY);
   localStorage.removeItem(AI_AUDIT_KEY);
   localStorage.removeItem(AI_METRICS_KEY);
-  // Reminder settings belong to this account (the device's push subscription is
-  // removed by _pushSignOutCleanup before the token goes).
+  // Reminder settings and this device's shown/opened counts belong to this account.
   localStorage.removeItem(PUSH_PREFS_KEY);
+  try { if(typeof caches !== 'undefined') caches.delete(PUSH_META_CACHE).catch(() => {}); } catch(e){}
   // Offline-session metrics are per account; the downloaded media itself is
   // generic (public demo files), so the media cache stays for the next user.
   localStorage.removeItem(OFFLINE_METRICS_KEY); localStorage.removeItem(OFFLINE_SESS_KEY);

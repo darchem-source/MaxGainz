@@ -159,8 +159,14 @@ function _swLocalDay() {
   const d = new Date();
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
-// Per-device counts (last 60 days kept). Never sent anywhere.
-async function _swPushCount(what) {
+// Per-device counts (last 60 days kept). Never sent anywhere. Updates run one
+// at a time so two events close together can't overwrite each other.
+let _swCountQ = Promise.resolve();
+function _swPushCount(what) {
+  _swCountQ = _swCountQ.then(() => _swPushCountNow(what), () => _swPushCountNow(what));
+  return _swCountQ;
+}
+async function _swPushCountNow(what) {
   try {
     const c = await caches.open(PUSH_META_CACHE);
     const r = await c.match(PUSH_METRICS_PATH);
@@ -191,7 +197,11 @@ self.addEventListener('notificationclick', e => {
   e.waitUntil(Promise.all([
     _swPushCount('opened'),
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
-      const own = list.filter(c => { try { return new URL(c.url).origin === self.location.origin; } catch (err) { return false; } });
+      // Only an app window (never the separate /share viewer or another page).
+      const own = list.filter(c => {
+        try { const u = new URL(c.url); return u.origin === self.location.origin && (u.pathname === '/' || u.pathname === '/index.html'); }
+        catch (err) { return false; }
+      });
       if (own.length) {
         const c = own[0];
         try { c.postMessage({ type: 'OPEN_TODAY' }); } catch (err) {}
@@ -242,15 +252,16 @@ self.addEventListener('fetch', e => {
       fetch(e.request)
         .then(res => {
           if (res.ok) {
+            // Keyed by path: '/?go=today' (a reminder tap) and '/' share one copy.
             const clone = res.clone();
-            caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
+            caches.open(CACHE_NAME).then(c => c.put(url.origin + url.pathname, clone));
           }
           return res;
         })
         .catch(() =>
-          // Offline — serve last cached HTML, prefer the requested URL,
+          // Offline — serve last cached HTML for this path (query ignored),
           // then fall back to /index.html (the canonical shell).
-          caches.match(e.request).then(r => r || caches.match('/index.html'))
+          caches.match(url.origin + url.pathname).then(r => r || caches.match('/index.html'))
         )
     );
     return;

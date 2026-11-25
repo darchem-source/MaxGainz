@@ -4909,6 +4909,32 @@ P4_CONSTS = ['P4_FLAG_KEYS', 'PUSH_PREFS_KEY', 'PUSH_DEFAULT_HOUR', 'PUSH_WEEKDA
 P4_PURE = ['_p4FlagsFromQuery', '_pushPrefsNormalize', '_pushPathDays', '_pushEffectiveDays', '_pushLabelFor', '_pushCapability',
            '_pushMetricsSummary', '_pushMetricsText', '_pushHourLabel', '_pushDaysText', '_pushCardHtml', 'esc']
 
+P4_DOM_ASSERTIONS = r"""
+var fails = [];
+function t(c, m){ if(!c) fails.push(m); }
+var LS = {}; var localStorage = { getItem: function(k){ return LS.hasOwnProperty(k) ? LS[k] : null; }, setItem: function(k, v){ LS[k] = String(v); }, removeItem: function(k){ delete LS[k]; } };
+var card = { hidden: true, innerHTML: '', style: {}, contains: function(){ return false; }, querySelector: function(){ return null; } };
+var sact = { classList: { contains: function(){ return SACT; } } }; var SACT = false; var went = [];
+var document = { activeElement: null, getElementById: function(id){ return id === 'remindersCard' ? card : (id === 's-active' ? sact : {}); } };
+function goTab(t){ went.push(t); }
+var _pushSwOk = true, _pushSwCheckedAt = 0, _pushBusy = false, _pushMetricsCache = null;
+function _pushCheckSw(){ return Promise.resolve(true); }
+function _pushEnv(){ return { ua:'Mozilla/5.0 (X11; Linux x86_64) Chrome/125', maxTouchPoints:0, standalone:false, hasSW:true, hasPush:true, hasNotification:true, permission:'default', swPush:true, signedIn:true }; }
+function _pushActivePath(){ return null; }
+function _pushTz(){ return 'Europe/London'; }
+renderRemindersCard();
+t(card.hidden === true && card.innerHTML === '', 'card must stay hidden without the flag');
+LS[P4_FLAG_KEYS.reminders] = '1'; renderRemindersCard();
+t(card.hidden === false && /Training-day reminders/.test(card.innerHTML) && /aria-checked="false"/.test(card.innerHTML), 'flag on: card shown, switch off');
+delete LS[P4_FLAG_KEYS.reminders]; LS[PUSH_PREFS_KEY] = JSON.stringify({ enabled:true, hour:7, days:[1] });
+renderRemindersCard();
+t(card.hidden === false && /aria-checked="true"/.test(card.innerHTML), 'flag off but reminders on: the off switch must stay reachable');
+LS = {}; renderRemindersCard(); t(card.hidden === true, 'flag off and reminders off: hidden again');
+SACT = true; _pushOpenToday(); t(went.length === 0, 'a notification tap must not leave the workout screen');
+SACT = false; _pushOpenToday(); t(went.join() === 'today', 'a notification tap opens Today');
+JSON.stringify(fails);
+"""
+
 P4_PURE_ASSERTIONS = r"""
 var fails = [];
 function t(c, m){ if(!c) fails.push(m); }
@@ -4945,7 +4971,10 @@ var MAC = IPAD;
 function env(o){ var b = { ua:AND, maxTouchPoints:5, standalone:false, hasSW:true, hasPush:true, hasNotification:true, permission:'default', swPush:true, signedIn:true }; for(var k in o) b[k] = o[k]; return b; }
 var cases = [
   [env({ua:IPH}), 'ios-install'],
-  [env({ua:IPH, hasPush:true}), 'ios-install'],
+  [env({ua:IPH + ' Instagram 300.0'}), 'ios-inapp'],
+  [env({ua:IPH.replace('Safari/604.1', '[FBAN/FBIOS;FBAV/450.0]')}), 'ios-inapp'],
+  [env({ua:IPAD, maxTouchPoints:5, standalone:true}), 'ok'],
+  [env({ua:IPAD, maxTouchPoints:5, standalone:true, hasPush:false}), 'ios-old'],
   [env({ua:IPAD, maxTouchPoints:5}), 'ios-install'],
   [env({ua:MAC, maxTouchPoints:0}), 'ok'],
   [env({ua:IPH, standalone:true, hasPush:false, hasNotification:false}), 'ios-old'],
@@ -4961,7 +4990,7 @@ var cases = [
 ];
 cases.forEach(function(c, i){ var got = _pushCapability(c[0]); t(got === c[1], 'capability case ' + i + ': want ' + c[1] + ' got ' + got); });
 // the toggle exists only when the device can really receive reminders
-['ios-install','ios-old','unsupported','denied','sw-old','checking','signed-out','ok'].forEach(function(cap){
+['ios-install','ios-inapp','ios-old','unsupported','denied','sw-old','checking','signed-out','ok'].forEach(function(cap){
   var h = _pushCardHtml({ cap:cap, prefs:_pushPrefsNormalize(null), pathDays:[], pathDaysPath:null, tz:'Europe/London', metrics:{shown:0, opened:0}, busy:false });
   var has = /id="pushToggleBtn"/.test(h);
   t(has === (cap === 'ok'), 'toggle present=' + has + ' for ' + cap);
@@ -5010,13 +5039,14 @@ P4_SW_SCENARIOS = {
    var opened = [], focused = 0, posted = [];
    var other = { url:'https://evil.test/x', focus: function(){ focused += 100; }, postMessage: function(m){ posted.push(['evil', m]); } };
    var mine = { url:'https://app.test/?x', focus: function(){ focused += 1; return Promise.resolve(); }, postMessage: function(m){ posted.push(['mine', m]); } };
-   var list = [other];
+   var viewer = { url:'https://app.test/share#tok', focus: function(){ focused += 1000; }, postMessage: function(m){ posted.push(['viewer', m]); } };
+   var list = [other, viewer];
    self.clients.matchAll = function(){ return Promise.resolve(list); };
    self.clients.openWindow = function(u){ opened.push(u); return Promise.resolve(); };
    var closed = 0; var w = null;
-   L.notificationclick({ notification: { close: function(){ closed++; }, data: { go:'https://evil.test' } }, waitUntil: function(p){ w = p; } }); await w;
+   L.notificationclick({ notification: { close: function(){ closed++; }, data: { go:'https://evil.test', url:'https://evil.test', href:'https://evil.test' } }, waitUntil: function(p){ w = p; } }); await w;
    if(opened.join() !== '/?go=today' || focused) return 'no own window: must open /?go=today ' + JSON.stringify(opened) + ' focused ' + focused;
-   list = [other, mine];
+   list = [viewer, other, mine];
    L.notificationclick({ notification: { close: function(){ closed++; }, data: {} }, waitUntil: function(p){ w = p; } }); await w;
    if(focused !== 1 || opened.length !== 1) return 'must focus the own window, not open another ' + focused;
    if(posted.length !== 1 || posted[0][0] !== 'mine' || posted[0][1].type !== 'OPEN_TODAY') return 'OPEN_TODAY to the own window only ' + JSON.stringify(posted);
@@ -5061,6 +5091,33 @@ def gate_reminders(html, js, sw=None, root=None):
         body = extract_decl(js, fn) or ''
         if ('requestPermission(' in body or 'pushManager.subscribe(' in body) and fn not in ('requestNotificationPermission', 'pushToggleReminders', '_pushSubscribe'):
             problems.append(f'{fn} asks for notification permission or subscribes outside the opt-in tap')
+    # permission / subscribe only inside the opt-in handlers (any syntax: scan every call site)
+    decls = [(m.start(), m.group(1)) for m in re.finditer(r'\n(?:async\s+)?function\s+(\w+)\s*\(', js)]
+    def _owner(pos):
+        own = None
+        for st, nm in decls:
+            if st < pos: own = nm
+            else: break
+        return own
+    for pat in ['requestPermission(', 'pushManager.subscribe(']:
+        for m in re.finditer(re.escape(pat), js):
+            fn = _owner(m.start())
+            if fn not in ('requestNotificationPermission', 'pushToggleReminders', '_pushSubscribe'):
+                problems.append(f'{pat} called inside {fn} (only the opt-in tap handlers may ask or subscribe)')
+    for nm in ['pushToggleReminders', '_pushSubscribe']:
+        for m in re.finditer(r'\b' + nm + r'\(', js):
+            line_start = js.rfind('\n', 0, m.start()) + 1
+            ctx = js[line_start:m.start()]
+            if re.match(r'\s*(async\s+)?function\s+$', ctx): continue        # the definition
+            if 'onclick="' in ctx and ctx.rfind('onclick="') > ctx.rfind('"', 0, ctx.rfind('onclick="') + 1): continue
+            if nm == '_pushSubscribe' and _owner(m.start()) in ('pushToggleReminders', '_pushSyncPrefs'): continue
+            problems.append(f'{nm}() is called outside a tap handler (in {_owner(m.start())})')
+    # sign-out clears this account's reminder settings and the device's counts
+    lo = extract_decl(js, 'authLogout') or ''
+    if 'localStorage.removeItem(PUSH_PREFS_KEY)' not in lo or 'caches.delete(PUSH_META_CACHE)' not in lo:
+        problems.append('authLogout must remove PUSH_PREFS_KEY and the PUSH_META_CACHE counts')
+    if '_pushSwOk === false' not in rc:
+        problems.append('renderRemindersCard must re-check a "no" from the service worker (it may take control later)')
     # manifest (iOS needs it for Home Screen web apps)
     man_path = os.path.join(root, 'manifest.webmanifest')
     try:
@@ -5091,7 +5148,18 @@ def gate_reminders(html, js, sw=None, root=None):
         try: fails = json.loads(out)
         except Exception: fails = ['pure-logic runner errored: ' + out[:300]]
         problems += fails
-        if not fails: print('  ✓ opt-in defaults off; labels only from the fixed list; capability matrix (iOS install / old iOS / unsupported / blocked / old worker / signed out); toggle only when deliverable')
+        if not fails: print('  ✓ opt-in defaults off; labels only from the fixed list; capability matrix (iOS install / in-app browser / old iOS / unsupported / blocked / old worker / signed out); toggle only when deliverable')
+        dom = []
+        for fn in ['renderRemindersCard', '_pushOpenToday', '_pushLoadPrefs', '_p4FlagOn', '_pushPathDays']:
+            src = extract_decl(js, fn)
+            if not src: problems.append(f'function {fn} not found')
+            else: dom.append(src)
+        if len(dom) == 5:
+            out2, _ = run_jxa('\n'.join(pieces) + '\n' + '\n'.join(dom) + '\n' + P4_DOM_ASSERTIONS)
+            try: f3 = json.loads(out2)
+            except Exception: f3 = ['card runner errored: ' + out2[:300]]
+            problems += f3
+            if not f3: print('  ✓ card hidden without the flag (but never hides the off switch); a tap never leaves the workout screen')
     # sw.js (jsc)
     if not os.path.exists(JSC): problems.append(f'jsc not found at {JSC}')
     elif sw:
