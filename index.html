@@ -3699,7 +3699,7 @@ function _loadLottieScript(){
     const s = document.createElement('script');
     // Self-hosted copy of lottie-web 5.12.2 (MIT) — no third-party script runs
     // in this origin. SRI pins the exact bytes (gate 22 recomputes it).
-    s.src = 'vendor/lottie_light-5.12.2.min.js';
+    s.src = '/vendor/lottie_light-5.12.2.min.js';
     s.integrity = 'sha384-Vtbz3QbtSBqleuQry6kQy5smig1gPZCXUoTFN7RmN9QW47xpEDsV/J1w0Pw0rDJu';
     s.async = true;
     s.onload  = () => resolve();
@@ -5804,6 +5804,14 @@ function applyImportPayload(payload){
   if(typeof dailyNotes !== 'undefined' && payload.dailyNotes && typeof payload.dailyNotes === 'object' && !Array.isArray(payload.dailyNotes)){
     Object.keys(dailyNotes).forEach(k => delete dailyNotes[k]);
     Object.assign(dailyNotes, payload.dailyNotes);
+  }
+
+  // Today programme (exported since Phase 3): only a programme this app knows.
+  if(typeof payload.todayProg === 'string' && payload.todayProg.length <= 80){
+    const t = payload.todayProg;
+    const known = t === 'ULF' || t === 'PPL' || t === 'HIIT' || (typeof isLibraryProgramme === 'function' && isLibraryProgramme(t) && getLibraryProgramme(t))
+      || (Array.isArray(payload.customWorkouts) && payload.customWorkouts.some(w => w && w.name === t));
+    if(known) todayProg = t;
   }
 
   // Personal Best tile set
@@ -18240,7 +18248,7 @@ function _shareSessionSnapshot(s, all, opts){
         r: _shareNum(reps[i], 0)
       }));
     }
-    if(e.sets && e.sets.every(x => x.w === null && x.r === null)) delete e.sets;   // e.g. a core circuit with nothing logged
+    if(e.sets && e.sets.every(x => x.w === null && x.r === null)){ delete e.sets; setCount -= count; }   // e.g. a core circuit with nothing logged
     if(pbSet) e.pb = pbSet.has(n);
     if(o.notes && v && typeof v.note === 'string' && v.note.trim()) e.note = _shareCut(v.note.trim(), 200);
     return e;
@@ -29440,11 +29448,20 @@ function _saveBlobFile(text, type, name){
   const a = document.createElement('a');
   a.href = url; a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  setTimeout(() => URL.revokeObjectURL(url), 60000);   // iOS asks per download; don't revoke under the prompt
 }
-function downloadDataBeforeDelete(){
+async function downloadDataBeforeDelete(){
   const btn = document.getElementById('sendEmailBtn');
   const status = document.getElementById('emailStatus');
+  // "Complete" means this account's cloud copy too: if this page hasn't loaded
+  // it yet (offline launch, sync error, new device), load and merge first.
+  let partial = false;
+  if(typeof isAuthenticated === 'function' && isAuthenticated() && !_cloudLoadedThisPage){
+    btn.disabled = true; btn.textContent = 'Fetching your latest data…';
+    let ok = false; try { ok = await cloudLoadAll(); } catch(e){ ok = false; }
+    btn.disabled = false;
+    partial = !ok;
+  }
   try {
     const payload = _buildExportPayload();
     const day = new Date().toISOString().slice(0, 10);
@@ -29452,7 +29469,9 @@ function downloadDataBeforeDelete(){
     _saveBlobFile(generateSessionsCSV(), 'text/csv', 'max-gainz-workouts-' + day + '.csv');
     status.style.display = 'block';
     status.style.background = 'rgba(76,175,80,0.1)'; status.style.color = 'var(--green)';
-    status.textContent = '✓ Downloaded 2 files (' + payload.sessions.length + ' workouts). Check they opened before you continue.';
+    status.textContent = '✓ Downloaded 2 files (' + payload.sessions.length + ' workouts). Check they opened before you continue.'
+      + (partial ? ' ⚠️ Couldn\'t reach your account just now, so this copy has only what is on this device — connect and download again before deleting.' : '');
+    if(partial){ status.style.background = 'rgba(255,170,0,0.1)'; status.style.color = 'var(--orange)'; }
     btn.textContent = '⬇️ Download again';
     const c = document.getElementById('deleteAfterDlBtn'); if(c) c.hidden = false;
     // Focus the result, not the destructive button (an extra Enter must not move toward deletion).
@@ -29470,9 +29489,12 @@ function continueDeleteAfterDownload(){
 
 function generateSessionsCSV(){
   let csv = 'Date,Day,Exercises,Duration (min),Volume (kg),Intensity,XP Awarded\n';
+  // Quotes doubled; a leading = + - @ (tab/CR) is prefixed with ' so a
+  // spreadsheet never evaluates a custom name as a formula.
+  const cell = v => { let t = String(v == null ? '' : v); if(/^[=+\-@\t\r]/.test(t)) t = "'" + t; return '"' + t.replace(/"/g, '""') + '"'; };
   completedSessions.forEach(s => {
     const date = s.date instanceof Date ? s.date.toISOString().slice(0,10) : s.date;
-    csv += `"${date}","${s.day}","${s.exercises}","${s.durationMin}","${s.volume}","${s.intensity||''}","${s.xpAwarded}"\n`;
+    csv += [date, s.day, s.exercises, s.durationMin, s.volume, s.intensity || '', s.xpAwarded].map(cell).join(',') + '\n';
   });
   return csv;
 }

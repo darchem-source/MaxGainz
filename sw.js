@@ -149,6 +149,16 @@ self.addEventListener('fetch', e => {
     return;
   }
 
+  // Self-hosted vendor scripts (Lottie): cache-first from the precached shell,
+  // so celebrations work offline; refreshed into the cache on a miss.
+  if (url.origin === self.location.origin && url.pathname.startsWith('/vendor/') && e.request.method === 'GET') {
+    e.respondWith(caches.match(e.request, { ignoreVary: true }).then(hit => hit || fetch(e.request).then(res => {
+      if (res && res.ok) { const copy = res.clone(); caches.open(CACHE_NAME).then(c => c.put(e.request, copy)); }
+      return res;
+    })));
+    return;
+  }
+
   // Navigation requests (HTML): network-first, cache fallback.
   if (e.request.mode === 'navigate') {
     e.respondWith(

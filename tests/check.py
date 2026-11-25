@@ -4516,6 +4516,7 @@ ok('library day kept without progKey', _shareSessionSnapshot(completedSessions[4
 ok('own names shown only when ticked', _shareSessionSnapshot(completedSessions[2], completedSessions, ALL).title === 'Dr Patel rehab block');
 var emo = _shareClean(_shareSessionSnapshot(completedSessions[2], completedSessions, ALL)).exercises[0].note;
 ok('no lone surrogate at a cut', !/[\uD800-\uDBFF]$/.test(emo) && !/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(emo));
+ok('set total counts only shown sets', _shareSessionSnapshot({ date:new Date(NOW), day:'Upper', setLog:{ 'Abdominal Work':{ sets:3, reps:[] }, 'Squat':{ sets:2, reps:[5,5], weight:100 } } }, [], DEF).totals.sets === 2);
 ok('nothing-logged circuit has no empty sets', !('sets' in _shareSessionSnapshot({ date:new Date(NOW), day:'Upper', setLog:{ 'Abdominal Work':{ sets:3, reps:[] } } }, [], DEF).exercises[0]));
 ok('missing weight is not 0 kg', _shareSessionSnapshot({ date:new Date(NOW), day:'Upper', setLog:{ 'Squat':{ sets:1, reps:[5], weight:0 } } }, [], DEF).exercises[0].sets[0].w === null);
 ok('defaults: notes and own names off', DEF.notes === false && DEF.ownNames === false && _shareDefaults('week').ownNames === false);
@@ -4832,7 +4833,7 @@ def gate_leftovers(html, js, sw=None, vendor=None):
         problems.append('vendored Lottie missing or not the expected build')
     sri = 'sha384-' + base64.b64encode(hashlib.sha384(vendor).digest()).decode()
     loader = extract_decl(js, '_loadLottieScript') or ''
-    if "s.src = 'vendor/lottie_light-5.12.2.min.js'" not in loader or ("s.integrity = '" + sri + "'") not in loader:
+    if "s.src = '/vendor/lottie_light-5.12.2.min.js'" not in loader or ("s.integrity = '" + sri + "'") not in loader:
         problems.append('Lottie loader not pinned to the vendored file (src + SRI ' + sri[:20] + '…)')
     if "'/vendor/lottie_light-5.12.2.min.js'" not in sw or re.search(r"STATIC_HOSTS = \[[^\]]*unpkg", sw):
         problems.append('sw.js does not precache the vendored Lottie / still trusts unpkg')
@@ -4846,6 +4847,10 @@ def gate_leftovers(html, js, sw=None, vendor=None):
        or not re.search(r"_saveBlobFile\(generateSessionsCSV\(\), 'text/csv'", dl): problems.append('pre-deletion download is not the complete export + CSV')
     if 'finalDeleteMod' in dl or 'setTimeout' in dl: problems.append('pre-deletion download moves on to deletion by itself')
     if 'sendDataEmail' in js: problems.append('sendDataEmail (fake email) still present')
+    if not re.search(r'if\(typeof isAuthenticated === .function. && isAuthenticated\(\) && !_cloudLoadedThisPage\)\{[\s\S]*?await cloudLoadAll\(\)', dl):
+        problems.append('the "complete" backup is taken without loading the cloud copy first')
+    imp = extract_decl(js, 'applyImportPayload') or ''
+    if not re.search(r"\n\s*if\(typeof payload\.todayProg === 'string'", imp) or 'if(known) todayProg = t;' not in imp: problems.append('exported todayProg is never imported')
     exp = extract_decl(js, '_buildExportPayload') or ''
     keys = _profile_blob_keys(js)
     if len(keys) < 10: problems.append('could not read the profile blob keys')
@@ -4859,6 +4864,18 @@ def gate_leftovers(html, js, sw=None, vendor=None):
     if fb and js[max(0, js.find(fb) - 6):js.find(fb)].endswith('async '): fb = 'async ' + fb
     if not fb:
         print('  ✗ could not extract submitFeedback'); return False
+    # CSV: quotes escaped, formulas neutralised
+    csvfn = extract_decl(js, 'generateSessionsCSV') or ''
+    cf = _run_jsc_scenarios('var completedSessions = [{ date:"2026-11-24", day:\'=HYPERLINK("http://x","y")\', exercises:3, durationMin:40, volume:100, xpAwarded:5 }, { date:"2026-11-25", day:\'Say "hi", ok\', exercises:1 }];\n' + csvfn + '\n',
+        { 'CSV escapes quotes and neutralises formulas': "var c = generateSessionsCSV().split('\\n'); if(c[1].indexOf('\"\\'=HYPERLINK(\"\"http') === -1) return 'formula not neutralised: ' + c[1]; if(c[2].indexOf('\"Say \"\"hi\"\", ok\"') === -1) return 'quotes: ' + c[2]; return true;" })
+    for f in cf: print('  ✗ ' + f)
+    if cf: ok_all = False
+    # SW: the vendored script is served from the shell cache when offline
+    swf = _run_jsc_scenarios(SW_STUBS + sw.replace("self.addEventListener('install'", "self.addEventListener('install_disabled'") + '\n',
+        { 'vendored Lottie served offline from the shell cache': "var c = await caches.open(CACHE_NAME); var body = new ArrayBuffer(5); await c.put('https://app.test/vendor/lottie_light-5.12.2.min.js', new Response(body, { status:200 })); fetch = function(){ return Promise.reject(new Error('offline')); }; var e = fire('https://app.test/vendor/lottie_light-5.12.2.min.js', {}, 'no-cors'); if(!e.p) return 'not intercepted'; var r = await e.p; return r && r._b === body ? true : 'not served from cache';" })
+    for f in swf: print('  ✗ sw: ' + f)
+    if swf: ok_all = False
+    if not cf and not swf: print('  ✓ CSV quotes/formulas safe; vendored Lottie served from cache offline')
     fails = _run_jsc_scenarios(FEEDBACK_RUN + fb + '\n', FEEDBACK_SCENARIOS)
     for f in fails: print('  ✗ feedback: ' + f)
     if fails: ok_all = False
