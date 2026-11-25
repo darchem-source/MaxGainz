@@ -18,6 +18,7 @@
 //   storage          lsGet, lsSet, lsGetRaw, lsSetRaw, saveLocalCache, STORAGE_KEY
 //   status           setSyncStatus (publishes on the bus; the UI subscribes)
 //   session data     completedSessions, _validateSession, _normalizeSessionWeights
+//                    (the last two are in app/rules.js since slice 5; still stubbed in gate 34)
 //   profile state    userProfile, userPreferences, todayProg, userPath, pathHistory,
 //                    bodyWeightLog, measurementsLog, dailyNotes, pbLifts,
 //                    customWorkouts, customWeights, HIIT, applyCustomWeights,

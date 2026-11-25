@@ -31,6 +31,8 @@ So code moves out **for editing and testing**, not for loading.
 
 6. **Gate 36 checks the AI modules:** both `app/ai-validators.js` regions (in `index.html` and in `core.mjs`) equal the file, no validator is declared again in either host, the validators stay pure (they run on the server), and `app/ai.js` has no DOM. The validators then run on their own with only a console; `app/ai.js` runs with `app/rollout.js` (its documented earlier-module dependency), the validators and stubs for the gate order, consent and notes, pain, grounding, the 401 retry, timeout, server consent-off, beta enrolment and the local stores.
 
+7. **Gate 37 checks `app/rules.js`:** region, no duplicate declarations, pure (no storage, network or app state). It loads alone with only a console, then with `app/session.js`, and runs the rules: the session contract, the weight repair, the rank ladder, XP and comeback, week keys and streaks (also under `TZ=Pacific/Kiritimati` and `TZ=America/Los_Angeles`, because this Mac sits at UTC+0 in winter, where a UTC bug would be invisible), weight steps, the adaptive engine's main rules, rotation, recency, balance, measurements and next-day ranking.
+
 A module listed in `ALSO_INTO` is copied into a marked region of each named file as well. Editing that region by hand fails gate 33 (drift) and gate 36.
 
 ### Run-time vs load-time dependencies
@@ -50,7 +52,7 @@ Never edit inside a region by hand. Gate 33 fails, and the next `bundle.py` run 
 | 3 | Active-session state, pure parts: `app/session.js` (declarations of the running workout's state; last-time sets, set delta, repeat-set, next-step text, `calc1RM`, `_buildCooldown`, `_sessionTrainedGroups`) | **Done (pure parts)**, build 2026.11.25.11 |
 | 3b | Active-session transitions and renderers (`startSession*`, set logging, `finishSession`, `cancelSession`, `_teardownActiveSession`). They change state and update the page in the same functions, so they cannot move verbatim: this needs a refactor that splits state changes from rendering, with its own manual test pass of the workout flow | Not started (needs a decision on the refactor) |
 | 4 | AI validation and client: `app/ai-validators.js` is the **one source** of the validators, bundled into both `index.html` and `netlify/functions/ai/core.mjs` (`ALSO_INTO` in `tools/bundle.py`); `app/ai.js` holds consent merge, the call gate, `_aiCall` / `_aiPost`, the local audit and metrics stores, beta enrolment and the server consent sync. UI stays in `index.html` (consent toggles, intro cards, AI health HTML, every AI surface) | **Done**, build 2026.11.25.12 |
-| 5 | Data contracts and pure training rules: progression, rotation, PB and XP derivation | |
+| 5 | Data contracts and pure training rules: `app/rules.js` (`_validateSession`, `_normalizeSessionWeights`, `_localYMD`; ranks, prestige, session XP, comeback bonus; week keys and streaks; weight steps, rep targets and the adaptive coaching engine `getLiftState`; rotation; recency and muscle-balance verdict; measurement deltas; next-path-day ranking). All pure; depends only on `calc1RM` from `app/session.js`. Glue that gathers app state (`buildLiftHistory`, `_calcMuscleGroupShare`, achievement checks) stays in `index.html` | **Done**, build 2026.11.25.13 |
 | 6 | Lower-priority screens and media manifests: these are the candidates for loading later, once a service-worker change makes extra files safe | |
 
 ### Rules for each slice

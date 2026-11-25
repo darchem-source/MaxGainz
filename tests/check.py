@@ -3050,7 +3050,7 @@ def _ai_core_script(core):
     i = core.find('\nexport {')
     return core[:i] if i != -1 else None
 
-def _run_jsc_scenarios(base, scenarios):
+def _run_jsc_scenarios(base, scenarios, env=None):
     fails = []
     for name, body in scenarios.items():
         script = base + ('(async function(){ ' + body + ' })().then(r => print(r === true ? "PASS" : "FAIL " + JSON.stringify(r)), '
@@ -3058,7 +3058,8 @@ def _run_jsc_scenarios(base, scenarios):
         with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as t:
             t.write(script); path = t.name
         try:
-            out = subprocess.run([JSC, path], capture_output=True, text=True, timeout=60)
+            out = subprocess.run([JSC, path], capture_output=True, text=True, timeout=60,
+                                 env=(dict(os.environ, **env) if env else None))
             res = (out.stdout.strip() or out.stderr.strip()).split('\n')[-1]
         finally:
             os.unlink(path)
@@ -7514,84 +7515,206 @@ def gate_ai_module(html, js, root=None):
     for p in problems: print('  ✗ ' + p)
     return not problems
 
+# ── GATE 37: app/rules.js (Priority 7, slice 5) ────────────────────────────
+# Data contracts and pure training rules. Loaded ON ITS OWN in jsc: first
+# alone with a console (nothing may run at load time), then with app/session.js
+# (its documented earlier-module dependency: calc1RM) — no HTML parsing.
+RULES_SCENARIOS = {
+    'session contract: bad date refused, numbers sanitised, ids kept, input untouched': r"""
+      const raw = { date: '2026-11-20T10:00:00Z', day: '', volume: NaN, durationMin: -5, exercises: '3', cloud_id: 'c1', client_id: 'k',
+        setLog: { Bench: { sets: 3, weight: 'x', reps: 'bad', rpe: [8, 11, 'x', 7] } } };
+      const v = _validateSession(raw);
+      return _validateSession({ date: 'nope' }) === null && _validateSession(null) === null
+        && v.date instanceof Date && v.day === 'Workout' && v.volume === 0 && v.durationMin === 0 && v.exercises === 0
+        && v.cloud_id === 'c1' && v.client_id === 'k' && v.setLog.Bench.weight === 0 && JSON.stringify(v.setLog.Bench.reps) === '[]'
+        && JSON.stringify(v.setLog.Bench.rpe) === '[8,7]' && Array.isArray(v.topLifts) && raw.day === '' && typeof raw.date === 'string';
+    """,
+    'amended weights repaired from the logged sets; bodyweight, manual and legacy rows untouched': r"""
+      const s = [
+        { setLog: { Bench: { weight: 90, setWeights: [80, 80, 0] }, Row: { weight: 60, setWeights: [62.5] }, Dips: { bw: true, weight: 10, setWeights: [20] } }, topLifts: [{ name: 'Bench', weight: 90 }] },
+        { manualActivity: true, setLog: { Bench: { weight: 90, setWeights: [80] } } },
+        { topLifts: [{ name: 'Squat', weight: 100 }] } ];
+      _normalizeSessionWeights(s);
+      return s[0].setLog.Bench.weight === 80 && s[0].setLog.Row.weight === 62.5 && s[0].setLog.Dips.weight === 10
+        && JSON.stringify(s[0].topLifts) === '[{"name":"Bench","weight":80},{"name":"Row","weight":62.5}]'
+        && s[1].setLog.Bench.weight === 90 && s[2].topLifts[0].weight === 100 && _normalizeSessionWeights(null) === undefined;
+    """,
+    'ranks: contiguous 16-rank ladder, boundaries, prestige stars': r"""
+      const contiguous = RANKS.every((r, i) => i === 0 || RANKS[i - 1].max === r.min);
+      return RANKS.length === 16 && RANKS[0].min === 0 && RANKS[15].max === Infinity && contiguous
+        && RANKS.every(r => RANK_TIERS.indexOf(r.tier) !== -1)
+        && getRank(0).name === 'Day One' && getRank(249).name === 'Day One' && getRank(250).name === 'First Steps'
+        && getRank(1e9).name === 'Iron Eternal' && getPrestigeStars(RANKS[15].min - 1) === 0
+        && getPrestigeStars(RANKS[15].min + 2 * PRESTIGE_STEP + 1) === 2;
+    """,
+    'session XP and comeback bonus': r"""
+      const big = { volume: 10000, durationMin: 60, setLog: { A: { sets: 12 }, B: { sets: 8 } } };
+      const d = n => new Date(2026, 0, 1 + n);
+      const ev = _comebackEvents([{ date: d(0) }, { date: d(5) }, { date: d(12), manualActivity: true }, { date: d(19) }, { date: 'bad' }]);
+      return _sessionXP({}) === 100 && _sessionXP({ volume: 5000 }) === 150 && _sessionXP(big) === 255
+        && ev.length === 1 && ev[0].pts === COMEBACK_XP && ev[0].date.getTime() === d(19).getTime() && COMEBACK_GAP_DAYS === 14;
+    """,
+    'weeks: local Monday keys, best week, longest streak, current streak': r"""
+      const wed = new Date(2026, 10, 25, 23, 30), mon = new Date(2026, 10, 23, 0, 5);
+      const at = (w, day) => ({ date: new Date(2026, 0, 5 + w * 7 + day, 9) });    // 5 Jan 2026 = Monday
+      const three = w => [at(w, 0), at(w, 2), at(w, 4)];
+      const hist = [].concat(three(0), three(1), three(2), [at(3, 0)], three(5), three(6));
+      const now = new Date(); const thisMon = new Date(now); thisMon.setDate(now.getDate() - (now.getDay() + 6) % 7); thisMon.setHours(9, 0, 0, 0);
+      const back = (w, day) => { const x = new Date(thisMon); x.setDate(x.getDate() - 7 * w + day); return { date: x }; };
+      // weeks 1–2: 3 sessions, week 3: only 2 (breaks the run), week 4: 3 again
+      const recent = [back(1, 0), back(1, 2), back(1, 4), back(2, 0), back(2, 1), back(2, 2), back(3, 0), back(3, 1), back(4, 0), back(4, 1), back(4, 2)];
+      return _weekKey(wed) === '2026-11-23' && _weekKey(mon) === '2026-11-23' && _localYMD(wed) === '2026-11-25'
+        && getMaxWeeklySessions(hist) === 3 && getMaxWeeklySessions([]) === 0 && getLongestWeekStreak(hist) === 3
+        && getLongestWeekStreak([]) === 0 && calcWeekStreak(recent) === 2;
+    """,
+    'weight steps and rep targets': r"""
+      const st = [77.5, 80, 82.5, 85];
+      return snapToSteps(81, st) === 80 && snapToSteps(81.3, null) === 81.5 && stepWeight(80, 1, st) === 82.5
+        && stepWeight(80, -1, st) === 77.5 && stepWeight(85, 1, st) === 85 && stepWeight(77.5, -1, st) === 77.5
+        && parseRepTarget('8–12') === 10 && parseRepTarget('5') === 5 && parseRepTarget('45s') === null && parseRepTarget(null) === null;
+    """,
+    'adaptive engine: untracked, first, top of range, gap deload, rep shift': r"""
+      const st = [65, 67.5, 70, 72.5, 75, 77.5, 80, 82.5, 85];
+      const t0 = Date.UTC(2026, 10, 1);
+      const h = [{ date: t0, weight: 80, reps: [10, 10, 10] }];
+      const untracked = getLiftState({ repRange: '45s', history: h });
+      const first = getLiftState({ repRange: '8–10', plannedWeight: 60, history: [] });
+      const up = getLiftState({ repRange: '8–10', steps: st, history: h, thisSession: { reps: [10, 10, 10] }, nowMs: t0 + 2 * 864e5 });
+      const gap = getLiftState({ repRange: '8–10', steps: st, history: h, nowMs: t0 + 35 * 864e5 });
+      const shift = getLiftState({ repRange: '8–12', history: [{ date: t0, weight: 80, reps: [5, 5, 5] }], nowMs: t0 + 3 * 864e5 });
+      const keys = o => Object.keys(o).sort().join();
+      return untracked.rule === 'untracked' && first.rule === 'first' && first.confidence === 'low' && first.suggested === 60
+        && up.rule === 'A_topRange' && up.action === 'increase' && up.suggested === 82.5
+        && gap.rule === 'G_gapDeload' && gap.action === 'deload' && gap.suggested === 67.5
+        && shift.rule === 'H_repShift' && shift.suggested === 70 && keys(up) === keys(first) && _leanFor(3) === 'intensify' && _leanFor(null) === 'neutral';
+    """,
+    'rotation, recency, balance, measurements': r"""
+      const pools = { Bench: ['Incline', 'Dumbbell'] };
+      const now = Date.UTC(2026, 10, 25), wk = 7 * 864e5;
+      const bal = _muscleBalanceVerdict({ push: 0.25, pull: 0.25, legs: 0.3, core: 0.2 }, true);
+      const crit = _muscleBalanceVerdict({ push: 0.6, pull: 0.2, legs: 0.15, core: 0.05 }, true);
+      const m = _measureDelta([{ date: '2026-11-01', waist: 90 }, { date: '2026-10-01', waist: 92.5 }, { date: '2026-11-20', waist: 0 }], 'waist');
+      return _rotatePick('Bench', 0, pools) === null && _rotatePick('Bench', 1, pools) === 'Incline' && _rotatePick('Bench', 2, pools) === 'Dumbbell'
+        && _rotatePick('Bench', 3, pools) === null && _rotatePick('Squat', 1, pools) === null && _rotatePick('Bench', -1, pools) === 'Dumbbell'
+        && getRecencyWeight(now - wk, now) === 1 && getRecencyWeight(now - 1.5 * wk, now) === 1 && getRecencyWeight(now - 3 * wk, now) === 0.75
+        && getRecencyWeight(now - 5 * wk, now) === 0.5 && getRecencyWeight(now - 10 * wk, now) === 0.25 && getRecencyWeight(now - 20 * wk, now) === 0
+        && _muscleBalanceVerdict({ push: 0.3, pull: 0.3, legs: 0.32, core: 0.08 }, true).status === 'critical-low'
+        && bal.status === 'balanced' && crit.level === 3 && crit.low.key === 'core' && _muscleBalanceVerdict({}, false).status === 'nodata'
+        && m.latest === 90 && m.first === 92.5 && m.change === -2.5 && m.count === 2 && _measureDelta([], 'waist') === null;
+    """,
+    'next path day: never-done first; a day hitting muscles trained yesterday is demoted': r"""
+      const cands = [{ day: 'Push', sinceDone: 1, order: 0, groups: ['push'] }, { day: 'Legs', sinceDone: 999, order: 2, groups: ['legs'] },
+        { day: 'Pull', sinceDone: 4, order: 1, groups: ['pull'] }];
+      const a = _rankNextPathDays(cands, []);
+      const b = _rankNextPathDays(cands, [{ groups: ['legs'], daysAgo: 1 }]);
+      return a[0].day === 'Legs' && b[0].day === 'Pull' && b[b.length - 1].day === 'Legs' && _rankNextPathDays([], []).length === 0;
+    """,
+}
+
+def gate_rules_module(html, js, root=None):
+    root = root or ROOT
+    m = 'app/rules.js'
+    problems, src = _module_bundle_problems(html, m, root)
+    if src is not None:
+        code = re.sub(r'//[^\n]*', '', src)
+        if re.search(r'\blocalStorage\b|\bfetch\s*\(|\bsbFetch\b|\bcompletedSessions\b|\buserProfile\b', code):
+            problems.append(f'{m} must stay pure (no storage, network or app state)')
+    sess_p = os.path.join(root, 'app', 'session.js')
+    if src is not None and os.path.exists(JSC) and os.path.exists(sess_p):
+        problems += ['standalone ' + f for f in _run_jsc_scenarios(JSC_CONSOLE + src + '\n',
+            {'loads with nothing but a console': 'return typeof getLiftState === "function" && RANKS.length === 16;'})]
+        sess = open(sess_p, encoding='utf-8').read()
+        problems += ['standalone ' + f for f in _run_jsc_scenarios(JSC_CONSOLE + sess + '\n' + src + '\n', RULES_SCENARIOS)]
+        # local, not UTC: this Mac may sit at UTC+0 (UK winter), where the two agree
+        wk = {k: v for k, v in RULES_SCENARIOS.items() if k.startswith('weeks:')}
+        for tz in ('Pacific/Kiritimati', 'America/Los_Angeles'):
+            problems += [f'standalone (TZ={tz}) ' + f for f in _run_jsc_scenarios(JSC_CONSOLE + sess + '\n' + src + '\n', wk, env={'TZ': tz})]
+    if not problems:
+        print(f'  ✓ {m} bundled verbatim right after app/ai.js; no declaration duplicated in index.html; pure; '
+              f'loads on its own and passes {len(RULES_SCENARIOS)} standalone scenarios, week keys in 3 time zones (session contract, weight repair, ranks, XP, comeback, weeks/streaks, steps, adaptive engine, rotation, balance, measurements, next day)')
+    for p in problems: print('  ✗ ' + p)
+    return not problems
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/36] parse')
+    print('[1/37] parse')
     p = gate_parse(js)
-    print('[2/36] invariants')
+    print('[2/37] invariants')
     inv = gate_invariants(js)
-    print('[3/36] video map')
+    print('[3/37] video map')
     vm = gate_videomap(js)
-    print('[4/36] inline handler wiring')
+    print('[4/37] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/36] auth log hygiene')
+    print('[5/37] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/36] sign-out scrub')
+    print('[6/37] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/36] safe rendering of user text')
+    print('[7/37] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/36] sync honesty')
+    print('[8/37] sync honesty')
     sy = gate_sync(js)
-    print('[9/36] media fallback + reminder copy')
+    print('[9/37] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/36] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/37] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/36] core-journey accessibility (session + dialogs)')
+    print('[11/37] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/36] Start today (first-use flow) + shortened Path wizard')
+    print('[12/37] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/36] simplified navigation (default, reversible, one-time notice)')
+    print('[13/37] simplified navigation (default, reversible, one-time notice)')
     nv = gate_nav_v2(html, js)
-    print('[14/36] Progress weekly briefing')
+    print('[14/37] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/36] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/37] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/36] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/37] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/36] Phase 2 typed sets (preview before save)')
+    print('[17/37] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
-    print('[18/36] Phase 2 weekly AI recap + measurement')
+    print('[18/37] Phase 2 weekly AI recap + measurement')
     rc = gate_recap(html, js)
-    print('[19/36] Phase 3 offline media (download, cache versioning, fallback order)')
+    print('[19/37] Phase 3 offline media (download, cache versioning, fallback order)')
     om = gate_offline_media(html, js)
-    print('[20/36] Phase 3 programme discovery (metadata, finder, why, switch preview)')
+    print('[20/37] Phase 3 programme discovery (metadata, finder, why, switch preview)')
     dc = gate_discovery(html, js)
-    print('[21/36] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
+    print('[21/37] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
     sh = gate_sharing(html, js)
-    print('[22/36] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
+    print('[22/37] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
     lf = gate_leftovers(html, js)
-    print('[23/36] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
+    print('[23/37] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
     rm = gate_reminders(html, js)
-    print('[24/36] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
+    print('[24/37] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
     rs = gate_reminders_server(html, js)
-    print('[25/36] Profile & settings information model (flagged)')
+    print('[25/37] Profile & settings information model (flagged)')
     pv = gate_profile_v2(html, js)
-    print('[26/36] rollout registry + configuration in Data health')
+    print('[26/37] rollout registry + configuration in Data health')
     ro = gate_rollout(html, js)
-    print('[27/36] Today headline metric (context-sensitive, pinnable)')
+    print('[27/37] Today headline metric (context-sensitive, pinnable)')
     tm = gate_today_metric(html, js)
-    print('[28/36] authentication forms (Enter, password managers, errors, local data kept)')
+    print('[28/37] authentication forms (Enter, password managers, errors, local data kept)')
     af = gate_auth_forms(html, js)
-    print('[29/36] product-wide accessibility (click targets, state, dialog names)')
+    print('[29/37] product-wide accessibility (click targets, state, dialog names)')
     ax = gate_a11y_product(html, js)
-    print('[30/36] offline coverage explained (what works in the gym, what removal deletes)')
+    print('[30/37] offline coverage explained (what works in the gym, what removal deletes)')
     oc = gate_offline_coverage(html, js)
-    print('[31/36] feedback operational controls (bounded payloads, safe retries, rate limits, receipt)')
+    print('[31/37] feedback operational controls (bounded payloads, safe retries, rate limits, receipt)')
     fo = gate_feedback_ops(html, js)
-    print('[32/36] controlled AI beta (cohort, explanations, outcomes, failure review)')
+    print('[32/37] controlled AI beta (cohort, explanations, outcomes, failure review)')
     ab = gate_ai_beta(html, js)
-    print('[33/36] extracted modules (app/rollout.js: verbatim bundle, works standalone, one source of truth)')
+    print('[33/37] extracted modules (app/rollout.js: verbatim bundle, works standalone, one source of truth)')
     md = gate_modules(html, js)
-    print('[34/36] sync module (app/sync.js: verbatim bundle, no duplicate declarations, works standalone)')
+    print('[34/37] sync module (app/sync.js: verbatim bundle, no duplicate declarations, works standalone)')
     sm = gate_sync_module(html, js)
-    print('[35/36] session module (app/session.js: state declarations + pure session logic, works standalone)')
+    print('[35/37] session module (app/session.js: state declarations + pure session logic, works standalone)')
     ss = gate_session_module(html, js)
-    print('[36/36] AI modules (app/ai-validators.js one source for app + server; app/ai.js client works standalone)')
+    print('[36/37] AI modules (app/ai-validators.js one source for app + server; app/ai.js client works standalone)')
     am = gate_ai_module(html, js)
+    print('[37/37] rules module (app/rules.js: data contracts + pure training rules, works standalone)')
+    ru = gate_rules_module(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af and ax and oc and fo and ab and md and sm and ss and am:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af and ax and oc and fo and ab and md and sm and ss and am and ru:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 
