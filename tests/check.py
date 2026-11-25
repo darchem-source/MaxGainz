@@ -3702,7 +3702,7 @@ def gate_recap(html, js):
 # ─────────────────────────────────────────────────────────────────────────────
 SW_PATH = os.path.join(ROOT, 'sw.js')
 
-OFFLINE_FNS = ['_p3FlagsFromQuery', '_p3FlagOn', '_offlineProgrammeNames', '_offlineHiitExercises',
+OFFLINE_FNS = ['isLibraryProgramme', 'getLibraryProgramme', '_p3FlagsFromQuery', '_p3FlagOn', '_offlineProgrammeNames', '_offlineHiitExercises',
                '_offlineMediaSet', '_offlineSetBytes', '_offlineCacheKey', '_offlineParseKey',
                '_offlineStaleKeys', '_offlineStatus', '_offlineSpaceCheck', '_offlineStateLoad',
                '_offlineStateGet', '_offlineStatePut', '_offlineProgKey', '_offlineSetForKey',
@@ -3737,6 +3737,8 @@ function _v2Bail(){}
 function _exV2Id(n){ return EX_V2_ID_MAP[n] || null; }
 function _exGifId(n){ return EX_GIF_MAP[n] || null; }
 var userPath = { programme: 'ULF' };
+function isPathActive(){ return !!userPath && userPath.status !== 'completed'; }
+var todayProg = 'ULF';
 var sessStartTime = null;
 var _offlineCached = null, _offlineJob = null, _offlineTier = 'images', _offlineLastMsg = '';
 var _offlineCacheErr = false, _offlineSwOk = null, _offlineStaleSeen = new Set(), _offlineOtherSnap = [];
@@ -3853,6 +3855,15 @@ ok('?p3=offline', eqA(_p3FlagsFromQuery('?x=1&p3=offline'), { offline:true, disc
 ok('?p3=0', eqA(_p3FlagsFromQuery('?p3=0'), { offline:false, discover:false, share:false }));
 ok('no ?p3 → null', _p3FlagsFromQuery('?ai=all') === null && _p3FlagsFromQuery('?p3=bogus') === null);
 ok('flag off by default', _p3FlagOn('offline') === false);
+// No active Path (completed, or never started): follow the Today programme.
+var _up = userPath, _tp = todayProg;
+userPath = { programme:'library:phul', status:'completed' }; todayProg = 'ULF'; ok('completed Path → Today programme', _offlineProgKey() === 'ULF');
+todayProg = 'library:sl5x5'; ok('completed Path → Today library programme', _offlineProgKey() === 'library:sl5x5');
+todayProg = 'My Own Workout'; ok('custom Today programme → nothing to download', _offlineProgKey() === null);
+todayProg = 'HIIT'; userPath = null; ok('freestyle HIIT, no Path → nothing', _offlineProgKey() === null);
+userPath = { programme:'PPL' }; todayProg = 'ULF'; ok('active Path wins over Today', _offlineProgKey() === 'PPL');
+ok('explicit Path argument unchanged', _offlineProgKey({ programme:'library:phul', status:'completed' }) === 'library:phul');
+userPath = _up; todayProg = _tp;
 // Fallback order. A loop id with frames:
 var loopId = Array.from(EX_MEDIA_LOOPS)[0]; var loopName = Object.keys(EX_VIDEO_MAP).filter(function(n){ return EX_VIDEO_MAP[n].split('|')[0] === loopId; })[0];
 navigator.onLine = true; _offlineCached = null;
@@ -4150,6 +4161,8 @@ def gate_offline_media(html, js, sw=None, root=None):
     problems = []
     rpa = extract_decl(js, '_renderPathTabActive') or ''
     if '_offlineCardHtml()' not in rpa: problems.append('Plan card not rendered on the active Plan tab')
+    if '_offlineCardHtml()' not in (extract_decl(js, '_renderPathTabEmpty') or ''): problems.append('no offline card without an active Path')
+    if 'if(isPathActive()) _offlineRefreshCard();' in (extract_decl(js, 'renderPathTab') or ''): problems.append('card only refreshed with an active Path')
     och = extract_decl(js, '_offlineCardHtml') or ''
     if "_p3FlagOn('offline')" not in och: problems.append('card not behind the offline flag')
     inner = extract_decl(js, '_offlineCardInner') or ''
