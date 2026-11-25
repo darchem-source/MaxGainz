@@ -605,6 +605,20 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
 .recap-head{font-size:16px;font-weight:800;color:var(--text);margin:0 0 6px;line-height:1.3;}
 .recap-head strong,.recap-card .coach-text strong{color:var(--accent2);}
 .recap-src{font-size:11px;color:var(--text2);margin:8px 0 0;}
+/* Profile layout v2 (flag ?p5=profile) */
+.pf-v2{padding:8px 16px 16px;display:flex;flex-direction:column;gap:14px;max-width:500px;}
+.pf-sec{background:var(--surface);border:0.5px solid var(--border);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:12px;}
+.pf-h{font-size:12px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:1.4px;margin:0;}
+details.pf-sec > summary.pf-h{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;min-height:24px;}
+details.pf-sec > summary.pf-h::-webkit-details-marker{display:none;}
+details.pf-sec > summary.pf-h::after{content:'▾';font-size:14px;transition:transform .15s;}
+details.pf-sec:not([open]) > summary.pf-h::after{transform:rotate(-90deg);}
+details.pf-sec:not([open]){gap:0;}
+.pf-caption{font-size:12px;font-weight:700;color:var(--accent);margin:4px 0 -6px;}
+.pf-note{font-size:11px;color:var(--text2);line-height:1.5;margin:-4px 0 0;}
+.pf-sec > *{margin-bottom:0 !important;}
+.pf-sec > [data-pb="data-backup"], .pf-sec > [data-pb="data-delete"], .pf-sec > [data-pb="data-shares"]{margin-top:0 !important;border-top:none !important;padding-top:0 !important;}
+.pf-sec > [data-pb="data-delete"] > div{margin-bottom:0 !important;}
 </style>
 </head>
 <body>
@@ -1086,7 +1100,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         <div style="font-size:13px;color:var(--text2);margin-top:2px;" id="profileSubtitle">Complete your info to personalise your workouts</div>
       </div>
       <!-- Cloud Sync Status -->
-      <div style="padding:16px;padding-bottom:8px;">
+      <div data-pb="account-cloud" style="padding:16px;padding-bottom:8px;">
         <div style="background:var(--surface2);border-radius:10px;padding:12px;display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
           <div style="display:flex;align-items:center;gap:8px;flex:1;">
             <span style="font-size:16px;">☁️</span>
@@ -1103,9 +1117,9 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
           <button id="cloudToggle" style="padding:6px 12px;background:var(--accent);color:#000;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">Sign In</button>
         </div>
       </div>
-      <div style="padding:16px;display:flex;flex-direction:column;gap:12px;max-width:500px;">
+      <div data-pbc="main" style="padding:16px;display:flex;flex-direction:column;gap:12px;max-width:500px;">
         <!-- Avatar Selection -->
-        <div>
+        <div data-pb="account-icon">
           <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:10px;">Choose Your Icon</label>
           <div id="avatarGrid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px;"></div>
           <input type="file" id="profilePhotoInput" accept="image/*" style="display:none;" onchange="handlePhotoUpload(event)">
@@ -1117,7 +1131,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
         
         <!-- First Name & Last Name -->
-        <div style="display:flex;gap:8px;">
+        <div data-pb="names" style="display:flex;gap:8px;">
           <div style="flex:1;">
             <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">First Name</label>
             <input type="text" id="profileFirstName" placeholder="Max" style="width:100%;padding:10px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:14px;color:var(--text);">
@@ -1129,19 +1143,19 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
         
         <!-- Email -->
-        <div>
+        <div data-pb="email">
           <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">Email</label>
           <input type="email" id="profileEmail" placeholder="max@example.com" style="width:100%;padding:10px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:14px;color:var(--text);">
         </div>
         
         <!-- Preferred Name (from signup) -->
-        <div>
+        <div data-pb="prefname">
           <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">Preferred Name <span style="color:var(--text2);font-weight:400;">(from signup)</span></label>
           <input type="text" id="profilePreferredName" placeholder="Your display name" style="width:100%;padding:10px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:14px;color:var(--text);">
         </div>
         
         <!-- Gender -->
-        <div>
+        <div data-pb="about-gender">
           <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">Gender</label>
           <select id="profileGender" style="width:100%;padding:10px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:14px;color:var(--text);">
             <option value="">Select gender</option>
@@ -1152,13 +1166,13 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
         
         <!-- Date of Birth -->
-        <div>
+        <div data-pb="about-dob">
           <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">Date of Birth</label>
           <input type="date" id="profileDOB" style="width:100%;padding:10px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:14px;color:var(--text);">
         </div>
         
         <!-- Height -->
-        <div style="display:flex;gap:8px;">
+        <div data-pb="about-height" style="display:flex;gap:8px;">
           <div style="flex:1;">
             <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">Height</label>
             <div style="display:flex;gap:4px;">
@@ -1169,7 +1183,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
         
         <!-- Weight (for BW exercises) -->
-        <div style="display:flex;gap:8px;">
+        <div data-pb="body-weight" style="display:flex;gap:8px;">
           <div style="flex:1;">
             <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">Current Weight</label>
             <div style="display:flex;gap:4px;">
@@ -1180,7 +1194,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
 
         <!-- Body Weight Tracker (history chart) -->
-        <div>
+        <div data-pb="body-history">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
             <label style="font-size:12px;font-weight:700;color:var(--text2);">Weight History</label>
             <button onclick="openBWLog()" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer;">+ Log weight</button>
@@ -1211,7 +1225,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
 
         <!-- Body Measurements -->
-        <div style="margin-top:14px;">
+        <div data-pb="body-measure" style="margin-top:14px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
             <label style="font-size:12px;font-weight:700;color:var(--text2);">Measurements <span style="font-weight:400;opacity:0.6;">(cm)</span></label>
             <button onclick="openMeasureLog()" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer;">+ Log measurements</button>
@@ -1220,13 +1234,13 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
 
         <!-- Appearance / Colour Theme -->
-        <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;">
+        <div data-pb="pref-theme" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;">
           <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:12px;">🎨 App Theme</div>
           <div id="themeSwatches" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;"></div>
         </div>
 
         <!-- Audio Settings Section -->
-        <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;">
+        <div data-pb="pref-sound" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;">
           <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:12px;">🔊 Sound & Feedback</div>
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;">
             <div style="flex:1;">
@@ -1241,11 +1255,11 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
 
         <!-- Garry's Settings Section -->
-        <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;">
+        <div data-pb="garry" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;">
           <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:12px;">🏃 Garry's Workout Settings</div>
 
           <!-- Runner Level -->
-          <div style="margin-bottom:12px;">
+          <div data-pb="train-runner" style="margin-bottom:12px;">
             <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
               <label style="font-size:12px;font-weight:700;color:var(--text2);">Runner Level</label>
               <button onclick="openRunnerLevelInfo()" title="What do these levels mean?"
@@ -1264,7 +1278,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
           </div>
 
           <!-- Speed Unit -->
-          <div style="margin-bottom:12px;">
+          <div data-pb="pref-speed" style="margin-bottom:12px;">
             <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">Treadmill Speed</label>
             <div style="display:flex;gap:8px;">
               <button onclick="setSpeedUnit('mph')" id="speedBtn-mph" style="flex:1;padding:8px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;transition:all 0.2s;">mph</button>
@@ -1273,7 +1287,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
           </div>
 
           <!-- Weight Unit -->
-          <div>
+          <div data-pb="pref-weightunit">
             <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">Dumbbell/Barbell Weight</label>
             <div style="display:flex;gap:8px;">
               <button onclick="setWeightUnit('kg')" id="weightBtn-kg" style="flex:1;padding:8px;background:var(--surface);border:0.5px solid var(--border);border-radius:8px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;transition:all 0.2s;">Kilograms (kg)</button>
@@ -1283,7 +1297,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
 
         <!-- Runner Level Info Modal -->
-        <div class="modal-ov" id="runnerLevelInfoMod" onclick="if(event.target===this)this.classList.remove('open')">
+        <div data-pb="runner-modal" class="modal-ov" id="runnerLevelInfoMod" onclick="if(event.target===this)this.classList.remove('open')">
           <div class="modal" style="display:flex;flex-direction:column;max-height:88vh;padding-bottom:8px;">
             <div class="modal-handle"></div>
             <div style="font-size:19px;font-weight:800;margin-bottom:4px;">Runner Level</div>
@@ -1328,27 +1342,27 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
         
         <!-- Save Button -->
-        <button onclick="saveProfile()" style="background:var(--accent);color:#000;border:none;border-radius:10px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;margin-top:12px;">Save Profile</button>
+        <button data-pb="save" onclick="saveProfile()" style="background:var(--accent);color:#000;border:none;border-radius:10px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;margin-top:12px;">Save Profile</button>
         
         <!-- Info Box -->
-        <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-top:8px;">
+        <div data-pb="info" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;margin-top:8px;">
           <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:4px;">ℹ️ How we use this info</div>
           <div style="font-size:12px;color:var(--text2);line-height:1.5;">
-            • Your weight is used to calculate bodyweight exercise volume in Muscle Balance<br>
-            • Height helps track body composition over time<br>
-            • All data is saved locally on your device
+            • Your weight is used for bodyweight exercises and the Muscle Balance chart<br>
+            • Gender, date of birth and height are optional and don't change your training today<br>
+            • Saved on this device, and to your account when you're signed in
           </div>
         </div>
         
         <!-- ── SETTINGS & DATA ── -->
-        <div style="margin-top:24px;">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+        <div data-pbc="settings" style="margin-top:24px;">
+          <div data-pb="settings-head" style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
             <div style="font-size:11px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;">Settings & Data</div>
             <div style="flex:1;height:0.5px;background:var(--border);"></div>
           </div>
           
           <!-- Sync status -->
-          <div style="background:var(--surface2);border-radius:12px;padding:14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;">
+          <div data-pb="account-sync" style="background:var(--surface2);border-radius:12px;padding:14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;">
             <div>
               <div style="font-size:13px;color:var(--text);" id="storageBadge">💾 0 sessions saved</div>
               <div style="font-size:11px;color:var(--text2);margin-top:2px;" id="syncStatus" role="status" aria-live="polite">💾 Saved on this device</div>
@@ -1357,31 +1371,31 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
           </div>
           
           <!-- Data actions -->
-          <div style="display:flex;gap:8px;margin-bottom:10px;">
-            <button onclick="exportData()" style="flex:1;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;">⬇ Export JSON</button>
-            <button onclick="confirmClear()" style="flex:1;background:rgba(255,77,106,0.08);border:0.5px solid rgba(255,77,106,0.3);border-radius:10px;padding:11px;font-size:12px;font-weight:700;color:var(--red);cursor:pointer;">🗑 Clear history</button>
+          <div data-pbc="data-row" style="display:flex;gap:8px;margin-bottom:10px;">
+            <button data-pb="data-exportjson" onclick="exportData()" style="flex:1;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;">⬇ Export JSON</button>
+            <button data-pb="data-clear" onclick="confirmClear()" style="flex:1;background:rgba(255,77,106,0.08);border:0.5px solid rgba(255,77,106,0.3);border-radius:10px;padding:11px;font-size:12px;font-weight:700;color:var(--red);cursor:pointer;">🗑 Clear history</button>
           </div>
-          <button onclick="openDataHealth()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🩺 Data health check</button>
+          <button data-pb="data-health" onclick="openDataHealth()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🩺 Data health check</button>
           <!-- Path -->
-          <button class="v1-only" onclick="openStartTodayFromProfile()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">⚡ Recommend a plan for me</button>
-          <button onclick="openDetailedSetup()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🎚 Fine-tune starting weights</button>
-          <button class="v1-only" onclick="openPathWizard()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🎯 Change My Path</button>
+          <button data-pb="train-recommend" class="v1-only" onclick="openStartTodayFromProfile()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">⚡ Recommend a plan for me</button>
+          <button data-pb="train-finetune" onclick="openDetailedSetup()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🎚 Fine-tune starting weights</button>
+          <button data-pb="train-path" class="v1-only" onclick="openPathWizard()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:10px;">🎯 Change My Path</button>
           <!-- Training-day reminders (Phase 4, ?p4=reminders) -->
           <div id="remindersCard" hidden></div>
           <!-- In-app alerts (only when the app is open) -->
-          <button id="notifEnableBtn" onclick="requestNotificationPermission()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;margin-bottom:2px;">🔔 Allow alerts when you open the app</button>
-          <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">If a muscle group goes 7+ days untrained, you'll see a reminder when you open or return to Max Gainz. This alert is never sent while the app is closed.</div>
+          <button data-pb="pref-alerts" id="notifEnableBtn" onclick="requestNotificationPermission()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;margin-bottom:2px;">🔔 Allow alerts when you open the app</button>
+          <div data-pb="pref-alerts" style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">If a muscle group goes 7+ days untrained, you'll see a reminder when you open or return to Max Gainz. This alert is never sent while the app is closed.</div>
           <!-- Effort (RPE) tracking -->
-          <button id="trackRpeBtn" onclick="toggleTrackRPE()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">📊 Track effort (RPE): Off</button>
-          <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Adds an optional effort chip when logging a set — the coach uses it to fine-tune weight suggestions.</div>
+          <button data-pb="train-rpe" id="trackRpeBtn" onclick="toggleTrackRPE()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">📊 Track effort (RPE): Off</button>
+          <div data-pb="train-rpe" style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Adds an optional effort chip when logging a set — the coach uses it to fine-tune weight suggestions.</div>
           <!-- Periodization -->
-          <button id="periodizeBtn" onclick="togglePeriodize()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">🗓 Periodize training: Off</button>
-          <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">A rolling 4-week rhythm (build → push → recover) that eases off borderline jumps on recovery weeks.</div>
+          <button data-pb="train-periodize" id="periodizeBtn" onclick="togglePeriodize()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">🗓 Periodize training: Off</button>
+          <div data-pb="train-periodize" style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">A rolling 4-week rhythm (build → push → recover) that eases off borderline jumps on recovery weeks.</div>
           <!-- Exercise rotation -->
-          <button id="navV2Btn" onclick="toggleNavV2()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;" aria-pressed="false">🧭 Simplified navigation: Off</button>
-          <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Today · Plan · Progress · Profile, with the workout as a full-screen mode. Switch back any time.</div>
-          <button id="rotateExBtn" onclick="toggleRotateExercises()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">🔄 Exercise variety: On</button>
-          <div style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Accessory exercises rotate through fresh variations each time you repeat a workout day. Main lifts never change.</div>
+          <button data-pb="pref-nav" id="navV2Btn" onclick="toggleNavV2()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;" aria-pressed="false">🧭 Simplified navigation: Off</button>
+          <div data-pb="pref-nav" style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Today · Plan · Progress · Profile, with the workout as a full-screen mode. Switch back any time.</div>
+          <button data-pb="train-variety" id="rotateExBtn" onclick="toggleRotateExercises()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:2px;">🔄 Exercise variety: On</button>
+          <div data-pb="train-variety" style="font-size:10px;color:var(--text2);text-align:center;margin-bottom:10px;line-height:1.4;">Accessory exercises rotate through fresh variations each time you repeat a workout day. Main lifts never change.</div>
           <!-- Phase 2: AI coaching consent (shown only when the maxgainz_ai_v1 rollout flag is on) -->
           <div id="aiSettings" hidden style="background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px;">
             <button id="aiCoachBtn" type="button" aria-pressed="false" aria-describedby="aiCoachInfo aiCoachState" onclick="toggleAiCoach()" style="width:100%;background:var(--surface);border:0.5px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;min-height:44px;">✨ AI coaching: Off</button>
@@ -1394,18 +1408,18 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
             <button id="aiNotesBtn" type="button" aria-pressed="false" disabled onclick="toggleAiNotes()" style="width:100%;margin-top:8px;background:transparent;border:0.5px solid var(--border);border-radius:10px;padding:10px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;min-height:44px;">Also send my exercise notes: Off</button>
           </div>
           <!-- Feedback -->
-          <button onclick="openFeedbackModal()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;">📬 Send Feedback</button>
+          <button data-pb="data-feedback" onclick="openFeedbackModal()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;text-align:left;">📬 Send Feedback</button>
         </div>
 
         <!-- Shared links (Phase 3, flag maxgainz_p3_share) -->
-        <div id="sharedLinksSection" hidden style="margin-top:20px;padding-top:20px;border-top:0.5px solid var(--border);">
+        <div data-pb="data-shares" id="sharedLinksSection" hidden style="margin-top:20px;padding-top:20px;border-top:0.5px solid var(--border);">
           <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px;">SHARED LINKS</div>
           <div style="font-size:11px;color:var(--text2);margin-bottom:10px;line-height:1.5;">See who-can-see links you've created and turn any of them off.</div>
           <button type="button" class="st-secondary" onclick="openSharedLinks()">Manage shared links</button>
         </div>
 
         <!-- Data Backup -->
-        <div style="margin-top:20px;padding-top:20px;border-top:0.5px solid var(--border);">
+        <div data-pb="data-backup" style="margin-top:20px;padding-top:20px;border-top:0.5px solid var(--border);">
           <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px;">DATA BACKUP</div>
           <div style="font-size:11px;color:var(--text2);margin-bottom:10px;line-height:1.5;">Export everything (sessions, custom programmes, body weight, prefs) as a JSON file. Import to restore on a new device or roll back.</div>
           <div style="display:flex;gap:8px;">
@@ -1416,7 +1430,7 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
         </div>
 
         <!-- Delete Account Section -->
-        <div style="margin-top:20px;padding-top:20px;border-top:0.5px solid var(--border);">
+        <div data-pb="data-delete" style="margin-top:20px;padding-top:20px;border-top:0.5px solid var(--border);">
           <div style="background:rgba(255,77,106,0.1);border:0.5px solid rgba(255,77,106,0.25);border-radius:10px;padding:12px;margin-bottom:12px;">
             <div style="font-size:12px;font-weight:700;color:var(--red);margin-bottom:4px;">⚠️ Delete Account</div>
             <div style="font-size:12px;color:var(--text2);margin-bottom:12px;">This action cannot be undone. You can download a complete copy of your data first.</div>
@@ -29356,6 +29370,139 @@ const PROFILE_ICONS = [
 ];
 const AVATARS=['🏋️','💪','🏆','⚡','🔥','🎯','🚀','💯','😤','🤸'];
 
+// ── PROFILE LAYOUT V2 (flag ?p5=profile) ──
+// Groups the Profile screen into Account · Your training · Body · About you ·
+// Preferences · Data & account (audit P2). The flag only MOVES the existing
+// elements (tagged data-pb) into new sections — nothing is duplicated, every id
+// and handler stays the same, and with the flag off the screen is untouched.
+const P5_FLAG_KEYS = { profile:'maxgainz_p5_profile' };
+function _p5FlagsFromQuery(search){
+  const m = /[?&]p5=([^&#]*)/.exec(String(search || ''));
+  if(!m) return null;
+  let v = '';
+  try { v = decodeURIComponent(m[1]).toLowerCase(); } catch(e){ return null; }
+  const all = Object.keys(P5_FLAG_KEYS);
+  if(v === '0' || v === 'off'){ const o = {}; all.forEach(k => { o[k] = false; }); return o; }
+  const want = (v === 'all' || v === '1') ? all : v.split(',').map(x => x.trim()).filter(x => all.indexOf(x) !== -1);
+  if(!want.length) return null;
+  const out = {};
+  all.forEach(k => { out[k] = want.indexOf(k) !== -1; });
+  return out;
+}
+function _p5ApplyFlagQuery(){
+  let f = null;
+  try { f = _p5FlagsFromQuery(location.search); } catch(e){ f = null; }
+  if(!f) return;
+  try {
+    Object.keys(P5_FLAG_KEYS).forEach(k => { if(f[k]) localStorage.setItem(P5_FLAG_KEYS[k], '1'); else localStorage.removeItem(P5_FLAG_KEYS[k]); });
+    const rest = location.search.replace(/[?&]p5=[^&#]*/, '').replace(/^&/, '?');
+    history.replaceState(null, '', location.pathname + (rest && rest !== '?' ? rest : '') + location.hash);
+  } catch(e){}
+}
+function _p5FlagOn(name){
+  try { return !!P5_FLAG_KEYS[name] && localStorage.getItem(P5_FLAG_KEYS[name]) === '1'; } catch(e){ return false; }
+}
+
+// Section → blocks, in order. A block is every element tagged data-pb="<key>"
+// (or, for the two flag-gated cards, an id). '-' entries are hidden in v2.
+const PROFILE_V2_LAYOUT = [
+  { id:'pfAccount',  title:'Account',          blocks:['account-icon', 'prefname', 'names', 'email', 'account-cloud', 'account-sync'] },
+  { id:'pfTraining', title:'Your training',    note:'How Max Gainz plans and progresses your workouts.',
+    blocks:['train-recommend', 'train-path', 'train-finetune', 'train-rpe', 'train-periodize', 'train-variety', { k:'train-runner', caption:'🏃 For Garry\'s treadmill workouts' }, '#aiSettings'] },
+  { id:'pfBody',     title:'Body',             note:'Your current weight is used for bodyweight exercises and the Muscle Balance chart.',
+    blocks:['body-weight', 'body-history', 'body-measure'] },
+  { id:'pfAbout',    title:'About you',        collapsed:true, note:'Optional. Saved to your account; not used to change your training today.',
+    blocks:['about-gender', 'about-dob', 'about-height'] },
+  { id:'pfPrefs',    title:'Preferences',      blocks:['pref-weightunit', 'pref-speed', 'pref-sound', 'pref-theme', 'pref-nav', '#remindersCard', 'pref-alerts'] },
+  { id:'pfData',     title:'Data & account',   blocks:['data-backup', 'data-health', 'data-shares', 'data-feedback', 'data-clear', 'data-delete'] }
+];
+// Shown in the old layout only: replaced by the sections' own wording / autosave / the full export.
+const PROFILE_V2_HIDDEN = ['garry', 'save', 'info', 'settings-head', 'data-exportjson'];
+const PROFILE_V2_KEEP = ['runner-modal'];   // overlays: moved, never hidden
+
+let _profileV2Applied = false;
+function _profileV2Blocks(root, key){
+  if(key.charAt(0) === '#'){ const el = root.querySelector(key); return el ? [el] : []; }
+  return Array.from(root.querySelectorAll('[data-pb="' + key + '"]'));
+}
+function _profileApplyLayoutV2(){
+  if(_profileV2Applied || !_p5FlagOn('profile')) return false;
+  const screen = document.getElementById('s-profile');
+  if(!screen) return false;
+  const header = screen.querySelector('.page-header');
+  const v2 = document.createElement('div');
+  v2.id = 'profileV2';
+  v2.className = 'pf-v2';
+  PROFILE_V2_LAYOUT.forEach(sec => {
+    const wrap = document.createElement(sec.collapsed ? 'details' : 'section');
+    wrap.id = sec.id;
+    wrap.className = 'pf-sec';
+    const head = document.createElement(sec.collapsed ? 'summary' : 'h2');
+    head.className = 'pf-h';
+    head.id = sec.id + 'H';
+    head.textContent = sec.title + (sec.collapsed ? ' (optional)' : '');
+    wrap.appendChild(head);
+    if(!sec.collapsed) wrap.setAttribute('aria-labelledby', head.id);
+    if(sec.note){ const n = document.createElement('p'); n.className = 'pf-note'; n.textContent = sec.note; wrap.appendChild(n); }
+    sec.blocks.forEach(b => {
+      const k = typeof b === 'string' ? b : b.k;
+      const els = _profileV2Blocks(screen, k);
+      if(typeof b === 'object' && b.caption && els.length){
+        const c = document.createElement('div'); c.className = 'pf-caption'; c.textContent = b.caption; wrap.appendChild(c);
+      }
+      if(els.length > 1){   // a control and its explanation stay together
+        const g = document.createElement('div'); g.className = 'pf-group';
+        els.forEach(el => g.appendChild(el)); wrap.appendChild(g);
+      } else els.forEach(el => wrap.appendChild(el));
+    });
+    if(sec.id === 'pfAccount'){
+      const st = document.createElement('div');
+      st.id = 'profileSaveStatus'; st.className = 'pf-note';
+      st.setAttribute('role', 'status'); st.setAttribute('aria-live', 'polite');
+      st.textContent = 'Changes save as you leave each field.';
+      wrap.appendChild(st);
+    }
+    v2.appendChild(wrap);
+  });
+  PROFILE_V2_KEEP.forEach(k => _profileV2Blocks(screen, k).forEach(el => v2.appendChild(el)));
+  PROFILE_V2_HIDDEN.forEach(k => _profileV2Blocks(screen, k).forEach(el => { el.hidden = true; el.setAttribute('data-pb-hidden', '1'); }));
+  if(header && header.nextSibling) screen.insertBefore(v2, header.nextSibling); else screen.appendChild(v2);
+  // The old containers now hold only hidden leftovers.
+  screen.querySelectorAll('[data-pbc]').forEach(c => { c.hidden = true; });
+  const accountWrap = screen.querySelector('[data-pb="account-cloud"]');
+  if(accountWrap) accountWrap.style.padding = '0';
+  const sub = document.getElementById('profileSubtitle');
+  if(sub) sub.textContent = 'Your account, training settings and data';
+  // Profile fields save as you leave them (no Save button in this layout).
+  ['profileFirstName', 'profileLastName', 'profileEmail', 'profilePreferredName', 'profileGender', 'profileDOB', 'profileHeightCM', 'profileWeight'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el) el.addEventListener('change', _profileAutosave);
+  });
+  screen.classList.add('pf-v2-on');
+  _profileV2Applied = true;
+  return true;
+}
+// Same honesty as _announceSave, shown in place instead of a toast per field.
+function _profileSaveStatus(cloudPromise){
+  const el = document.getElementById('profileSaveStatus');
+  if(!el) return;
+  if(!isAuthenticated()){ el.textContent = '✓ Saved on this device'; return; }
+  el.textContent = '✓ Saved on this device · syncing…';
+  Promise.resolve(cloudPromise).then(res => {
+    el.textContent = res === false ? '✓ Saved on this device · syncs once your account has finished loading'
+      : (res !== null && res !== undefined ? '☁️ Saved and synced to your account' : '✓ Saved on this device · will sync automatically');
+  }).catch(() => {});
+}
+let _profileSaveTimer = null;
+function _profileAutosave(){
+  clearTimeout(_profileSaveTimer);
+  _profileSaveTimer = setTimeout(() => { try { saveProfile({ quiet: true }); } catch(e){} }, 150);
+}
+if(typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', () => {
+  try { _p5ApplyFlagQuery(); } catch(e){}
+  try { _profileApplyLayoutV2(); } catch(e){ console.warn('[profile v2] layout failed:', e); }
+});
+
 function renderProfile(){
   // Body weight history chart (moved from Progress tab)
   if(typeof renderBWChart === 'function') renderBWChart();
@@ -29673,7 +29820,7 @@ function updateWeightUnitButtons(){
   }
 }
 
-function saveProfile(){
+function saveProfile(opts){
   // Save profile data to userProfile
   userProfile.firstName = document.getElementById('profileFirstName').value.trim();
   userProfile.lastName = document.getElementById('profileLastName').value.trim();
@@ -29701,7 +29848,8 @@ function saveProfile(){
 
   // Confirmation names WHERE it's saved; the cloud outcome follows (never a
   // blanket "saved!" while only the local copy is guaranteed).
-  _announceSave('Profile', _cloud);
+  if(opts && opts.quiet) _profileSaveStatus(_cloud);
+  else _announceSave('Profile', _cloud);
   renderToday(); // Update greeting if name changed
   renderBWChart(); // Reflect new weight in body weight graph
 }
