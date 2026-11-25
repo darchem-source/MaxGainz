@@ -760,7 +760,7 @@ def gate_wiring(html, js):
 # A shipped build printed the full Supabase auth response — access_token AND
 # refresh_token — plus the user's email to the browser console. Nothing on an
 # auth path may log a response body, a token, a password, or an email.
-AUTH_FUNCS = ['authLogin', 'authSignup', 'refreshAuthToken', 'sendPasswordReset',
+AUTH_FUNCS = ['authLogin', 'authSignup', 'refreshAuthToken', 'sendPasswordReset', '_authFail', '_authPost',
               'sendConfirmationEmail', 'deleteUserAccount', 'authLogout', 'saveAuthState']
 # Bare identifiers that must never be passed to console.* on an auth path.
 FORBIDDEN_ARGS = ['data', 'token', 'password', 'email', 'authToken', 'authRefreshToken',
@@ -6306,66 +6306,213 @@ def gate_today_metric(html, js):
     for p in problems: print('  ✗ ' + p)
     return not problems
 
+# ── Gate 28: authentication forms (Priority 2) ────────────────────────────
+AUTH_PURE = r"""
+var P = [];
+function eq(l, g, w){ if(JSON.stringify(g) !== JSON.stringify(w)) P.push(l + ' — got ' + JSON.stringify(g) + ', want ' + JSON.stringify(w)); }
+var F = function(r){ return r ? r.field : null; };
+eq('signup: empty name', F(_authValidate('signup', { name:' ', email:'a@b.co', password:'12345678', confirm:'12345678' })), 'authName');
+eq('signup: empty email', F(_authValidate('signup', { name:'A', email:'', password:'12345678', confirm:'12345678' })), 'authEmail');
+eq('signup: invalid email (no dot / spaces)', [F(_authValidate('signup', { name:'A', email:'a@b', password:'12345678', confirm:'12345678' })), F(_authValidate('signup', { name:'A', email:'a b@c.de', password:'12345678', confirm:'12345678' }))], ['authEmail', 'authEmail']);
+eq('signup: short password', F(_authValidate('signup', { name:'A', email:'a@b.co', password:'1234567', confirm:'1234567' })), 'authPassword');
+eq('signup: mismatch', F(_authValidate('signup', { name:'A', email:'a@b.co', password:'12345678', confirm:'12345679' })), 'authPasswordConfirm');
+eq('signup: valid', _authValidate('signup', { name:'A', email:' a@b.co ', password:'12345678', confirm:'12345678' }), null);
+eq('login: invalid email / missing password / valid', [F(_authValidate('login', { email:'nope', password:'x' })), F(_authValidate('login', { email:'a@b.co', password:'' })), _authValidate('login', { email:'a@b.co', password:'x' })], ['loginEmail', 'loginPassword', null]);
+eq('reset/resend point at their own field', [F(_authValidate('reset', { email:'' })), F(_authValidate('resend', { email:'x' }))], ['resetEmail', 'resendEmail']);
+var C = function(k, st, d, off){ return _authErrorText(k, st, d, off).code; };
+eq('invalid credentials (code and text forms)', [C('login', 400, { error_code:'invalid_credentials', msg:'Invalid login credentials' }), C('login', 400, { error:'invalid_grant', error_description:'Invalid login credentials' })], ['invalid_credentials', 'invalid_credentials']);
+eq('invalid credentials → focus password', _authErrorText('login', 400, { error_code:'invalid_credentials' }).field, 'loginPassword');
+var nc = _authErrorText('login', 400, { error_code:'email_not_confirmed', msg:'Email not confirmed' });
+eq('unconfirmed email offers resend', [nc.code, nc.resend], ['email_not_confirmed', true]);
+eq('already registered (code or text)', [C('signup', 422, { error_code:'user_already_exists' }), C('signup', 400, { msg:'User already registered' })], ['user_already_exists', 'user_already_exists']);
+eq('weak password', C('signup', 422, { error_code:'weak_password', msg:'Password should contain…' }), 'weak_password');
+eq('rate limit', [C('reset', 429, {}), C('resend', 400, { error_code:'over_email_send_rate_limit' })], ['rate_limit', 'rate_limit']);
+eq('server / network / offline', [C('login', 503, null), C('login', 0, null), C('login', 400, { error_code:'invalid_credentials' }, true)], ['server', 'network', 'network']);
+eq('bad email from the server points at that form', _authErrorText('resend', 400, { error_code:'email_address_invalid' }).field, 'resendEmail');
+var raw = _authErrorText('login', 418, { message:'<b>stack trace</b> at db.internal', code:418, details:{ token:'abc' } });
+eq('unknown error → generic text, never the raw body', [raw.code, /stack|internal|abc|<b>|418/.test(raw.msg)], ['unknown', false]);
+eq('array / string bodies are safe', [C('login', 400, ['x']), C('login', 400, 'oops')], ['unknown', 'unknown']);
+['signup','login','reset','resend'].forEach(function(k){ var m = _authErrorText(k, 400, {}).msg; if(!/^Couldn't/.test(m)) P.push('generic ' + k + ' message: ' + m); });
+JSON.stringify(P);
+"""
+
+AUTH_DOM = r"""
+var _els = {}, _focused = null, _logs = [];
+function El(id){ this.id = id; this.value = ''; this.style = {}; this.hidden = false; this.disabled = false; this.textContent = ''; this.dataset = {}; this.attrs = {}; this.offsetParent = {}; }
+El.prototype.setAttribute = function(k, v){ this.attrs[k] = String(v); };
+El.prototype.getAttribute = function(k){ return Object.prototype.hasOwnProperty.call(this.attrs, k) ? this.attrs[k] : null; };
+El.prototype.removeAttribute = function(k){ delete this.attrs[k]; };
+El.prototype.focus = function(){ _focused = this.id; };
+var document = { getElementById: function(id){ return _els[id] || (_els[id] = new El(id)); },
+  querySelectorAll: function(sel){ return sel.indexOf('aria-invalid') !== -1 ? Object.keys(_els).map(function(k){ return _els[k]; }).filter(function(e){ return e.attrs['aria-invalid'] === 'true'; }) : []; },
+  querySelector: function(){ return null; }, addEventListener: function(){} };
+var window = { location:{ protocol:'https:' } };
+var navigator = { onLine:true };
+var console = { log:function(){ _logs.push([].slice.call(arguments)); }, warn:function(){ _logs.push([].slice.call(arguments)); }, error:function(){ _logs.push([].slice.call(arguments)); } };
+var SB_URL = 'https://sb.example', SB_KEY = 'anon';
+var store = { maxgainz_pending_v1:'{"userId":"u1","deletes":[1]}', maxgainz_v1:'{"sessions":2}' };
+var localStorage = { getItem:function(k){ return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; }, setItem:function(k, v){ store[k] = String(v); }, removeItem:function(k){ delete store[k]; } };
+var completedSessions = [{ date:'2026-11-20', setLog:{} }, { date:'2026-11-21', setLog:{} }];
+var _logoutCalls = 0, _saveAuthCalls = 0;
+function authLogout(){ _logoutCalls++; completedSessions.length = 0; store = {}; }
+function saveAuthState(){ _saveAuthCalls++; }
+var _fetchReply = null;
+function fetch(url, o){ _lastUrl = url; _lastBody = o.body; if(_fetchReply === 'throw') return Promise.reject(new TypeError('Failed to fetch'));
+  var r = _fetchReply; return Promise.resolve({ ok:r.status >= 200 && r.status < 300, status:r.status, json:function(){ return r.body === 'bad' ? Promise.reject(new SyntaxError('x')) : Promise.resolve(r.body); } }); }
+var _lastUrl = null, _lastBody = null;
+function setup(email, pw){ _els = {}; _focused = null; _logs = []; document.getElementById('loginEmail').value = email; document.getElementById('loginPassword').value = pw; document.getElementById('loginSubmitBtn').textContent = 'Sign In'; }
+function intact(){ return completedSessions.length === 2 && store.maxgainz_pending_v1 === '{"userId":"u1","deletes":[1]}' && store.maxgainz_v1 === '{"sessions":2}' && _logoutCalls === 0 && _saveAuthCalls === 0; }
+function noSecretsLogged(){ var j = JSON.stringify(_logs); return j.indexOf('me@x.io') === -1 && j.indexOf('hunter22') === -1 && j.indexOf('Invalid login') === -1; }
+"""
+AUTH_SCEN = {
+  'wrong password keeps local work, maps the error, marks + focuses the field':
+    "setup('me@x.io', 'hunter22'); _fetchReply = { status:400, body:{ error_code:'invalid_credentials', msg:'Invalid login credentials' } }; await authLogin();"
+    " var e = document.getElementById('authError'); return intact() && e.textContent === _authErrorText('login', 400, { error_code:'invalid_credentials' }).msg && e.style.display === 'block'"
+    " && document.getElementById('loginPassword').attrs['aria-invalid'] === 'true' && _focused === 'loginPassword'"
+    " && !document.getElementById('loginSubmitBtn').disabled && noSecretsLogged() || { intact:intact(), msg:e.textContent, f:_focused, logs:_logs };",
+  'network failure keeps local work and says so':
+    "setup('me@x.io', 'hunter22'); _fetchReply = 'throw'; await authLogin(); var t = document.getElementById('authError').textContent;"
+    " return intact() && /Couldn't reach the server/.test(t) && /safe/.test(t) && _focused === 'authError' && !document.getElementById('loginSubmitBtn').disabled || { intact:intact(), t:t, f:_focused };",
+  'non-JSON 502 keeps local work, no raw text':
+    "setup('me@x.io', 'hunter22'); _fetchReply = { status:502, body:'bad' }; await authLogin(); var t = document.getElementById('authError').textContent;"
+    " return intact() && /isn't responding/.test(t) || { intact:intact(), t:t };",
+  'unconfirmed email reveals the resend button':
+    "setup('me@x.io', 'hunter22'); _fetchReply = { status:400, body:{ error_code:'email_not_confirmed' } }; await authLogin();"
+    " return intact() && document.getElementById('authResendLink').hidden === false || { intact:intact(), h:document.getElementById('authResendLink').hidden };",
+  'invalid email never reaches the server':
+    "setup('nope', 'hunter22'); _lastUrl = null; await authLogin(); return _lastUrl === null && _focused === 'loginEmail' && document.getElementById('loginEmail').attrs['aria-invalid'] === 'true' && intact() || { u:_lastUrl, f:_focused };",
+  'a second submit while signing in is ignored':
+    "setup('me@x.io', 'hunter22'); document.getElementById('loginSubmitBtn').disabled = true; _lastUrl = null; await authLogin(); return _lastUrl === null || { u:_lastUrl };",
+  'success path is the only one that saves auth':
+    "setup('me@x.io', 'hunter22'); _fetchReply = { status:200, body:{ user:{ id:'u1', email:'me@x.io' }, access_token:'t', refresh_token:'r' } };"
+    " try { await authLogin(); } catch(e){} return _saveAuthCalls === 1 || { s:_saveAuthCalls };",
+}
+
+def gate_auth_forms(html, js):
+    problems = []
+    seg = html[html.index('<div id="authMod">'):html.index('<!-- DELETE ACCOUNT MODAL -->')]
+    forms = {'authForm': 'authSignup', 'authLoginForm': 'authLogin', 'authResetForm': 'sendPasswordReset', 'authResendForm': 'sendConfirmationEmail'}
+    for fid, fn in forms.items():
+        m = re.search(r'<form id="' + fid + r'"([^>]*)>([\s\S]*?)</form>', seg)
+        if not m: problems.append(f'#{fid} is not a real <form>'); continue
+        attrs, body = m.group(1), m.group(2)
+        if f'onsubmit="event.preventDefault();{fn}()"' not in attrs: problems.append(f'#{fid} must submit through {fn}() (Enter submits)')
+        if 'novalidate' not in attrs: problems.append(f'#{fid} should use the app\'s own messages (novalidate)')
+        btns = re.findall(r'<button\b[^>]*>', body)
+        if any('type=' not in b for b in btns): problems.append(f'#{fid} has a button without an explicit type (it would submit the form)')
+        if sum('type="submit"' in b for b in btns) != 1: problems.append(f'#{fid} needs exactly one submit button')
+        if any(f'onclick="{fn}()"' in b for b in btns): problems.append(f'#{fid} still submits by click only')
+        for inp in re.findall(r'<input\b[^>]*>', body):
+            iid = re.search(r'id="([^"]+)"', inp).group(1)
+            if f'<label class="auth-lbl" for="{iid}">' not in body: problems.append(f'#{iid} has no visible <label for>')
+            if 'autocomplete="' not in inp or 'name="' not in inp: problems.append(f'#{iid} needs name + autocomplete for password managers')
+    want = {'authName': 'name', 'authEmail': 'email', 'authPassword': 'new-password', 'authPasswordConfirm': 'new-password',
+            'loginEmail': 'username', 'loginPassword': 'current-password', 'resetEmail': 'email', 'resendEmail': 'email'}
+    for iid, ac in want.items():
+        m = re.search(r'<input\b[^>]*id="' + iid + r'"[^>]*>', seg)
+        if not m or f'autocomplete="{ac}"' not in m.group(0): problems.append(f'#{iid} must have autocomplete="{ac}"')
+        if iid.endswith('Email') and m and 'type="email"' not in m.group(0): problems.append(f'#{iid} must be type="email"')
+    eyes = re.findall(r'<button type="button" class="auth-eye"[^>]*>', seg)
+    if len(eyes) != 2 or any('aria-pressed="false"' not in e or 'aria-label="Show password"' not in e or 'aria-controls=' not in e for e in eyes):
+        problems.append('both password forms need a labelled show/hide toggle (aria-pressed, aria-controls)')
+    tp = extract_decl(js, 'toggleAuthPassword') or ''
+    for need in ["el.type = show ? 'text' : 'password'", "setAttribute('aria-pressed', String(show))", "show ? 'Hide password' : 'Show password'"]:
+        if need not in tp: problems.append(f'toggleAuthPassword must switch type and state ({need})')
+    if '<div id="authError" role="alert" tabindex="-1"' not in seg: problems.append('the error summary must be announced (role=alert) and focusable')
+    if 'id="authResendLink" onclick="showResendConfirmation()"' not in seg or seg.count('onclick="showResendConfirmation()"') < 2:
+        problems.append('the resend-confirmation form must be reachable (after an unconfirmed sign-in and from the check-your-email screen)')
+    if "showAuthError(m.msg, m.field);" not in (extract_decl(js, '_authFail') or ''): problems.append('_authFail must show only the mapped message')
+    if 'onclick="cancelReauth()"' not in seg: problems.append('the "keep using the app offline" route must stay')
+    # raw backend text never reaches the UI; no dev/vendor wording
+    for fn in ['authSignup', 'authLogin', 'sendPasswordReset', 'sendConfirmationEmail']:
+        src = extract_async_decl(js, fn) or ''
+        for call in re.findall(r'showAuthError\(([^;]*)\);', src):
+            if re.search(r'\.message|\bdata\b|JSON\.stringify|error_description|(?:data|result|res|r)\.msg\b', call): problems.append(f'{fn}() shows backend text: showAuthError({call[:60]})')
+        if re.search(r"showAuthError\([^)]*Supabase", src): problems.append(f'{fn}() mentions the backend vendor to users')
+        if 'throw new Error(' in src: problems.append(f'{fn}() still turns backend replies into thrown messages')
+    sh = extract_decl(js, 'showAuthError') or ''
+    for need in ["setAttribute('aria-invalid', 'true')", "setAttribute('aria-describedby', 'authError')", 'f.focus()', 'errorEl.focus()', 'errorEl.textContent = msg']:
+        if need not in sh: problems.append(f'showAuthError must mark + focus the field or the summary ({need})')
+    fl = extract_decl(js, '_authFail') or ''
+    if "console.warn('[auth]', kind, 'failed', status, m.code);" not in fl: problems.append('auth failures must log kind/status/code only')
+    pure = [extract_const_object(js, 'AUTH_EMAIL_FIELD') or '', extract_decl(js, '_authValidate') or '', extract_decl(js, '_authErrorText') or '']
+    if not all(pure): problems.append('auth validators not found')
+    else:
+        out, _ = run_jxa('\n'.join(pure) + '\n' + AUTH_PURE)
+        try: problems += json.loads(out)
+        except Exception: problems.append('auth runner errored: ' + out[:300])
+    dom = pure + [extract_decl(js, f) or '' for f in ['_authClearInvalid', 'showAuthError', '_authFail', '_authBusy']] + [extract_async_decl(js, '_authPost') or '', extract_async_decl(js, 'authLogin') or '']
+    if all(dom):
+        stubs = 'function _settleActiveSessionOwner(){} function _restoreStash(){ return 0; } function showToast(){} function updateProfileButton(){} function setSyncStatus(){}' \
+                ' function cloudLoadAll(){ return new Promise(function(){}); } var currentUser = null, _reauthMode = false, _lastSyncError = null;'
+        problems += _run_jsc_scenarios(AUTH_DOM + stubs + '\n' + '\n'.join(dom) + '\n', AUTH_SCEN)
+    else: problems.append('could not extract the login path')
+    if not problems: print('  ✓ 4 real forms (Enter submits, one typed submit each), labels + autocomplete for password managers, labelled show/hide; mapped errors on the field, announced; failed/offline sign-in leaves local sessions + pending sync untouched; safe logs')
+    for p in problems: print('  ✗ ' + p)
+    return not problems
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/27] parse')
+    print('[1/28] parse')
     p = gate_parse(js)
-    print('[2/27] invariants')
+    print('[2/28] invariants')
     inv = gate_invariants(js)
-    print('[3/27] video map')
+    print('[3/28] video map')
     vm = gate_videomap(js)
-    print('[4/27] inline handler wiring')
+    print('[4/28] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/27] auth log hygiene')
+    print('[5/28] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/27] sign-out scrub')
+    print('[6/28] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/27] safe rendering of user text')
+    print('[7/28] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/27] sync honesty')
+    print('[8/28] sync honesty')
     sy = gate_sync(js)
-    print('[9/27] media fallback + reminder copy')
+    print('[9/28] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/27] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/28] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/27] core-journey accessibility (session + dialogs)')
+    print('[11/28] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/27] Start today (first-use flow) + shortened Path wizard')
+    print('[12/28] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/27] simplified navigation (default, reversible, one-time notice)')
+    print('[13/28] simplified navigation (default, reversible, one-time notice)')
     nv = gate_nav_v2(html, js)
-    print('[14/27] Progress weekly briefing')
+    print('[14/28] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/27] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/28] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/27] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/28] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/27] Phase 2 typed sets (preview before save)')
+    print('[17/28] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
-    print('[18/27] Phase 2 weekly AI recap + measurement')
+    print('[18/28] Phase 2 weekly AI recap + measurement')
     rc = gate_recap(html, js)
-    print('[19/27] Phase 3 offline media (download, cache versioning, fallback order)')
+    print('[19/28] Phase 3 offline media (download, cache versioning, fallback order)')
     om = gate_offline_media(html, js)
-    print('[20/27] Phase 3 programme discovery (metadata, finder, why, switch preview)')
+    print('[20/28] Phase 3 programme discovery (metadata, finder, why, switch preview)')
     dc = gate_discovery(html, js)
-    print('[21/27] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
+    print('[21/28] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
     sh = gate_sharing(html, js)
-    print('[22/27] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
+    print('[22/28] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
     lf = gate_leftovers(html, js)
-    print('[23/27] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
+    print('[23/28] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
     rm = gate_reminders(html, js)
-    print('[24/27] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
+    print('[24/28] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
     rs = gate_reminders_server(html, js)
-    print('[25/27] Profile & settings information model (flagged)')
+    print('[25/28] Profile & settings information model (flagged)')
     pv = gate_profile_v2(html, js)
-    print('[26/27] rollout registry + configuration in Data health')
+    print('[26/28] rollout registry + configuration in Data health')
     ro = gate_rollout(html, js)
-    print('[27/27] Today headline metric (context-sensitive, pinnable)')
+    print('[27/28] Today headline metric (context-sensitive, pinnable)')
     tm = gate_today_metric(html, js)
+    print('[28/28] authentication forms (Enter, password managers, errors, local data kept)')
+    af = gate_auth_forms(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 

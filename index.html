@@ -160,6 +160,16 @@ button.chip { font-family:inherit; }
 .modal-ov.open { display:flex; }
 #authMod { display:none; position:fixed; top:0; left:0; right:0; bottom:0; width:100%; height:100vh; z-index:9999; background:#0a0a0f; align-items:center; justify-content:center; flex-direction:column; overflow-y:auto; }
 #authMod.show { display:flex; }
+.auth-f { margin-bottom:16px; }
+.auth-lbl { font-size:12px; font-weight:700; color:#8888aa; display:block; margin-bottom:6px; }
+.auth-in { width:100%; padding:12px; background:#14141c; border:0.5px solid rgba(255,255,255,0.12); border-radius:8px; font-size:16px; box-sizing:border-box; color:#f0f0f0; }
+.auth-in[aria-invalid="true"] { border-color:#ff4d6a; box-shadow:0 0 0 1px #ff4d6a; }
+.auth-pw { position:relative; }
+.auth-pw .auth-in { padding-right:64px; }
+.auth-eye { position:absolute; right:4px; top:50%; transform:translateY(-50%); min-height:40px; padding:0 10px; background:transparent; border:none; color:#c8ff00; font-size:13px; font-weight:700; cursor:pointer; }
+.auth-alt { width:100%; background:#1e1e2a; color:#f0f0f0; border:0.5px solid rgba(255,255,255,0.12); border-radius:8px; font-size:15px; padding:14px; font-weight:700; cursor:pointer; margin-bottom:12px; }
+.auth-link { width:100%; background:transparent; color:#c8ff00; border:none; font-size:13px; padding:10px; font-weight:700; cursor:pointer; }
+#authMod form[hidden], #authMod .auth-link[hidden] { display:none; }
 .modal { background:var(--surface); border-radius:var(--radius-xl) var(--radius-xl) 0 0; width:100%; max-width:420px; padding:var(--space-5) var(--space-5) calc(var(--space-5) + env(safe-area-inset-bottom, 0px)); max-height:82vh; overflow-y:auto; animation:slideUp 0.3s var(--ease-out); }
 @keyframes slideUp { from { transform:translateY(100%); } to { transform:translateY(0); } }
 .modal-handle { width:36px; height:4px; background:var(--surface3); border-radius:2px; margin:0 auto 16px; position:relative; cursor:grab; touch-action:none; transition:background 0.15s; }
@@ -4641,15 +4651,12 @@ function reauthenticate(){
   _reauthMode = true;
   const lb = document.getElementById('loginSubmitBtn'); if(lb){ lb.textContent = 'Sign In'; lb.disabled = false; }
   const ae = document.getElementById('authError'); if(ae) ae.style.display = 'none';
-  const rf = document.getElementById('authResendForm'); if(rf) rf.style.display = 'none';
   document.querySelector('.app').classList.add('hidden');
   document.getElementById('authMod').classList.add('show');
-  document.getElementById('authForm').style.display = 'none';
-  document.getElementById('authResetForm').style.display = 'none';
-  document.getElementById('authConfirm').style.display = 'none';
-  document.getElementById('authLoginForm').style.display = 'block';
+  _authShow('authLoginForm', { noFocus:true });
   const em = document.getElementById('loginEmail');
   if(em && !em.value) em.value = getCurrentUserEmail() || '';
+  _authFocusFirst('authLoginForm');
   const cancel = document.getElementById('authReauthCancel');
   if(cancel) cancel.style.display = 'block';
 }
@@ -5320,7 +5327,7 @@ function saveLocalFallback() { saveLocalCache(); }
 // still decide behaviour; gate 26 runs them against this registry so the two
 // can never disagree. mode: 'optIn' = on only when the key is '1';
 // 'optOut' = on unless the key is '0'. requires = another entry that must be on.
-const APP_VERSION = '2026.11.25.3';   // bump on every production push (shown in Data health)
+const APP_VERSION = '2026.11.25.4';   // bump on every production push (shown in Data health)
 const ROLLOUT_REGISTRY = [
   { id:'nav_v2', key:'maxgainz_nav_v2', mode:'optOut', label:'Simplified navigation',
     audience:'Everyone since 25 Nov 2026 (existing users get a one-time notice)', killSwitch:"Profile → Simplified navigation: Off, or 'Use classic navigation' on the notice (stores '0')",
@@ -30357,53 +30364,144 @@ if(window.location.protocol === 'file:' && !isAuthenticated()){
 
 // ── AUTHENTICATION ──
 
-// Show/hide auth forms
+// ── Auth forms (Priority 2) ──
+// Five panels, exactly one visible (hidden attribute). Every form is a real
+// <form>: Enter submits, password managers see name/email/new-password/
+// current-password. Errors are short, mapped from the backend's code/text,
+// tied to the field (aria-invalid + focus) and announced (role=alert). A
+// failed attempt never touches local data — the scrub runs only after success.
+const AUTH_PANELS = ['authForm', 'authLoginForm', 'authResetForm', 'authResendForm', 'authConfirm'];
+const AUTH_EMAIL_FIELD = { signup:'authEmail', login:'loginEmail', reset:'resetEmail', resend:'resendEmail' };
+function _authShow(id, opts){
+  AUTH_PANELS.forEach(k => { const el = document.getElementById(k); if(el){ el.hidden = k !== id; el.style.display = ''; } });
+  _authClearError();
+  if(!(opts && opts.noFocus)) _authFocusFirst(id);
+}
+// Focus the first empty field of a panel (else its first field).
+function _authFocusFirst(id){
+  const panel = document.getElementById(id);
+  if(!panel) return;
+  const ins = [...panel.querySelectorAll('input')];
+  const t = ins.find(x => !x.value) || ins[0] || panel.querySelector('button');
+  if(t) t.focus();
+}
 function switchAuthMode(){
-  const signupForm = document.getElementById('authForm');
-  const loginForm = document.getElementById('authLoginForm');
-  const resetForm = document.getElementById('authResetForm');
-  const resendForm = document.getElementById('authResendForm');
-  const confirmScreen = document.getElementById('authConfirm');
-  if(signupForm.style.display === 'none' && confirmScreen.style.display === 'none'){
-    signupForm.style.display = 'block';
-    loginForm.style.display = 'none';
-    resetForm.style.display = 'none';
-    resendForm.style.display = 'none';
-    confirmScreen.style.display = 'none';
-    document.getElementById('authEmail').focus();
-  } else {
-    signupForm.style.display = 'none';
-    loginForm.style.display = 'block';
-    resetForm.style.display = 'none';
-    resendForm.style.display = 'none';
-    confirmScreen.style.display = 'none';
-    document.getElementById('loginEmail').focus();
-  }
-  document.getElementById('authError').style.display = 'none';
+  const su = document.getElementById('authForm'), cf = document.getElementById('authConfirm');
+  _authShow(su.hidden && cf.hidden ? 'authForm' : 'authLoginForm');
 }
-
 function showAuthLogin(){
-  document.getElementById('authForm').style.display = 'none';
-  document.getElementById('authLoginForm').style.display = 'block';
-  document.getElementById('authResetForm').style.display = 'none';
-  document.getElementById('authResendForm').style.display = 'none';
-  document.getElementById('authError').style.display = 'none';
-  document.getElementById('loginEmail').focus();
+  const em = document.getElementById('loginEmail');
+  let pend = null; try { pend = localStorage.getItem('maxgainz_pending_email'); } catch(e){}
+  if(em && !em.value && pend) em.value = pend;
+  _authShow('authLoginForm');
 }
-
 function showPasswordReset(){
-  document.getElementById('authForm').style.display = 'none';
-  document.getElementById('authLoginForm').style.display = 'none';
-  document.getElementById('authResetForm').style.display = 'block';
-  document.getElementById('authResendForm').style.display = 'none';
-  document.getElementById('authError').style.display = 'none';
-  document.getElementById('resetEmail').focus();
+  const r = document.getElementById('resetEmail'), l = document.getElementById('loginEmail');
+  if(r && !r.value && l) r.value = l.value.trim();
+  _authShow('authResetForm');
 }
-
-function showAuthError(msg){
+function showResendConfirmation(){
+  const r = document.getElementById('resendEmail'), l = document.getElementById('loginEmail');
+  let pend = null; try { pend = localStorage.getItem('maxgainz_pending_email'); } catch(e){}
+  if(r && !r.value) r.value = (l && l.value.trim()) || pend || '';
+  _authShow('authResendForm');
+}
+function _authClearInvalid(){
+  document.querySelectorAll('#authMod [aria-invalid="true"]').forEach(x => { x.removeAttribute('aria-invalid'); x.removeAttribute('aria-describedby'); });
+}
+function _authClearError(){
+  const e = document.getElementById('authError');
+  if(e){ e.style.display = 'none'; e.textContent = ''; }
+  _authClearInvalid();
+  const rl = document.getElementById('authResendLink'); if(rl) rl.hidden = true;
+}
+// Show a short message; mark + focus the field it is about (else the message itself).
+function showAuthError(msg, fieldId){
   const errorEl = document.getElementById('authError');
   errorEl.textContent = msg;
   errorEl.style.display = 'block';
+  _authClearInvalid();
+  const f = fieldId ? document.getElementById(fieldId) : null;
+  if(f && f.offsetParent !== null){ f.setAttribute('aria-invalid', 'true'); f.setAttribute('aria-describedby', 'authError'); f.focus(); }
+  else errorEl.focus();
+}
+if(typeof document !== 'undefined') document.addEventListener('input', e => {
+  const t = e.target;
+  if(t && t.closest && t.closest('#authMod') && t.getAttribute('aria-invalid') === 'true'){ t.removeAttribute('aria-invalid'); t.removeAttribute('aria-describedby'); }
+});
+function toggleAuthPassword(btn){
+  const ids = String(btn.dataset.for || '').split(',').filter(Boolean);
+  const show = btn.getAttribute('aria-pressed') !== 'true';
+  ids.forEach(id => { const el = document.getElementById(id); if(el) el.type = show ? 'text' : 'password'; });
+  btn.setAttribute('aria-pressed', String(show));
+  btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+  btn.textContent = show ? 'Hide' : 'Show';
+}
+// Pure: first problem with a form's values → { field, msg }, or null.
+function _authValidate(kind, v){
+  v = v || {};
+  const email = String(v.email || '').trim();
+  const okEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  if(kind === 'signup'){
+    if(!String(v.name || '').trim()) return { field:'authName', msg:'Enter your name' };
+    if(!okEmail) return { field:'authEmail', msg:'Enter a valid email address, like you@example.com' };
+    if(String(v.password || '').length < 8) return { field:'authPassword', msg:'Use at least 8 characters for your password' };
+    if(v.password !== v.confirm) return { field:'authPasswordConfirm', msg:"The two passwords don't match" };
+    return null;
+  }
+  if(!okEmail) return { field:AUTH_EMAIL_FIELD[kind] || 'loginEmail', msg:'Enter a valid email address, like you@example.com' };
+  if(kind === 'login' && !v.password) return { field:'loginPassword', msg:'Enter your password' };
+  return null;
+}
+// Pure: the backend's reply → a short message for people (never the raw body).
+// { code (safe to log), msg, field?, resend? }. status 0 / offline = no reply.
+function _authErrorText(kind, status, data, offline){
+  if(offline || !status) return { code:'network', msg:"Couldn't reach the server. Check your connection and try again — your workouts on this device are safe." };
+  const d = (data && typeof data === 'object' && !Array.isArray(data)) ? data : {};
+  const code = String(d.error_code || (typeof d.code === 'string' ? d.code : '') || d.error || '').toLowerCase();
+  const text = String(d.error_description || d.msg || d.message || '').toLowerCase();
+  const is = (...c) => c.indexOf(code) !== -1;
+  if(is('email_not_confirmed') || text.indexOf('email not confirmed') !== -1)
+    return { code:'email_not_confirmed', msg:'Confirm your email first — open the link we sent you. Need a new one? Use the button below.', resend:true };
+  if(is('invalid_credentials', 'invalid_grant') || text.indexOf('invalid login credentials') !== -1)
+    return { code:'invalid_credentials', msg:"That email and password don't match. Check them and try again, or reset your password.", field:'loginPassword' };
+  if(is('user_already_exists', 'email_exists') || text.indexOf('already registered') !== -1)
+    return { code:'user_already_exists', msg:'There is already an account with this email. Sign in instead, or reset your password.', field:'authEmail' };
+  if(is('weak_password') || text.indexOf('password should') !== -1)
+    return { code:'weak_password', msg:'Choose a stronger password — longer, and not a common one.', field:'authPassword' };
+  if(status === 429 || code.indexOf('rate_limit') !== -1 || text.indexOf('rate limit') !== -1)
+    return { code:'rate_limit', msg:'Too many attempts. Wait a minute, then try again.' };
+  if(is('email_address_invalid', 'email_address_not_authorized') || text.indexOf('unable to validate email') !== -1 || text.indexOf('invalid format') !== -1)
+    return { code:'email_invalid', msg:"That email address doesn't look right.", field:AUTH_EMAIL_FIELD[kind] };
+  if(is('signup_disabled')) return { code:'signup_disabled', msg:'New accounts are paused right now. Please try again later.' };
+  if(status >= 500) return { code:'server', msg:"The sign-in service isn't responding. Your workouts on this device are safe — try again shortly." };
+  return { code:'unknown', msg:({ signup:"Couldn't create your account. Please try again.", login:"Couldn't sign you in. Please try again.",
+    reset:"Couldn't send the reset email. Please try again.", resend:"Couldn't send the confirmation email. Please try again." })[kind] || 'Something went wrong. Please try again.' };
+}
+// POST to a Supabase auth endpoint. Never throws; never exposes the body to the UI.
+async function _authPost(path, body){
+  let res;
+  try { res = await fetch(SB_URL + path, { method:'POST', headers:{ 'apikey':SB_KEY, 'Content-Type':'application/json' }, body:JSON.stringify(body) }); }
+  catch(e){ return { ok:false, status:0, data:null }; }
+  let parsed = null;
+  try { parsed = await res.json(); } catch(e){ parsed = null; }
+  return { ok:res.ok, status:res.status, data:parsed };
+}
+// Show the mapped failure + a safe log line (kind, status, code only).
+function _authFail(kind, status, body){
+  const m = _authErrorText(kind, status, body, typeof navigator !== 'undefined' && navigator.onLine === false);
+  console.warn('[auth]', kind, 'failed', status, m.code);
+  showAuthError(m.msg, m.field);
+  const rl = document.getElementById('authResendLink'); if(rl) rl.hidden = !m.resend;
+  return m;
+}
+// Disable a submit button while its request runs (Enter can't double-submit).
+function _authBusy(id, on, idleText, busyText){
+  const b = document.getElementById(id);
+  if(!b) return false;
+  if(on && b.disabled) return false;
+  b.disabled = !!on; b.textContent = on ? busyText : idleText;
+  return true;
 }
 
 // Sign up with email and password
@@ -30413,47 +30511,29 @@ async function authSignup(){
   const password = document.getElementById('authPassword').value;
   const passwordConfirm = document.getElementById('authPasswordConfirm').value;
 
-  if(!name){
-    showAuthError('Please enter your name');
-    return;
-  }
-  if(!email.includes('@')){
-    showAuthError('Please enter a valid email');
-    return;
-  }
-  if(password.length < 8){
-    showAuthError('Password must be at least 8 characters');
-    return;
-  }
-  if(password !== passwordConfirm){
-    showAuthError('Passwords do not match — please check and try again');
-    return;
-  }
+  const bad = _authValidate('signup', { name, email, password, confirm:passwordConfirm });
+  if(bad){ showAuthError(bad.msg, bad.field); return; }
+  if(!_authBusy('signupSubmitBtn', true, 'Create Account', 'Creating account…')) return;
 
   try{
-    // Call Supabase auth signup endpoint
-    const result = await fetch(SB_URL + '/auth/v1/signup', {
-      method: 'POST',
-      headers: {
-        'apikey': SB_KEY,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({email, password})
-    });
-
-    const data = await result.json();
-
-    if(!result.ok){
-      throw new Error(data.error_description || data.message || data.msg || JSON.stringify(data));
-    }
+    const r = await _authPost('/auth/v1/signup', { email, password });
+    _authBusy('signupSubmitBtn', false, 'Create Account', 'Creating account…');
+    if(!r.ok || !r.data){ _authFail('signup', r.status, r.data); return; }
+    const data = r.data;
 
     const token = data.session?.access_token || data.access_token || null;
     const refreshToken = data.session?.refresh_token || data.refresh_token || null;
     if(!token){
-      // Email confirmation still enabled in Supabase dashboard — prompt user to disable it
-      showAuthError('⚠️ Account created but email confirmation is still enabled. Please sign in once you confirm your email, or disable email confirmation in your Supabase dashboard.');
+      // The project asks new accounts to confirm their email: say so plainly and
+      // keep the name for the first sign-in (authLogin reads it back).
+      try { localStorage.setItem('maxgainz_pending_name', name); localStorage.setItem('maxgainz_pending_email', email); } catch(e){}
+      document.getElementById('authPassword').value = ''; document.getElementById('authPasswordConfirm').value = '';
+      document.getElementById('authConfirmEmail').textContent = email;
+      _authShow('authConfirm', { noFocus:true });
+      const cb = document.querySelector('#authConfirm .btn-p'); if(cb) cb.focus();
       return;
     }
+    if(!data.user || !data.user.id){ _authFail('signup', 500, null); return; }
 
     // Go straight in — no confirmation required
     // Signing up from the "Sign in again" screen: a NEW account must never
@@ -30495,8 +30575,9 @@ async function authSignup(){
       }
     });
   }catch(e){
-    console.error('Signup error:', e);
-    showAuthError(e.message);
+    _authBusy('signupSubmitBtn', false, 'Create Account', 'Creating account…');
+    console.warn('[auth] signup failed after sign-in', e && e.name);
+    showAuthError("Your account was created, but something went wrong opening it. Sign in to continue.");
   }
 }
 
@@ -30505,10 +30586,8 @@ async function authLogin(){
   const email = document.getElementById('loginEmail').value.trim();
   const password = document.getElementById('loginPassword').value;
   
-  if(!email.includes('@') || !password){
-    showAuthError('Please enter email and password');
-    return;
-  }
+  const bad = _authValidate('login', { email, password });
+  if(bad){ showAuthError(bad.msg, bad.field); return; }
   
   // Block login if opened as a local file (not localhost). Not a CORS issue — Supabase
   // allows any origin — but on file:// the saved JWT lands in localStorage shared with
@@ -30518,35 +30597,20 @@ async function authLogin(){
     return;
   }
   
-  // Show loading state on button
+  // Busy state (also stops Enter from submitting twice)
   const loginBtn = document.getElementById('loginSubmitBtn');
-  if(loginBtn){ loginBtn.textContent = 'Signing in…'; loginBtn.disabled = true; }
-  
+  if(!_authBusy('loginSubmitBtn', true, 'Sign In', 'Signing in…')) return;
+
   try{
-    // Call Supabase auth login endpoint
-    const endpoint = SB_URL + '/auth/v1/token?grant_type=password';
-    console.log('🔐 Attempting login to:', endpoint);
-
-    const result = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'apikey': SB_KEY,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({email, password})
-    });
-    
-    // Status only — never log the body: it carries access_token + refresh_token.
-    console.log('✅ Response status:', result.status);
-    const data = await result.json();
-
-    if(!result.ok){
-      const errorMsg = data.error_description || data.message || data.msg || JSON.stringify(data);
-      console.error('❌ Auth error:', errorMsg);
-      throw new Error(errorMsg);
+    // Nothing local is touched until this succeeds: a failed sign-in keeps
+    // this device's sessions and the pending sync queue exactly as they were.
+    const r = await _authPost('/auth/v1/token?grant_type=password', { email, password });
+    if(!r.ok || !r.data || !r.data.user || !r.data.access_token){
+      _authBusy('loginSubmitBtn', false, 'Sign In', 'Signing in…');
+      _authFail('login', r.ok ? 500 : r.status, r.data);
+      return;
     }
-    
-    console.log('✅ Login successful!');
+    const data = r.data;
 
     // Retrieve name — from pending signup or existing saved auth
     const pendingName = localStorage.getItem('maxgainz_pending_name');
@@ -30570,6 +30634,7 @@ async function authLogin(){
     _reauthMode = false;
     const _rc = document.getElementById('authReauthCancel'); if(_rc) _rc.style.display = 'none';
     if(loginBtn){ loginBtn.textContent = 'Sign In'; loginBtn.disabled = false; }
+    document.getElementById('loginPassword').value = '';
     _lastSyncError = null;
     saveAuthState({id: data.user.id, email: data.user.email, name: userName}, data.access_token, data.refresh_token);
     _settleActiveSessionOwner(); // another account's unfinished workout ends here; the same account's resumes
@@ -30608,12 +30673,9 @@ async function authLogin(){
       }
     });
   }catch(e){
-    console.error('❌ Login error:', e);
-    console.error('Error type:', e.name);
-    console.error('Error message:', e.message);
-    const loginBtn = document.getElementById('loginSubmitBtn');
-    if(loginBtn){ loginBtn.textContent = 'Sign In'; loginBtn.disabled = false; }
-    showAuthError('Login failed: ' + (e.message || 'Network error'));
+    console.warn('[auth] login failed after sign-in', e && e.name);
+    _authBusy('loginSubmitBtn', false, 'Sign In', 'Signing in…');
+    showAuthError("You're signed in, but something went wrong loading the app. Reload to continue.");
   }
 }
 
@@ -30712,11 +30774,7 @@ function authLogout(opts){
   document.getElementById('authMod').classList.add('show');
 
   // Reset auth forms
-  document.getElementById('authForm').style.display = 'block';
-  document.getElementById('authLoginForm').style.display = 'none';
-  document.getElementById('authResetForm').style.display = 'none';
-  document.getElementById('authConfirm').style.display = 'none';
-  document.getElementById('authError').style.display = 'none';
+  _authShow('authForm', { noFocus:true });
 
   // Clear form fields (safe — some may not exist depending on current auth screen)
   const safe = id => { const el = document.getElementById(id); if(el) el.value = ''; };
@@ -30727,70 +30785,29 @@ function authLogout(opts){
 // Send password reset email
 async function sendPasswordReset(){
   const email = document.getElementById('resetEmail').value.trim();
-  
-  if(!email.includes('@')){
-    showAuthError('Please enter a valid email');
-    return;
-  }
-  
-  try{
-    // Call Supabase password recovery endpoint
-    const result = await fetch(SB_URL + '/auth/v1/recover', {
-      method: 'POST',
-      headers: {
-        'apikey': SB_KEY,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({email})
-    });
-    
-    if(!result.ok){
-      const data = await result.json();
-      throw new Error(data.message || 'Failed to send reset email');
-    }
-    
-    document.getElementById('resetEmail').value = '';
-    showInfoModal('📧 Reset link sent', 'We sent a password reset link to ' + email + '.\n\nCheck your email (including spam folder) and click the link to create a new password.');
-    showAuthLogin();
-  }catch(e){
-    showAuthError(e.message);
-  }
+  const bad = _authValidate('reset', { email });
+  if(bad){ showAuthError(bad.msg, bad.field); return; }
+  if(!_authBusy('resetSubmitBtn', true, 'Send Reset Link', 'Sending…')) return;
+  const r = await _authPost('/auth/v1/recover', { email });
+  _authBusy('resetSubmitBtn', false, 'Send Reset Link', 'Sending…');
+  if(!r.ok){ _authFail('reset', r.status, r.data); return; }
+  document.getElementById('resetEmail').value = '';
+  showInfoModal('📧 Reset link sent', 'If there is an account for ' + email + ', a password reset link is on its way.\n\nCheck your email (including spam folder) and click the link to create a new password.');
+  showAuthLogin();
 }
 
 // Resend confirmation email for unconfirmed accounts
 async function sendConfirmationEmail(){
   const email = document.getElementById('resendEmail').value.trim();
-
-  if(!email.includes('@')){
-    showAuthError('Please enter a valid email');
-    return;
-  }
-
-  try{
-    // Call Supabase resend endpoint
-    const result = await fetch(SB_URL + '/auth/v1/resend', {
-      method: 'POST',
-      headers: {
-        'apikey': SB_KEY,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({email, type: 'signup'})
-    });
-
-    console.log('[RESEND] Response status:', result.status);
-    const data = await result.json();
-
-    if(!result.ok){
-      throw new Error(data.message || `Failed to send confirmation email (${result.status})`);
-    }
-
-    document.getElementById('resendEmail').value = '';
-    showInfoModal('📧 Confirmation email sent', 'We sent a confirmation email to ' + email + '.\n\nCheck your email (including spam folder) and click the link to activate your account.');
-    showAuthLogin();
-  }catch(e){
-    console.error('[RESEND] Error:', e);
-    showAuthError(e.message);
-  }
+  const bad = _authValidate('resend', { email });
+  if(bad){ showAuthError(bad.msg, bad.field); return; }
+  if(!_authBusy('resendSubmitBtn', true, 'Send Confirmation Link', 'Sending…')) return;
+  const r = await _authPost('/auth/v1/resend', { email, type:'signup' });
+  _authBusy('resendSubmitBtn', false, 'Send Confirmation Link', 'Sending…');
+  if(!r.ok){ _authFail('resend', r.status, r.data); return; }
+  document.getElementById('resendEmail').value = '';
+  showInfoModal('📧 Confirmation email sent', 'We sent a confirmation email to ' + email + '.\n\nCheck your email (including spam folder) and click the link to activate your account.');
+  showAuthLogin();
 }
 
 // Update profile cloud status
@@ -31454,77 +31471,89 @@ window.addEventListener('offline', updateOnlineStatus);
     </div>
 
     <div style="width:100%;max-width:320px;">
-      <!-- SIGN UP FORM -->
-      <div id="authForm">
-        <div style="margin-bottom:16px;">
-          <label style="font-size:12px;font-weight:700;color:#8888aa;display:block;margin-bottom:6px;">Name (what should we call you?)</label>
-          <input type="text" id="authName" placeholder="Your name" style="width:100%;padding:12px;background:#14141c;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;font-size:14px;box-sizing:border-box;color:#f0f0f0;">
+      <!-- SIGN UP FORM (real forms: Enter submits, password managers recognise the fields) -->
+      <form id="authForm" novalidate onsubmit="event.preventDefault();authSignup()" aria-labelledby="authFormTitle">
+        <h2 id="authFormTitle" class="sr-only">Create an account</h2>
+        <div class="auth-f">
+          <label class="auth-lbl" for="authName">Name (what should we call you?)</label>
+          <input class="auth-in" type="text" id="authName" name="name" autocomplete="name" autocapitalize="words" placeholder="Your name" required>
         </div>
-        <div style="margin-bottom:16px;">
-          <label style="font-size:12px;font-weight:700;color:#8888aa;display:block;margin-bottom:6px;">Email</label>
-          <input type="email" id="authEmail" placeholder="you@example.com" style="width:100%;padding:12px;background:#14141c;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;font-size:14px;box-sizing:border-box;color:#f0f0f0;">
+        <div class="auth-f">
+          <label class="auth-lbl" for="authEmail">Email</label>
+          <input class="auth-in" type="email" id="authEmail" name="email" autocomplete="email" inputmode="email" autocapitalize="off" spellcheck="false" placeholder="you@example.com" required>
         </div>
-        <div style="margin-bottom:16px;">
-          <label style="font-size:12px;font-weight:700;color:#8888aa;display:block;margin-bottom:6px;">Password (at least 8 chars)</label>
-          <input type="password" id="authPassword" placeholder="••••••••" style="width:100%;padding:12px;background:#14141c;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;font-size:14px;box-sizing:border-box;color:#f0f0f0;">
+        <div class="auth-f">
+          <label class="auth-lbl" for="authPassword">Password (at least 8 characters)</label>
+          <div class="auth-pw">
+            <input class="auth-in" type="password" id="authPassword" name="new-password" autocomplete="new-password" minlength="8" placeholder="••••••••" required>
+            <button type="button" class="auth-eye" onclick="toggleAuthPassword(this)" data-for="authPassword,authPasswordConfirm" aria-controls="authPassword authPasswordConfirm" aria-pressed="false" aria-label="Show password">Show</button>
+          </div>
         </div>
-        <div style="margin-bottom:24px;">
-          <label style="font-size:12px;font-weight:700;color:#8888aa;display:block;margin-bottom:6px;">Confirm Password</label>
-          <input type="password" id="authPasswordConfirm" placeholder="••••••••" style="width:100%;padding:12px;background:#14141c;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;font-size:14px;box-sizing:border-box;color:#f0f0f0;">
+        <div class="auth-f" style="margin-bottom:24px;">
+          <label class="auth-lbl" for="authPasswordConfirm">Confirm password</label>
+          <input class="auth-in" type="password" id="authPasswordConfirm" name="confirm-password" autocomplete="new-password" placeholder="••••••••" required>
         </div>
-        <button class="btn-p" style="width:100%;margin-bottom:12px;font-size:15px;padding:14px;" onclick="authSignup()">Create Account</button>
-        <button style="width:100%;background:#1e1e2a;color:#f0f0f0;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;font-size:15px;padding:14px;font-weight:700;cursor:pointer;" onclick="switchAuthMode()">Already have an account? Sign In</button>
-      </div>
+        <button type="submit" id="signupSubmitBtn" class="btn-p" style="width:100%;margin-bottom:12px;font-size:15px;padding:14px;">Create Account</button>
+        <button type="button" class="auth-alt" onclick="switchAuthMode()">Already have an account? Sign In</button>
+      </form>
 
       <!-- SIGN IN FORM -->
-      <div id="authLoginForm" style="display:none;">
-        <div style="margin-bottom:16px;">
-          <label style="font-size:12px;font-weight:700;color:#8888aa;display:block;margin-bottom:6px;">Email</label>
-          <input type="email" id="loginEmail" placeholder="you@example.com" style="width:100%;padding:12px;background:#14141c;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;font-size:14px;box-sizing:border-box;color:#f0f0f0;">
+      <form id="authLoginForm" novalidate onsubmit="event.preventDefault();authLogin()" aria-labelledby="authLoginTitle" hidden>
+        <h2 id="authLoginTitle" class="sr-only">Sign in</h2>
+        <div class="auth-f">
+          <label class="auth-lbl" for="loginEmail">Email</label>
+          <input class="auth-in" type="email" id="loginEmail" name="username" autocomplete="username" inputmode="email" autocapitalize="off" spellcheck="false" placeholder="you@example.com" required>
         </div>
-        <div style="margin-bottom:24px;">
-          <label style="font-size:12px;font-weight:700;color:#8888aa;display:block;margin-bottom:6px;">Password</label>
-          <input type="password" id="loginPassword" placeholder="••••••••" style="width:100%;padding:12px;background:#14141c;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;font-size:14px;box-sizing:border-box;color:#f0f0f0;">
+        <div class="auth-f" style="margin-bottom:24px;">
+          <label class="auth-lbl" for="loginPassword">Password</label>
+          <div class="auth-pw">
+            <input class="auth-in" type="password" id="loginPassword" name="current-password" autocomplete="current-password" placeholder="••••••••" required>
+            <button type="button" class="auth-eye" onclick="toggleAuthPassword(this)" data-for="loginPassword" aria-controls="loginPassword" aria-pressed="false" aria-label="Show password">Show</button>
+          </div>
         </div>
-        <button id="loginSubmitBtn" class="btn-p" style="width:100%;margin-bottom:12px;font-size:15px;padding:14px;" onclick="authLogin()">Sign In</button>
-        <button style="width:100%;background:#1e1e2a;color:#f0f0f0;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;font-size:15px;padding:14px;font-weight:700;cursor:pointer;margin-bottom:12px;" onclick="switchAuthMode()">Need an account? Create one</button>
-        <button style="width:100%;background:transparent;color:#c8ff00;border:none;font-size:13px;padding:10px;font-weight:700;cursor:pointer;" onclick="showPasswordReset()">Forgot password?</button>
-        <button id="authReauthCancel" style="display:none;width:100%;background:transparent;color:#8888aa;border:none;font-size:13px;padding:10px;font-weight:700;cursor:pointer;" onclick="cancelReauth()">Cancel — keep using the app offline</button>
-      </div>
+        <button type="submit" id="loginSubmitBtn" class="btn-p" style="width:100%;margin-bottom:12px;font-size:15px;padding:14px;">Sign In</button>
+        <button type="button" class="auth-alt" onclick="switchAuthMode()">Need an account? Create one</button>
+        <button type="button" class="auth-link" onclick="showPasswordReset()">Forgot password?</button>
+        <button type="button" class="auth-link" id="authResendLink" onclick="showResendConfirmation()" hidden>Send the confirmation email again</button>
+        <button type="button" id="authReauthCancel" style="display:none;width:100%;background:transparent;color:#8888aa;border:none;font-size:13px;padding:10px;font-weight:700;cursor:pointer;" onclick="cancelReauth()">Cancel — keep using the app offline</button>
+      </form>
 
       <!-- RESET FORM -->
-      <div id="authResetForm" style="display:none;">
-        <div style="font-size:13px;font-weight:700;color:#f0f0f0;margin-bottom:12px;">Enter your email to reset your password</div>
-        <div style="margin-bottom:24px;">
-          <input type="email" id="resetEmail" placeholder="you@example.com" style="width:100%;padding:12px;background:#14141c;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;font-size:14px;box-sizing:border-box;color:#f0f0f0;">
+      <form id="authResetForm" novalidate onsubmit="event.preventDefault();sendPasswordReset()" aria-labelledby="authResetTitle" hidden>
+        <h2 id="authResetTitle" style="font-size:13px;font-weight:700;color:#f0f0f0;margin:0 0 12px;">Reset your password</h2>
+        <div class="auth-f" style="margin-bottom:24px;">
+          <label class="auth-lbl" for="resetEmail">Email</label>
+          <input class="auth-in" type="email" id="resetEmail" name="email" autocomplete="email" inputmode="email" autocapitalize="off" spellcheck="false" placeholder="you@example.com" required>
         </div>
-        <button class="btn-p" style="width:100%;margin-bottom:12px;font-size:15px;padding:14px;" onclick="sendPasswordReset()">Send Reset Link</button>
-        <button style="width:100%;background:#1e1e2a;color:#f0f0f0;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;font-size:15px;padding:14px;font-weight:700;cursor:pointer;" onclick="showAuthLogin()">Back to Sign In</button>
-        <div style="font-size:12px;color:#8888aa;margin-top:16px;text-align:center;">Check your inbox and spam folder for the reset link.</div>
-      </div>
+        <button type="submit" id="resetSubmitBtn" class="btn-p" style="width:100%;margin-bottom:12px;font-size:15px;padding:14px;">Send Reset Link</button>
+        <button type="button" class="auth-alt" onclick="showAuthLogin()">Back to Sign In</button>
+        <div style="font-size:12px;color:#8888aa;margin-top:4px;text-align:center;">Check your inbox and spam folder for the reset link.</div>
+      </form>
 
       <!-- RESEND CONFIRMATION EMAIL FORM -->
-      <div id="authResendForm" style="display:none;">
-        <div style="font-size:13px;font-weight:700;color:#f0f0f0;margin-bottom:12px;">Resend confirmation email</div>
-        <div style="margin-bottom:24px;">
-          <input type="email" id="resendEmail" placeholder="you@example.com" style="width:100%;padding:12px;background:#14141c;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;font-size:14px;box-sizing:border-box;color:#f0f0f0;">
+      <form id="authResendForm" novalidate onsubmit="event.preventDefault();sendConfirmationEmail()" aria-labelledby="authResendTitle" hidden>
+        <h2 id="authResendTitle" style="font-size:13px;font-weight:700;color:#f0f0f0;margin:0 0 12px;">Resend confirmation email</h2>
+        <div class="auth-f" style="margin-bottom:24px;">
+          <label class="auth-lbl" for="resendEmail">Email</label>
+          <input class="auth-in" type="email" id="resendEmail" name="email" autocomplete="email" inputmode="email" autocapitalize="off" spellcheck="false" placeholder="you@example.com" required>
         </div>
-        <button class="btn-p" style="width:100%;margin-bottom:12px;font-size:15px;padding:14px;" onclick="sendConfirmationEmail()">Send Confirmation Link</button>
-        <button style="width:100%;background:#1e1e2a;color:#f0f0f0;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;font-size:15px;padding:14px;font-weight:700;cursor:pointer;" onclick="showAuthLogin()">Back to Sign In</button>
-        <div style="font-size:12px;color:#8888aa;margin-top:16px;text-align:center;">We'll send a fresh confirmation link with the correct redirect. Check your inbox and spam folder.</div>
-      </div>
+        <button type="submit" id="resendSubmitBtn" class="btn-p" style="width:100%;margin-bottom:12px;font-size:15px;padding:14px;">Send Confirmation Link</button>
+        <button type="button" class="auth-alt" onclick="showAuthLogin()">Back to Sign In</button>
+        <div style="font-size:12px;color:#8888aa;margin-top:4px;text-align:center;">We'll send a fresh confirmation link. Check your inbox and spam folder.</div>
+      </form>
 
-      <div id="authError" style="display:none;margin-top:16px;padding:12px;background:rgba(255,77,106,0.1);border-radius:8px;border:0.5px solid rgba(255,77,106,0.25);color:#ff4d6a;font-size:13px;font-weight:700;"></div>
+      <div id="authError" role="alert" tabindex="-1" style="display:none;margin-top:16px;padding:12px;background:rgba(255,77,106,0.1);border-radius:8px;border:0.5px solid rgba(255,77,106,0.25);color:#ff4d6a;font-size:13px;font-weight:700;"></div>
 
       <!-- EMAIL CONFIRMATION SCREEN -->
-      <div id="authConfirm" style="display:none;text-align:center;padding:8px 0;">
+      <div id="authConfirm" hidden style="text-align:center;padding:8px 0;">
         <div style="font-size:48px;margin-bottom:16px;">📧</div>
         <div style="font-size:20px;font-weight:800;color:#f0f0f0;margin-bottom:12px;">Check your email</div>
         <div style="font-size:14px;color:#8888aa;margin-bottom:8px;">We sent a confirmation link to:</div>
         <div style="font-size:14px;font-weight:700;color:#c8ff00;margin-bottom:24px;" id="authConfirmEmail"></div>
         <div style="font-size:13px;color:#8888aa;margin-bottom:32px;line-height:1.6;">Click the link in the email to activate your account, then come back and sign in.</div>
-        <button class="btn-p" style="width:100%;margin-bottom:12px;font-size:15px;padding:14px;" onclick="switchAuthMode()">Go to Sign In</button>
-        <div style="font-size:12px;color:#8888aa;margin-top:8px;">Didn't receive it? Check your spam folder.</div>
+        <button type="button" class="btn-p" style="width:100%;margin-bottom:12px;font-size:15px;padding:14px;" onclick="showAuthLogin()">Go to Sign In</button>
+        <div style="font-size:12px;color:#8888aa;margin-top:8px;">Didn't receive it? Check your spam folder, or</div>
+        <button type="button" class="auth-link" onclick="showResendConfirmation()">send the confirmation email again</button>
       </div>
     </div>
 
