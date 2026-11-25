@@ -69,7 +69,7 @@ export function pushPayload(kind, label, date){
 
 export function pushEndpointOk(e){
   if(typeof e !== 'string' || e.length > 1024) return false;
-  const m = /^https:\/\/([^\/?#:]+)(?::\d+)?\//.exec(e);
+  const m = /^https:\/\/([^\/?#:@]+)(?::\d{1,5})?\//.exec(e);
   return !!m && PUSH_HOST_RE.test(m[1]);
 }
 
@@ -96,9 +96,10 @@ async function _pool(items, n, fn){
 }
 
 // Send one payload to a list of devices. Returns per-device outcomes.
-export async function pushSendAll(subs, payloadFor, send){
+export async function pushSendAll(subs, payloadFor, send, late){
   return _pool(subs, PUSH_CONCURRENCY, async (s) => {
     if(!s || !pushEndpointOk(s.endpoint)) return { sid: s && s.sid, pid: s && s.pid, out: 'fail' };
+    if(late && late()) return { sid: s.sid, pid: s.pid, out: 'skipped' };   // out of time: released, retried next run
     let status = 0;
     const payload = payloadFor(s);
     const topic = JSON.parse(payload).kind === 'test' ? 'mg-test' : 'mg-train';
@@ -108,11 +109,13 @@ export async function pushSendAll(subs, payloadFor, send){
   });
 }
 
-// One hourly run. deps: { key, origin, now (ms), rpc(name, body) → parsed JSON or null, send(sub, payload) → {status} }
+// One run. deps: { key, scope ('prod' or a preview origin), origins [..], now (ms),
+//   rpc(name, body) → parsed JSON or null, send(sub, payload, opts) → {status},
+//   deadline (ms, optional: stop starting new sends after it) }
 export async function pushRunScheduler(deps){
   const sum = { ok: false, candidates: 0, due: 0, skippedTrained: 0, claimed: 0, sent: 0, devices: 0, gone: 0, retried: 0, failed: 0 };
-  if(!deps || !deps.key || !deps.origin) return Object.assign(sum, { reason: 'config' });
-  const c = await deps.rpc('push_candidates', { p_key: deps.key, p_origin: deps.origin });
+  if(!deps || !deps.key || !deps.scope || !Array.isArray(deps.origins) || !deps.origins.length) return Object.assign(sum, { reason: 'config' });
+  const c = await deps.rpc('push_candidates', { p_key: deps.key, p_scope: deps.scope, p_origins: deps.origins });
   if(!c || c.ok !== true || !Array.isArray(c.rows)) return Object.assign(sum, { reason: 'candidates' });
   sum.candidates = c.rows.length;
   const items = [], labelOf = {};
@@ -126,27 +129,32 @@ export async function pushRunScheduler(deps){
     items.push({ pid: r.pid, date: due.date });
   });
   let subs = [];
-  if(items.length){
-    const cl = await deps.rpc('push_claim', { p_key: deps.key, p_origin: deps.origin, p_items: items });
-    if(!cl || cl.ok !== true || !Array.isArray(cl.subs)) return Object.assign(sum, { reason: 'claim' });
-    subs = cl.subs.filter(s => s && labelOf[s.pid]);
+  for(let i = 0; i < items.length; i += 500){
+    const cl = await deps.rpc('push_claim', { p_key: deps.key, p_scope: deps.scope, p_origins: deps.origins, p_items: items.slice(i, i + 500) });
+    if(!cl || cl.ok !== true || !Array.isArray(cl.subs)) continue;   // unclaimed accounts are simply tried next run
+    subs = subs.concat(cl.subs.filter(s => s && labelOf[s.pid]));
   }
-  sum.claimed = new Set(subs.map(s => s.pid)).size;
-  const res = await pushSendAll(subs, s => pushPayload('train', labelOf[s.pid].label, labelOf[s.pid].date), deps.send);
+  const claimedPids = [...new Set(subs.map(s => s.pid))];
+  sum.claimed = claimedPids.length;
+  const late = () => deps.deadline && Date.now() > deps.deadline;
+  const res = await pushSendAll(subs, s => pushPayload('train', labelOf[s.pid].label, labelOf[s.pid].date), deps.send, late);
   const byPid = {};
-  res.forEach(r => { (byPid[r.pid] = byPid[r.pid] || []).push(r.out); });
+  claimedPids.forEach(pid => { byPid[pid] = []; });
+  res.forEach(r => { byPid[r.pid].push(r.out); });
   const okSids = res.filter(r => r.out === 'ok').map(r => r.sid);
   const goneSids = res.filter(r => r.out === 'gone').map(r => r.sid);
-  const release = [];
+  const failSids = res.filter(r => r.out === 'fail').map(r => r.sid);
+  const sentItems = [], release = [];
   Object.keys(byPid).forEach(pid => {
     const outs = byPid[pid];
-    if(outs.indexOf('ok') !== -1) sum.sent++;
-    else if(outs.indexOf('retry') !== -1){ sum.retried++; release.push({ pid, date: labelOf[pid].date }); }
-    else if(outs.indexOf('fail') !== -1) sum.failed++;
+    if(outs.indexOf('ok') !== -1){ sum.sent++; sentItems.push({ pid, date: labelOf[pid].date }); }
+    else if(outs.indexOf('retry') !== -1 || outs.indexOf('skipped') !== -1){ sum.retried++; release.push({ pid, date: labelOf[pid].date }); }
+    else if(outs.indexOf('fail') !== -1){ sum.failed++; release.push({ pid, date: labelOf[pid].date }); }
   });
   sum.devices = okSids.length; sum.gone = goneSids.length;
-  if(release.length) await deps.rpc('push_release', { p_key: deps.key, p_items: release });
-  await deps.rpc('push_report', { p_key: deps.key, p_ok: okSids, p_gone: goneSids, p_sent: sum.sent, p_skipped: sum.skippedTrained, p_failed: sum.failed + sum.retried });
+  for(let i = 0; i < release.length; i += 500) await deps.rpc('push_release', { p_key: deps.key, p_scope: deps.scope, p_items: release.slice(i, i + 500) });
+  await deps.rpc('push_report', { p_key: deps.key, p_scope: deps.scope, p_sent_items: sentItems.slice(0, 1000), p_ok: okSids, p_gone: goneSids, p_fail: failSids,
+                                  p_sent: sum.sent, p_skipped: sum.skippedTrained, p_failed: sum.failed + sum.retried });
   sum.ok = true;
   return sum;
 }
@@ -155,11 +163,12 @@ export async function pushRunScheduler(deps){
 // deps: { key, rpcUser(name, body) → JSON|null (with the user's JWT), rpc (cron), send }
 export async function pushRunTest(deps){
   const t = await deps.rpcUser('push_test_targets', {});
+  if(t && t.__http === 401) return { ok: false, reason: 'auth' };
   if(!t || t.ok !== true || !Array.isArray(t.subs)) return { ok: false, reason: (t && t.reason) || 'targets' };
   if(!t.subs.length) return { ok: false, reason: 'none' };
   const res = await pushSendAll(t.subs, () => pushPayload('test', 'train', ''), deps.send);
   const gone = res.filter(r => r.out === 'gone').map(r => r.sid);
-  if(gone.length && deps.key) await deps.rpc('push_report', { p_key: deps.key, p_ok: [], p_gone: gone, p_sent: 0, p_skipped: 0, p_failed: 0 });
+  if(gone.length && deps.key) await deps.rpc('push_report', { p_key: deps.key, p_scope: 'test', p_sent_items: [], p_ok: [], p_gone: gone, p_fail: [], p_sent: 0, p_skipped: 0, p_failed: 0 });
   const sent = res.filter(r => r.out === 'ok').length;
   return { ok: sent > 0, sent, gone: gone.length, devices: res.length };
 }
@@ -175,7 +184,8 @@ export function pushRpcFetch(fetchFn, signal){
         body: JSON.stringify(body || {}),
         signal: signal ? signal() : undefined
       });
-      if(!res || !res.ok) return null;
+      if(!res) return null;
+      if(!res.ok) return { ok: false, __http: res.status };   // never ok:true; lets callers tell an expired sign-in from an outage
       return await res.json();
     } catch(e){ return null; }
   };
@@ -215,14 +225,46 @@ export async function handlePushApi(req, deps){
       rpc: (n, b) => deps.rpcFetch(n, b, null),
       send: deps.send
     });
-    return out(r.ok ? 200 : (r.reason === 'rate' ? 429 : (r.reason === 'none' ? 404 : 502)), r);
+    return out(r.ok ? 200 : ({ rate: 429, none: 404, auth: 401 }[r.reason] || 502), r);
   }
   if(route === '/api/push/run'){
     if(req.method !== 'POST') return out(405, { ok: false, reason: 'method' });
     if(!_sameSecret(req.cronKey, env.PUSH_CRON_KEY)) return out(403, { ok: false, reason: 'key' });
     if(!_vapidReady(env)) return out(503, { ok: false, reason: 'not_configured' });
-    const r = await pushRunScheduler({ key: env.PUSH_CRON_KEY, origin: req.origin, now: deps.now, rpc: (n, b) => deps.rpcFetch(n, b, null), send: deps.send });
+    // On the production deploy this is exactly the hourly run (same 'prod' scope,
+    // so it can never double-send); on a Deploy Preview it only touches devices
+    // that subscribed on that preview, under its own scope.
+    const prod = env.CONTEXT === 'production';
+    const origins = prod ? pushProdOrigins(env) : [String(req.origin || '')].filter(o => /^https:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/.test(o));
+    if(!origins.length) return out(400, { ok: false, reason: 'origin' });
+    const r = await pushRunScheduler({ key: env.PUSH_CRON_KEY, scope: prod ? 'prod' : origins[0], origins, now: deps.now, deadline: Date.now() + 20000,
+                                       rpc: (n, b) => deps.rpcFetch(n, b, null), send: deps.send });
     return out(r.ok ? 200 : 502, r);
   }
   return out(404, { ok: false, reason: 'route' });
+}
+
+// The hourly scheduled run: same fail-closed rules as the API.
+// deps: { env, now, rpcFetch, send }
+export async function pushRunScheduled(deps){
+  const env = (deps && deps.env) || {};
+  if(env.PUSH_ENABLED !== '1') return { ok: false, reason: 'disabled' };
+  if(!_vapidReady(env) || !env.PUSH_CRON_KEY) return { ok: false, reason: 'not_configured' };
+  const origins = pushProdOrigins(env);
+  if(!origins.length) return { ok: false, reason: 'origin' };
+  return pushRunScheduler({ key: env.PUSH_CRON_KEY, scope: 'prod', origins, now: deps.now, deadline: Date.now() + 20000,
+                            rpc: (n, b) => deps.rpcFetch(n, b, null), send: deps.send });
+}
+
+// The production origins devices may have subscribed on: the primary URL, the
+// site's own *.netlify.app name, and any extra listed in PUSH_ORIGINS.
+export function pushProdOrigins(env){
+  const list = [env.URL, env.SITE_NAME ? 'https://' + env.SITE_NAME + '.netlify.app' : '']
+    .concat(String(env.PUSH_ORIGINS || '').split(','));
+  const out = [];
+  list.forEach(o => {
+    o = String(o || '').trim().replace(/\/+$/, '');
+    if(/^https:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/.test(o) && out.indexOf(o) === -1) out.push(o);
+  });
+  return out;
 }
