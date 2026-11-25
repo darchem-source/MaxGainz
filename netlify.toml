@@ -40,3 +40,11 @@
     Content-Type = "application/manifest+json"
     Cache-Control = "no-cache"
     X-Content-Type-Options = "nosniff"
+
+# App modules (Priority 7 slice 6): the page asks for /app/<name>.js?v=<build>;
+# always revalidate so a deploy is never hidden behind an HTTP cache.
+[[headers]]
+  for = "/app/*"
+  [headers.values]
+    Cache-Control = "no-cache"
+    X-Content-Type-Options = "nosniff"

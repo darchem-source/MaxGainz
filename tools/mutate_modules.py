@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Mutation check for the module gates (34: app/sync.js, 35: app/session.js,
-36: app/ai-validators.js + app/ai.js, 37: app/rules.js).
+36: app/ai-validators.js + app/ai.js, 37: app/rules.js,
+38: sw.js module serving + app/media.js + app/profile-icons.js).
 Plants one bug at a time — in a module (re-bundled, so only that gate's
 standalone scenarios can catch it) or in the bundle itself — and asserts the
 gate FAILS for each, and PASSES on the real tree.
-Usage: python3 tools/mutate_modules.py [app/sync.js|app/session.js|app/ai-validators.js|app/ai.js|app/rules.js]"""
+Usage: python3 tools/mutate_modules.py [app/sync.js|…|app/rules.js|sw.js|app/media.js|app/profile-icons.js]"""
 import os, sys, shutil, tempfile, io, contextlib
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'tests')); sys.path.insert(0, os.path.join(ROOT, 'tools'))
@@ -127,6 +128,25 @@ RULES_MUTANTS = [
     ('rules read storage', "function _localYMD(d){", "function _localYMD(d){ if(0) localStorage.getItem('x');"),
 ]
 
+SW_MUTANTS = [
+    ('modules not precached', "SHELL.push(...MODULE_FILES);", ""),
+    ('a module missing from the precache list', "'/app/media.js', '/app/profile-icons.js'", "'/app/media.js'"),
+    ('cache name not bumped after the shell changed', "const CACHE_NAME = 'maxgainz-v4';", "const CACHE_NAME = 'maxgainz-v3';"),
+    ('cache-first (a deploy would be hidden)', "    const res = await fetch(req);\n    if(res && res.ok){", "    const pre = await cache.match(url.pathname + url.search) || await cache.match(url.pathname); if(pre) return pre;\n    const res = await fetch(req);\n    if(res && res.ok){"),
+    ('older versions kept', ".map(k => cache.delete(k)));", ".map(k => null));"),
+    ('install copy deleted with old versions', "u.search !== url.search && u.search !== '';", "u.search !== url.search;"),
+    ('no offline fallback', "    const hit = await cache.match(url.pathname + url.search) || await cache.match(url.pathname);\n    return hit || new Response('', { status: 504", "    return new Response('', { status: 504"),
+    ('server errors cached', "    if(res && res.ok){\n      const copy = res.clone();", "    if(res){\n      const copy = res.clone();"),
+    ('other origins intercepted', "if (url.origin === self.location.origin && url.pathname.startsWith('/app/') && url.pathname.endsWith('.js')", "if (url.pathname.startsWith('/app/')"),
+    ('capability answer empty', "e.ports[0].postMessage({ modules: MODULE_FILES.slice(), cache: CACHE_NAME });", "e.ports[0].postMessage({ modules: [] });"),
+]
+MEDIA_MUTANTS = [
+    ('load-time call in a data module', "const EX_GIF_MAP = {", "const EX_GIF_X = getSplits();\nconst EX_GIF_MAP = {"),
+]
+ICON_MUTANTS = [
+    ('code in a data-only module', "const PROFILE_ICONS = [", "function _iconX(){ return 1; }\nconst PROFILE_ICONS = ["),
+]
+
 def _html_mutants(m, html):
     end = bundle.end(m)
     if m == 'app/sync.js':
@@ -140,6 +160,13 @@ def _html_mutants(m, html):
         return [('region edited by hand (drift)', html.replace('const AI_CLIENT_DAILY_CALLS = 30;', 'const AI_CLIENT_DAILY_CALLS = 300;', 1)),
                 ('function re-declared in index.html', html.replace(end, end + '\nasync function _aiCall(){ return { ok:true }; }', 1)),
                 ('const re-declared in index.html', html.replace(end, end + "\nconst AI_PREFS_KEY = 'x';", 1))]
+    if m == 'sw.js':
+        return [('page loads a module file before step B', html.replace('\n<script>\n', '\n<script src="app/media.js"></script>\n<script>\n', 1))]
+    if m == 'app/media.js':
+        return [('region edited by hand (drift)', html.replace("const EX_VIDEO_MAP = {", "const EX_VIDEO_MAP = { 'X': 'Y',", 1)),
+                ('const re-declared in index.html', html.replace(end, end + '\nconst EX_VIDEO_MAP = {};', 1))]
+    if m == 'app/profile-icons.js':
+        return [('const re-declared in index.html', html.replace(end, end + '\nconst PROFILE_ICONS = [];', 1))]
     if m == 'app/rules.js':
         return [('region edited by hand (drift)', html.replace('const COMEBACK_XP = 100;', 'const COMEBACK_XP = 1000;', 1)),
                 ('function re-declared in index.html', html.replace(end, end + '\nfunction getRank(xp){ return RANKS[0]; }', 1)),
@@ -150,7 +177,9 @@ def _html_mutants(m, html):
 
 GATES = {'app/sync.js': ('gate_sync_module', SYNC_MUTANTS), 'app/session.js': ('gate_session_module', SESSION_MUTANTS),
          'app/ai-validators.js': ('gate_ai_module', AI_VALIDATOR_MUTANTS), 'app/ai.js': ('gate_ai_module', AI_CLIENT_MUTANTS),
-         'app/rules.js': ('gate_rules_module', RULES_MUTANTS)}
+         'app/rules.js': ('gate_rules_module', RULES_MUTANTS),
+         'sw.js': ('gate_module_files', SW_MUTANTS), 'app/media.js': ('gate_module_files', MEDIA_MUTANTS),
+         'app/profile-icons.js': ('gate_module_files', ICON_MUTANTS)}
 
 def run(gate, html, root):
     buf = io.StringIO()
@@ -166,6 +195,8 @@ def tree(m, src):
     shutil.copy(os.path.join(ROOT, 'tools/bundle.py'), os.path.join(d, 'tools/bundle.py'))
     os.makedirs(os.path.join(d, 'netlify/functions/ai'))
     shutil.copy(os.path.join(ROOT, 'netlify/functions/ai/core.mjs'), os.path.join(d, 'netlify/functions/ai/core.mjs'))
+    for f in ('sw.js', 'netlify.toml'):
+        shutil.copy(os.path.join(ROOT, f), os.path.join(d, f))
     open(os.path.join(d, m), 'w', encoding='utf-8').write(src)
     for other in bundle.ALSO_INTO.get(m, []):
         op = os.path.join(d, other)
@@ -183,11 +214,20 @@ def check_module(m):
     for name, old, new in mutants:
         if src0.count(old) != 1: print(f'  ✗ {name}: anchor not found exactly once'); bad += 1; continue
         src = src0.replace(old, new)
-        html = bundle.region_re(m).sub(lambda _: bundle.begin(m) + '\n' + src + bundle.end(m), HTML, count=1)
+        html = bundle.region_re(m).sub(lambda _: bundle.begin(m) + '\n' + src + bundle.end(m), HTML, count=1) if m in bundle.MODULES else HTML
         d = tree(m, src)
         try: ok, out = run(gate, html, d)
         finally: shutil.rmtree(d)
         print(('  ✓ caught' if not ok else '  ✗ MISSED') + ': ' + name); bad += ok
+    if m == 'sw.js':
+        d = tree(m, src0)
+        try:
+            tp = os.path.join(d, 'netlify.toml')
+            txt = open(tp, encoding='utf-8').read()
+            open(tp, 'w', encoding='utf-8').write(txt.replace('for = "/app/*"', 'for = "/apps/*"'))
+            ok, out = run(gate, HTML, d)
+        finally: shutil.rmtree(d)
+        print(('  ✓ caught' if not ok else '  ✗ MISSED') + ': /app/* served without no-cache'); bad += ok
     if m == 'app/ai-validators.js':
         d = tree(m, src0)
         try:

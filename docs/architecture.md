@@ -53,7 +53,7 @@ Never edit inside a region by hand. Gate 33 fails, and the next `bundle.py` run 
 | 3b | Active-session transitions: `app/session.js` gains `_resetSessionLog` (all four start paths), `_recordSetValues` (rep dialog, typed sets, repeat set, swipe-to-log), `_markSetDone`, `_buildSessionRecord` (what `finishSession` saves; its old code unchanged inside, inputs passed in) and `_sessionPhase`. A refactor, not a move: proven equal to the old code by a differential run over 3,000 random workouts. Timers, DOM, XP, saving and the timed / core-circuit / AMRAP set paths stay in `index.html` | **Done**, build 2026.11.25.14 |
 | 4 | AI validation and client: `app/ai-validators.js` is the **one source** of the validators, bundled into both `index.html` and `netlify/functions/ai/core.mjs` (`ALSO_INTO` in `tools/bundle.py`); `app/ai.js` holds consent merge, the call gate, `_aiCall` / `_aiPost`, the local audit and metrics stores, beta enrolment and the server consent sync. UI stays in `index.html` (consent toggles, intro cards, AI health HTML, every AI surface) | **Done**, build 2026.11.25.12 |
 | 5 | Data contracts and pure training rules: `app/rules.js` (`_validateSession`, `_normalizeSessionWeights`, `_localYMD`; ranks, prestige, session XP, comeback bonus; week keys and streaks; weight steps, rep targets and the adaptive coaching engine `getLiftState`; rotation; recency and muscle-balance verdict; measurement deltas; next-path-day ranking). All pure; depends only on `calc1RM` from `app/session.js`. Glue that gathers app state (`buildLiftHistory`, `_calcMuscleGroupShare`, achievement checks) stays in `index.html` | **Done**, build 2026.11.25.13 |
-| 6 | Lower-priority screens and media manifests: these are the candidates for loading later, once a service-worker change makes extra files safe | |
+| 6 | Step A (this release): `sw.js` precaches every module and serves `/app/*.js` network-first per version with an offline fallback (`MODULE_CAPS` tells the page); `/app/*` is `no-cache` on Netlify. Data moved out for later file loading: `app/media.js` (`EX_GIF_MAP`, `EX_MEDIA_FILES`, `EX_VIDEO_MAP`; `tests/gen_media_manifest.py` now writes there) and `app/profile-icons.js` (`PROFILE_ICONS`, ~140 KB), both `LAZY_CANDIDATES` in `tools/bundle.py`. Step B (load them as files) is **not shipped** — see below | **Step A done**, build 2026.11.25.15 |
 
 ### Rules for each slice
 
@@ -63,6 +63,8 @@ Never edit inside a region by hand. Gate 33 fails, and the next `bundle.py` run 
 - Run `python3 tests/check.py`. All gates must stay green.
 - Replace inline `on…=` handlers in any surface the slice touches.
 
+8. **Gate 38 checks the module files:** `sw.js` `MODULE_FILES` equals `MODULES`, is precached (`SHELL.push`), and `CACHE_NAME` was bumped; the real `sw.js` runs in `jsc` (install precache, network-first per version, older versions dropped, offline exact/install-copy/504, server errors not cached, only same-origin GETs of `/app/*.js`, `MODULE_CAPS`); `/app/*` is `no-cache`; lazy candidates are data only and load with no globals; and the page does **not** load module files yet.
+
 ## When the page can load modules as files
 
 Loading modules as separate files is what would actually shrink the initial page. It needs a service-worker release first that:
@@ -71,3 +73,12 @@ Loading modules as separate files is what would actually shrink the initial page
 - serves `/app/` network-first, keyed by a version query, with a cached fallback.
 
 That release has to be **live and activated** before any page that needs those files ships. Otherwise the offline-start problem above returns. Plan it as its own release with a two-step rollout.
+
+### Status (slice 6)
+
+**Step A shipped in build 2026.11.25.15** (`sw.js` with `CACHE_NAME = 'maxgainz-v4'`). Step B may ship only after that worker is live **and activated** on the devices that matter (users accept the "Update available" banner, or the app is fully closed and reopened). To check a device: in the console, post `{type:'MODULE_CAPS'}` to `navigator.serviceWorker.controller` with a `MessageChannel`; it answers with the module list.
+
+Step B, when you decide to ship it:
+1. Start with `app/profile-icons.js` (only the profile picture picker and avatar use it). Remove its region from `index.html`, add `app/profile-icons.js` to a new `LOAD_AS_FILES` list in `tools/bundle.py`, and load it with `<script src="app/profile-icons.js?v=<APP_VERSION>" defer>` (or lazily when the picker opens). Make the avatar renderer fall back to the emoji when `PROFILE_ICONS` is not defined yet.
+2. Change gate 38's "page does not load module files" check to allow exactly `LOAD_AS_FILES`.
+3. Media manifests (`app/media.js`) are needed in a workout offline: only move them once step A has been live for a while, and load them before the session screen can open.
