@@ -21,7 +21,7 @@
 //   happens when the user accepts the "Update available" banner. This
 //   avoids changing the running page out from under a user mid-workout.
 
-const CACHE_NAME = 'maxgainz-v2';
+const CACHE_NAME = 'maxgainz-v3';   // v3: Lottie self-hosted (SHELL changed)
 // Offline exercise media (Phase 3). A SEPARATE, long-lived cache the page fills
 // on request ("Download for offline"). Entries are keyed
 // exercise-media/{id}/{file}?v={hash8}; the page deletes entries whose hash no
@@ -37,12 +37,12 @@ const SHELL = [
   // Inter variable font — CSS resolves to woff2 files cached lazily by
   // the cache-first handler below.
   'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap',
-  // Lottie player used for completion celebrations.
-  'https://unpkg.com/lottie-web@5.12.2/build/player/lottie_light.min.js'
+  // Lottie player used for completion celebrations (self-hosted copy).
+  '/vendor/lottie_light-5.12.2.min.js'
 ];
 
 // Hosts whose responses we cache lazily on first successful fetch.
-const STATIC_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com', 'unpkg.com'];
+const STATIC_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
 
 // ── INSTALL: pre-cache the app shell ──
 self.addEventListener('install', e => {
@@ -146,6 +146,16 @@ self.addEventListener('fetch', e => {
   // ExerciseDB GIFs/V2 clips never reach this branch.
   if (url.origin === self.location.origin && url.pathname.includes('/exercise-media/') && e.request.method === 'GET') {
     e.respondWith(_swMediaResponse(e.request));
+    return;
+  }
+
+  // Self-hosted vendor scripts (Lottie): cache-first from the precached shell,
+  // so celebrations work offline; refreshed into the cache on a miss.
+  if (url.origin === self.location.origin && url.pathname.startsWith('/vendor/') && e.request.method === 'GET') {
+    e.respondWith(caches.match(e.request, { ignoreVary: true }).then(hit => hit || fetch(e.request).then(res => {
+      if (res && res.ok) { const copy = res.clone(); caches.open(CACHE_NAME).then(c => c.put(e.request, copy)); }
+      return res;
+    })));
     return;
   }
 

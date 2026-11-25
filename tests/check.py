@@ -932,7 +932,7 @@ JSC = '/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Help
 SYNC_FUNCS = ['_emptyPending', '_normalisePending', '_P', '_savePending', '_unsyncedSessionCount',
               '_countPending', '_pendingCount', '_isHydrated', '_markSynced', '_lastSyncedAt',
               '_setProfileSeen', '_profileSeenAt', '_mergeLocalProfileExtras',
-              '_newClientId', '_isClientIdSchemaError', '_fetchAllSessionRows',
+              '_newClientId', '_isClientIdSchemaError', '_fetchAllSessionRows', '_sortSessionRows',
               '_buildStash', '_stashUnsynced', '_restoreStash', '_sessFingerprint',
               '_syncLabel', '_recomputeSyncStatus', '_scheduleRetry', '_uploadSession', 'flushPending',
               'cloudSaveSession', 'cloudDeleteSession', 'cloudSaveWeight', 'cloudSaveProfile',
@@ -953,6 +953,15 @@ function setTimeout(f, ms){ __timers.push(ms); return __timers.length; }
 function clearTimeout(){}
 function showToast(m){ __toasts.push(String(m)); }
 var __net = function(path, opts){ return []; };
+// PostgREST keyset paging over a table: order=id.asc, id=gt.<last>, limit=N.
+function __page(rows, p){
+  const lim = +(/limit=(\d+)/.exec(p) || [0, 1e9])[1];
+  const gt = /id=gt\.([^&]+)/.exec(p); const after = gt ? decodeURIComponent(gt[1]) : null;
+  const off = /offset=(\d+)/.exec(p);   // still served, so the old offset bug is reproducible
+  if (off) return rows.slice(+off[1], +off[1] + lim);
+  return rows.slice().sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+    .filter(r => after === null || r.id > after).slice(0, lim);
+}
 async function sbFetch(path, opts){ opts = opts || {}; __calls.push({ path: path, method: opts.method || 'GET', body: opts.body || null }); return __net(path, opts); }
 var bus = { emit(ev, d){ __statuses.push(d.status); } };
 function _isColdSyncing(){ return false; }
@@ -1126,10 +1135,7 @@ SYNC_SCENARIOS = {
       const all = [];
       for (let i = 0; i < 1203; i++) all.push({ id: 'r' + i, date: new Date(Date.UTC(2023, 0, 1) + i * 86400000).toISOString(), day: 'D' });
       __net = (p, o) => {
-        if (/^sessions/.test(p) && !o.method) {
-          const lim = +(/limit=(\d+)/.exec(p) || [0, 1e9])[1], off = +(/offset=(\d+)/.exec(p) || [0, 0])[1];
-          return all.slice(off, off + lim);
-        }
+        if (/^sessions/.test(p) && !o.method) return __page(all, p);
         return [];
       };
       const newest = { cloud_id: 'r1202', date: new Date(all[1202].date), day: 'D' };
@@ -1138,10 +1144,29 @@ SYNC_SCENARIOS = {
       if (_syncInFlight) await _syncInFlight;
       return ok && completedSessions.length === 1203 && posts(/^sessions/) === 0;
     ''',
+    'a delete on another device between pages skips no other row (keyset paging), date order kept': r'''
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: 'userA' }));
+      const all = [];
+      for (let i = 0; i < 1100; i++) all.push({ id: 'k' + String(i).padStart(4, '0'), date: new Date(Date.UTC(2023, 0, 1) + (1099 - i) * 86400000).toISOString(), day: 'D' + i });
+      let pages = 0;
+      __net = (p, o) => {
+        if (/^sessions/.test(p) && !o.method){
+          const r = __page(all, p);
+          if (++pages === 1) all.splice(10, 1);          // another device deletes an early row mid-load
+          return r;
+        }
+        return [];
+      };
+      const ok = await cloudLoadAll();
+      if (_syncInFlight) await _syncInFlight;
+      const days = completedSessions.map(s => s.day);
+      const sorted = completedSessions.every((s, i, a) => !i || a[i - 1].date <= s.date);
+      return ok && completedSessions.length === 1100 && days.indexOf('D500') !== -1 && days.indexOf('D501') !== -1 && sorted;
+    ''',
     'a failed page makes the whole load fail (no partial history)': r'''
       completedSessions.push({ cloud_id: 'keep', date: new Date('2026-11-01T10:00:00Z'), day: 'X' });
       __net = (p, o) => {
-        if (/^sessions/.test(p)) { const off = +(/offset=(\d+)/.exec(p) || [0, 0])[1]; return off === 0 ? new Array(500).fill(0).map((_, i) => ({ id: 'p' + i, date: '2025-01-01T00:00:00Z', day: 'P' + i })) : null; }
+        if (/^sessions/.test(p)) { return !/id=gt\./.test(p) ? new Array(500).fill(0).map((_, i) => ({ id: 'p' + String(i).padStart(3, '0'), date: '2025-01-01T00:00:00Z', day: 'P' + i })) : null; }
         return [];
       };
       const ok = await cloudLoadAll();
@@ -4075,10 +4100,10 @@ SW_SCENARIOS = {
    var got = null; L.message({ data: { type:'MEDIA_CAPS' }, ports: [{ postMessage: function(m){ got = m; } }] });
    return got && got.media === MEDIA_CACHE ? true : 'no reply ' + JSON.stringify(got);""",
  'activate deletes only stale app caches, never the download': r"""
-   ['maxgainz-v1', 'maxgainz-v2', MEDIA_CACHE, 'maxgainz-media-v0', 'some-other-app', 'maxgainz-v2-backup'].forEach(function(n){ C[n] = mk(n); });
+   ['maxgainz-v1', 'maxgainz-v2', CACHE_NAME, MEDIA_CACHE, 'maxgainz-media-v0', 'some-other-app', 'maxgainz-v2-backup'].forEach(function(n){ C[n] = mk(n); });
    var w = null; L.activate({ waitUntil: function(p){ w = p; } }); await w;
    var left = Object.keys(C).sort();
-   var want = ['maxgainz-v2', MEDIA_CACHE, 'maxgainz-v2-backup', 'some-other-app'].sort();
+   var want = [CACHE_NAME, MEDIA_CACHE, 'maxgainz-v2-backup', 'some-other-app'].sort();
    return JSON.stringify(left) === JSON.stringify(want) ? true : 'left ' + JSON.stringify(left);""",
 }
 
@@ -4491,6 +4516,8 @@ ok('library day kept without progKey', _shareSessionSnapshot(completedSessions[4
 ok('own names shown only when ticked', _shareSessionSnapshot(completedSessions[2], completedSessions, ALL).title === 'Dr Patel rehab block');
 var emo = _shareClean(_shareSessionSnapshot(completedSessions[2], completedSessions, ALL)).exercises[0].note;
 ok('no lone surrogate at a cut', !/[\uD800-\uDBFF]$/.test(emo) && !/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(emo));
+ok('set total counts only shown sets', _shareSessionSnapshot({ date:new Date(NOW), day:'Upper', setLog:{ 'Abdominal Work':{ sets:3, reps:[] }, 'Squat':{ sets:2, reps:[5,5], weight:100 } } }, [], DEF).totals.sets === 2);
+ok('nothing-logged circuit has no empty sets', !('sets' in _shareSessionSnapshot({ date:new Date(NOW), day:'Upper', setLog:{ 'Abdominal Work':{ sets:3, reps:[] } } }, [], DEF).exercises[0]));
 ok('missing weight is not 0 kg', _shareSessionSnapshot({ date:new Date(NOW), day:'Upper', setLog:{ 'Squat':{ sets:1, reps:[5], weight:0 } } }, [], DEF).exercises[0].sets[0].w === null);
 ok('defaults: notes and own names off', DEF.notes === false && DEF.ownNames === false && _shareDefaults('week').ownNames === false);
 ok('custom exercise masked by default', jd.indexOf('Exercise 1') !== -1);
@@ -4718,54 +4745,194 @@ def gate_sharing(html, js, share_js=None, share_html=None, sql=None, toml=None, 
     return ok_all
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gate 22 — Phase 3 leftovers (audit backlog)
+# (a) no third-party script: Lottie is self-hosted, pinned by an SRI hash that
+#     is recomputed from the vendored file, and precached by sw.js instead of
+#     unpkg; (b) "Submit anonymously" really is anonymous: submitFeedback runs
+#     in jsc and the request carries the public key, no JWT, no id/email;
+# (c) the pre-deletion step downloads the complete export (every profile-blob
+#     field) plus a CSV, promises no email, and never moves on by itself.
+# (Keyset paging is covered by gate 8's mid-load delete scenario.)
+# ─────────────────────────────────────────────────────────────────────────────
+LOTTIE_VENDOR = os.path.join(ROOT, 'vendor', 'lottie_light-5.12.2.min.js')
+
+FEEDBACK_RUN = r"""
+var SB_URL = 'https://sb.test', SB_KEY = 'ANON_PUBLIC_KEY', authToken = 'USER_JWT_SECRET';
+var currentUser = { id: 'user-123', email: 'me@example.com' };
+var _fbImageData = null, _fbImageFilename = null, _fbAnon = false;
+var ELS = { fbMessage: { value: 'The timer skips a beat sometimes.' }, fbCategory: { value: 'bug' }, fbLocation: { value: 'session' },
+            fbSubmitBtn: { disabled: false, textContent: '' } };
+var document = { getElementById: function(id){ return ELS[id] || { focus: function(){} }; } };
+function showToast(){} function closeFeedbackModal(){}
+var console = { error: function(){}, warn: function(){}, log: function(){} };
+function setTimeout(){ return 1; } function clearTimeout(){}
+function AbortController(){ this.signal = {}; this.abort = function(){}; }
+var SENT = [];
+function fetch(url, o){ SENT.push({ url: url, headers: o.headers, body: o.body }); return Promise.resolve({ ok: true, text: function(){ return Promise.resolve(''); } }); }
+"""
+FEEDBACK_SCENARIOS = {
+ 'anonymous feedback carries no JWT, id or email': r"""
+   _fbAnon = true; await submitFeedback();
+   var r = SENT[0]; if(!r) return 'nothing sent';
+   if(r.headers.Authorization !== 'Bearer ANON_PUBLIC_KEY') return 'Authorization ' + r.headers.Authorization;
+   if(JSON.stringify(r).indexOf('USER_JWT_SECRET') !== -1) return 'JWT anywhere in the request';
+   var b = JSON.parse(r.body); if(b.user_id !== null || b.user_email !== null) return 'id/email sent';
+   if(JSON.stringify(r).indexOf('me@example.com') !== -1 || JSON.stringify(r).indexOf('user-123') !== -1) return 'identity in the request';
+   return true;""",
+ 'named feedback still authenticates as the user': r"""
+   _fbAnon = false; await submitFeedback();
+   var r = SENT[0]; if(!r) return 'nothing sent';
+   if(r.headers.Authorization !== 'Bearer USER_JWT_SECRET') return 'Authorization ' + r.headers.Authorization;
+   var b = JSON.parse(r.body); if(b.user_id !== 'user-123') return 'user id missing';
+   return true;""",
+}
+
+
+def _profile_blob_keys(js):
+    prof = extract_async_decl(js, 'cloudSaveProfile') or ''
+    m = re.search(r'JSON\.stringify\(\s*\{', prof)
+    if not m: return []
+    i = prof.index('{', m.start()); depth = 0
+    for j in range(i, len(prof)):
+        if prof[j] == '{': depth += 1
+        elif prof[j] == '}':
+            depth -= 1
+            if depth == 0: break
+    blob = prof[i + 1:j]; keys = []; depth = 0; k = 0
+    while k < len(blob):
+        c = blob[k]
+        if c in '{[(': depth += 1; k += 1; continue
+        if c in '}])': depth -= 1; k += 1; continue
+        if c in '\'"`':
+            q = c; k += 1
+            while k < len(blob):
+                if blob[k] == '\\': k += 2; continue
+                if blob[k] == q: break
+                k += 1
+            k += 1; continue
+        if depth == 0 and (c.isalpha() or c in '_$'):
+            mm = re.match(r'[A-Za-z_$][\w$]*', blob[k:]); w = mm.group(0); rest = blob[k + len(w):].lstrip()
+            if (not keys or blob[:k].rstrip().endswith(',') or not blob[:k].strip()) and (rest.startswith(':') or rest.startswith(',') or rest == ''):
+                keys.append(w)
+            k += len(w); continue
+        k += 1
+    return keys
+
+
+def gate_leftovers(html, js, sw=None, vendor=None):
+    import base64, hashlib
+    ok_all = True
+    sw = (open(SW_PATH, encoding='utf-8').read() if os.path.exists(SW_PATH) else '') if sw is None else sw
+    vendor = (open(LOTTIE_VENDOR, 'rb').read() if os.path.exists(LOTTIE_VENDOR) else b'') if vendor is None else vendor
+    problems = []
+    # (a) Lottie
+    if 'unpkg.com' in html or 'unpkg.com' in sw: problems.append('a script still loads from unpkg.com')
+    if len(vendor) < 100000 or b'lottie' not in vendor[:600] or b'eval(' in vendor:
+        problems.append('vendored Lottie missing or not the expected build')
+    sri = 'sha384-' + base64.b64encode(hashlib.sha384(vendor).digest()).decode()
+    loader = extract_decl(js, '_loadLottieScript') or ''
+    if "s.src = '/vendor/lottie_light-5.12.2.min.js'" not in loader or ("s.integrity = '" + sri + "'") not in loader:
+        problems.append('Lottie loader not pinned to the vendored file (src + SRI ' + sri[:20] + '…)')
+    if "'/vendor/lottie_light-5.12.2.min.js'" not in sw or re.search(r"STATIC_HOSTS = \[[^\]]*unpkg", sw):
+        problems.append('sw.js does not precache the vendored Lottie / still trusts unpkg')
+    # (c) data download before deletion
+    mod = re.search(r'id="emailDataMod"[\s\S]*?<!-- FINAL CONFIRMATION MODAL -->', html)
+    mod = mod.group(0) if mod else ''
+    if not mod or re.search(r"(?i)we'll send|send email|email your data|📧", mod + html[html.find('id="deleteAccountMod"'):html.find('id="deleteAccountMod"') + 1500]):
+        problems.append('the deletion flow still promises an email')
+    dl = extract_decl(js, 'downloadDataBeforeDelete') or ''
+    if not re.search(r'const payload = _buildExportPayload\(\);', dl) or not re.search(r"_saveBlobFile\(JSON\.stringify\(payload[^;]*'application/json'", dl) \
+       or not re.search(r"_saveBlobFile\(generateSessionsCSV\(\), 'text/csv'", dl): problems.append('pre-deletion download is not the complete export + CSV')
+    if 'finalDeleteMod' in dl or 'setTimeout' in dl: problems.append('pre-deletion download moves on to deletion by itself')
+    if 'sendDataEmail' in js: problems.append('sendDataEmail (fake email) still present')
+    if not re.search(r'if\(typeof isAuthenticated === .function. && isAuthenticated\(\) && !_cloudLoadedThisPage\)\{[\s\S]*?await cloudLoadAll\(\)', dl):
+        problems.append('the "complete" backup is taken without loading the cloud copy first')
+    imp = extract_decl(js, 'applyImportPayload') or ''
+    if not re.search(r"\n\s*if\(typeof payload\.todayProg === 'string'", imp) or 'if(known) todayProg = t;' not in imp: problems.append('exported todayProg is never imported')
+    exp = extract_decl(js, '_buildExportPayload') or ''
+    keys = _profile_blob_keys(js)
+    if len(keys) < 10: problems.append('could not read the profile blob keys')
+    missing = [k for k in keys if not re.search(r'\b' + re.escape(k) + r'\s*:', exp)]
+    if missing: problems.append('export misses profile fields: ' + ', '.join(missing))
+    for p in problems: print('  ✗ ' + p)
+    if problems: ok_all = False
+    else: print(f'  ✓ no third-party script (Lottie self-hosted, SRI {sri[:19]}…, precached); pre-deletion download = full export ({len(keys)} profile fields) + CSV, no email claim, no auto-advance')
+    # (b) anonymous feedback, run for real
+    fb = extract_decl(js, 'submitFeedback')
+    if fb and js[max(0, js.find(fb) - 6):js.find(fb)].endswith('async '): fb = 'async ' + fb
+    if not fb:
+        print('  ✗ could not extract submitFeedback'); return False
+    # CSV: quotes escaped, formulas neutralised
+    csvfn = extract_decl(js, 'generateSessionsCSV') or ''
+    cf = _run_jsc_scenarios('var completedSessions = [{ date:"2026-11-24", day:\'=HYPERLINK("http://x","y")\', exercises:3, durationMin:40, volume:100, xpAwarded:5 }, { date:"2026-11-25", day:\'Say "hi", ok\', exercises:1 }];\n' + csvfn + '\n',
+        { 'CSV escapes quotes and neutralises formulas': "var c = generateSessionsCSV().split('\\n'); if(c[1].indexOf('\"\\'=HYPERLINK(\"\"http') === -1) return 'formula not neutralised: ' + c[1]; if(c[2].indexOf('\"Say \"\"hi\"\", ok\"') === -1) return 'quotes: ' + c[2]; return true;" })
+    for f in cf: print('  ✗ ' + f)
+    if cf: ok_all = False
+    # SW: the vendored script is served from the shell cache when offline
+    swf = _run_jsc_scenarios(SW_STUBS + sw.replace("self.addEventListener('install'", "self.addEventListener('install_disabled'") + '\n',
+        { 'vendored Lottie served offline from the shell cache': "var c = await caches.open(CACHE_NAME); var body = new ArrayBuffer(5); await c.put('https://app.test/vendor/lottie_light-5.12.2.min.js', new Response(body, { status:200 })); fetch = function(){ return Promise.reject(new Error('offline')); }; var e = fire('https://app.test/vendor/lottie_light-5.12.2.min.js', {}, 'no-cors'); if(!e.p) return 'not intercepted'; var r = await e.p; return r && r._b === body ? true : 'not served from cache';" })
+    for f in swf: print('  ✗ sw: ' + f)
+    if swf: ok_all = False
+    if not cf and not swf: print('  ✓ CSV quotes/formulas safe; vendored Lottie served from cache offline')
+    fails = _run_jsc_scenarios(FEEDBACK_RUN + fb + '\n', FEEDBACK_SCENARIOS)
+    for f in fails: print('  ✗ feedback: ' + f)
+    if fails: ok_all = False
+    else: print('  ✓ anonymous feedback sends only the public key (no JWT, id or email); named feedback unchanged')
+    return ok_all
+
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/21] parse')
+    print('[1/22] parse')
     p = gate_parse(js)
-    print('[2/21] invariants')
+    print('[2/22] invariants')
     inv = gate_invariants(js)
-    print('[3/21] video map')
+    print('[3/22] video map')
     vm = gate_videomap(js)
-    print('[4/21] inline handler wiring')
+    print('[4/22] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/21] auth log hygiene')
+    print('[5/22] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/21] sign-out scrub')
+    print('[6/22] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/21] safe rendering of user text')
+    print('[7/22] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/21] sync honesty')
+    print('[8/22] sync honesty')
     sy = gate_sync(js)
-    print('[9/21] media fallback + reminder copy')
+    print('[9/22] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/21] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/22] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/21] core-journey accessibility (session + dialogs)')
+    print('[11/22] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/21] Start today (first-use flow) + shortened Path wizard')
+    print('[12/22] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/21] simplified navigation (flagged)')
+    print('[13/22] simplified navigation (flagged)')
     nv = gate_nav_v2(html, js)
-    print('[14/21] Progress weekly briefing')
+    print('[14/22] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/21] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/22] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/21] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/22] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/21] Phase 2 typed sets (preview before save)')
+    print('[17/22] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
-    print('[18/21] Phase 2 weekly AI recap + measurement')
+    print('[18/22] Phase 2 weekly AI recap + measurement')
     rc = gate_recap(html, js)
-    print('[19/21] Phase 3 offline media (download, cache versioning, fallback order)')
+    print('[19/22] Phase 3 offline media (download, cache versioning, fallback order)')
     om = gate_offline_media(html, js)
-    print('[20/21] Phase 3 programme discovery (metadata, finder, why, switch preview)')
+    print('[20/22] Phase 3 programme discovery (metadata, finder, why, switch preview)')
     dc = gate_discovery(html, js)
-    print('[21/21] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
+    print('[21/22] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
     sh = gate_sharing(html, js)
+    print('[22/22] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
+    lf = gate_leftovers(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 
