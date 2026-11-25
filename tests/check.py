@@ -4225,7 +4225,7 @@ def gate_offline_media(html, js, sw=None, root=None):
 # ─────────────────────────────────────────────────────────────────────────────
 DISC_FNS = ['_discKeys', '_progInfo', '_estSessionMin', '_progMatches', '_whyProgramme', '_progBaseExercises',
             '_progSwitchDiff', '_discRenderCards', '_discRenderFilters', '_discFilterOpts', '_discAnswers',
-            '_discSwitchHtml', '_discSwitchBlock', '_discPathName', '_progAllDays', '_discWhyHtml', 'recommendProgramme', '_stCatalogue', '_stProgEquip', '_stAnswersFrom',
+            '_discSwitchHtml', '_discEntryHtml', '_discSwitchBlock', '_discPathName', '_progAllDays', '_discWhyHtml', 'recommendProgramme', '_stCatalogue', '_stProgEquip', '_stAnswersFrom',
             'isLibraryProgramme', 'getLibraryId', 'getLibraryProgramme', 'esc', '_p3FlagOn', '_offlineFmtMB']
 DISC_OBJS = ['HIIT_SERIES', 'PROGRAMME_META', 'DISC_LEVEL_LABEL', 'DISC_GOAL_LABEL', 'DISC_PROG_LABEL', 'DISC_EQUIP_LABEL',
              'ULF_VARIANTS', 'PPL', 'P3_FLAG_KEYS']
@@ -4239,6 +4239,7 @@ var _discFilters = { goal:'all', level:'all', days:'all', equip:'all', minutes:'
 function _offlinePathsToRemove(st, k){ return ['a/0.jpg', 'a/loop.mp4']; }
 function isPathActive(){ return !!userPath; }
 function getPathCurrentWeek(){ return 2; }
+var document = { documentElement: { classList: { _c: {}, contains: function(c){ return !!this._c[c]; } } } };
 function _progDisplayName(k){ return k; }
 var OFF_STATE = { progs:{} };
 function _offlineProgKey(p){ return p ? p.programme : null; }
@@ -4342,7 +4343,12 @@ ok('switch: names', d.fromName === 'Upper · Lower · Full Body' && d.toName ===
 userPath = { programme:'ULF', duration:8, coreSchedule:{ daysPerWeek:3 } }; _pathWizard = { programme:'PPL', daysPerWeek:3 };
 completedSessions = [{}, {}, { manualActivity:true }];
 ok('switch preview hidden with the flag off', _discSwitchHtml() === '');
+ok('classic-nav finder entry hidden with the flag off', _discEntryHtml() === '');
 LS['maxgainz_p3_discover'] = '1';
+ok('classic navigation gets a finder button', /onclick="openProgrammeFinder\(\)"/.test(_discEntryHtml()));
+document.documentElement.classList._c['nav-v2'] = true;
+ok('new navigation: no duplicate (it has its own Plan button)', _discEntryHtml() === '');
+document.documentElement.classList._c['nav-v2'] = false;
 var h = _discSwitchHtml();
 ok('switch preview shown for a real switch', /What changes/.test(h) && /Kept: all 2 logged workouts/.test(h) && /week 2 of 8/.test(h));
 ok('no media checkbox without a download', !/type="checkbox"/.test(h));
@@ -4412,6 +4418,10 @@ def gate_discovery(html, js):
     if '_pathWizard.hiitSeries = null' not in (extract_decl(js, 'adoptLibraryProgramme') or ''): problems.append('adopting a library programme keeps a HIIT series')
     if not re.search(r'\.st-secondary\[hidden\]\s*\{\s*display:\s*none', html): problems.append('hidden .st-secondary buttons still display (the Find button shows with the flag off)')
     if '_discSwitchBlock(pv.rec.key, pv.rec.daysPerWeek, false)' not in (extract_decl(js, 'renderStartTodayStep') or ''): problems.append('Start today replaces a Path without showing what changes, or offers a removal it cannot honour')
+    for fn in ['_renderPathTabEmpty', '_renderPathTabActive']:
+        if '${_discEntryHtml()}' not in (extract_decl(js, fn) or ''): problems.append(fn + ': no finder entry in the classic navigation')
+    if not re.search(r"_p3FlagOn\('discover'\)\) \? `<button[^`]*onclick=\"openProgrammeFinder\(\)\"", extract_decl(js, '_renderMyProgrammesSection') or ''):
+        problems.append('Programme tab has no (flag-gated) way into the finder')
     rpt = extract_decl(js, 'renderPathTab') or ''
     if "_p3FlagOn('discover')" not in rpt or 'id="planFindProg" hidden' not in html: problems.append('Plan finder button not flag-gated')
     for p in problems: print('  ✗ ' + p)
