@@ -29407,7 +29407,7 @@ function _p5FlagOn(name){
 // Section → blocks, in order. A block is every element tagged data-pb="<key>"
 // (or, for the two flag-gated cards, an id). '-' entries are hidden in v2.
 const PROFILE_V2_LAYOUT = [
-  { id:'pfAccount',  title:'Account',          blocks:['account-icon', 'prefname', 'names', 'email', 'account-cloud', 'account-sync'] },
+  { id:'pfAccount',  title:'Account',          blocks:['account-icon', 'prefname', 'email', 'account-cloud', 'account-sync'] },
   { id:'pfTraining', title:'Your training',    note:'How Max Gainz plans and progresses your workouts.',
     blocks:['train-recommend', 'train-path', 'train-finetune', 'train-rpe', 'train-periodize', 'train-variety', { k:'train-runner', caption:'🏃 For Garry\'s treadmill workouts' }, '#aiSettings'] },
   { id:'pfBody',     title:'Body',             note:'Your current weight is used for bodyweight exercises and the Muscle Balance chart.',
@@ -29418,7 +29418,7 @@ const PROFILE_V2_LAYOUT = [
   { id:'pfData',     title:'Data & account',   blocks:['data-backup', 'data-health', 'data-shares', 'data-feedback', 'data-clear', 'data-delete'] }
 ];
 // Shown in the old layout only: replaced by the sections' own wording / autosave / the full export.
-const PROFILE_V2_HIDDEN = ['garry', 'save', 'info', 'settings-head', 'data-exportjson'];
+const PROFILE_V2_HIDDEN = ['garry', 'save', 'info', 'settings-head', 'data-exportjson', 'names'];
 const PROFILE_V2_KEEP = ['runner-modal'];   // overlays: moved, never hidden
 
 let _profileV2Applied = false;
@@ -29487,8 +29487,9 @@ function _profileApplyLayoutV2(){
   // Each field saves itself, right away, as you leave it (no Save button here).
   Object.keys(PROFILE_FIELD_RULES).forEach(id => {
     const el = document.getElementById(id);
-    if(el) el.addEventListener('change', () => _profileAutosaveField(id));
+    if(el && id !== 'profileEmail') el.addEventListener('change', () => _profileAutosaveField(id));   // the email is read-only here
   });
+  _profileV2Fill();
   document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'hidden') _profileFlushCloud(); });
   screen.classList.add('pf-v2-on');
   _profileV2Applied = true;
@@ -29497,8 +29498,19 @@ function _profileApplyLayoutV2(){
 // Per-field rules. A field only ever writes ITS OWN value, and only when valid —
 // so an unrelated edit can never touch body weight, and a cleared field never
 // saves a made-up default.
+const PROFILE_LB_PER_KG = 2.205;   // the weight log's factor (saveBWEntry)
+function _profileWeightUnit(){ try { return localStorage.getItem('userWeightUnit') === 'lbs' ? 'lbs' : 'kg'; } catch(e){ return 'kg'; } }
+// Pure: the one name shown in the new layout — the display name, else what the
+// old First/Last fields held, else the name given at sign-up.
+function _profileDisplayName(p, user){
+  p = p || {};
+  const pref = String(p.preferredName || '').trim();
+  if(pref) return pref;
+  const fl = [p.firstName, p.lastName].map(x => String(x || '').trim()).filter(Boolean).join(' ');
+  return fl || String((user && user.name) || '').trim();
+}
 const PROFILE_FIELD_RULES = {
-  profilePreferredName: { key:'preferredName', kind:'text', greet:true, sec:'pfAccount' },
+  profilePreferredName: { key:'preferredName', kind:'text', greet:true, merge:true, sec:'pfAccount' },
   profileFirstName:     { key:'firstName',     kind:'text', greet:true, sec:'pfAccount' },
   profileLastName:      { key:'lastName',      kind:'text', sec:'pfAccount' },
   profileEmail:         { key:'email',         kind:'text', sec:'pfAccount' },
@@ -29508,7 +29520,7 @@ const PROFILE_FIELD_RULES = {
   profileHeightCM:      { key:'heightCM',      kind:'num', min:100, max:250, sec:'pfAbout', label:'height in cm' }
 };
 // Pure: validate one field. → { ok:true, value } or { ok:false, msg }
-function _profileFieldValue(rule, raw, now){
+function _profileFieldValue(rule, raw, now, unit){
   const v = String(raw == null ? '' : raw).trim();
   if(rule.kind === 'text') return { ok:true, value: v.slice(0, 60) };
   if(rule.kind === 'gender') return ['', 'M', 'F', 'O'].indexOf(v) !== -1 ? { ok:true, value:v } : { ok:false, msg:'Pick an option from the list.' };
@@ -29520,11 +29532,44 @@ function _profileFieldValue(rule, raw, now){
     return { ok:true, value:v };
   }
   const n = parseFloat(v);
-  if(v === '' || !isFinite(n) || n < rule.min || n > rule.max){
-    return { ok:false, msg: rule.kind === 'weight' ? 'Enter a weight between ' + rule.min + ' and ' + rule.max + ' kg — not saved.'
+  const lbs = rule.kind === 'weight' && unit === 'lbs';
+  const min = lbs ? Math.round(rule.min * PROFILE_LB_PER_KG) : rule.min, max = lbs ? Math.round(rule.max * PROFILE_LB_PER_KG) : rule.max;
+  if(v === '' || !isFinite(n) || n < min || n > max){
+    return { ok:false, msg: rule.kind === 'weight' ? 'Enter a weight between ' + min + ' and ' + max + ' ' + (lbs ? 'lbs' : 'kg') + ' — not saved.'
                                                    : 'Enter your ' + (rule.label || 'value') + ' (' + rule.min + '–' + rule.max + ') — not saved.' };
   }
-  return { ok:true, value: rule.kind === 'weight' ? Math.round(n * 10) / 10 : Math.round(n) };
+  if(rule.kind === 'weight'){
+    // Stored in kg (like the weight log); what was typed is kept for display.
+    const shown = Math.round(n * 10) / 10;
+    return { ok:true, value: lbs ? Math.round(n / PROFILE_LB_PER_KG * 100) / 100 : shown, display: shown, unit: lbs ? 'lbs' : 'kg' };
+  }
+  return { ok:true, value: Math.round(n) };
+}
+// New layout: one display name, the sign-in email read-only, weight in the
+// user's unit, and no made-up 80 kg / 180 cm when nothing is saved.
+function _profileV2Fill(){
+  if(!_profileV2Applied && !document.getElementById('profileV2')) return;
+  const nameEl = document.getElementById('profilePreferredName');
+  const nameLbl = document.querySelector('[data-pb="prefname"] label');
+  if(nameLbl){ nameLbl.textContent = 'Display name'; nameLbl.setAttribute('for', 'profilePreferredName'); }
+  if(nameEl){ nameEl.value = _profileDisplayName(userProfile, typeof currentUser !== 'undefined' ? currentUser : null); nameEl.placeholder = 'What should we call you?'; nameEl.maxLength = 60; }
+  const emailEl = document.getElementById('profileEmail');
+  const emailLbl = document.querySelector('[data-pb="email"] label');
+  if(emailLbl){ emailLbl.textContent = 'Sign-in email'; emailLbl.setAttribute('for', 'profileEmail'); }
+  if(emailEl){
+    emailEl.readOnly = true; emailEl.setAttribute('aria-readonly', 'true');
+    emailEl.value = (typeof getCurrentUserEmail === 'function' && getCurrentUserEmail()) || '';
+    emailEl.placeholder = 'Not signed in';
+    emailEl.style.opacity = '0.75';
+    emailEl.title = 'The email you sign in with. It can\'t be changed here.';
+  }
+  const unit = _profileWeightUnit();
+  const wEl = document.getElementById('profileWeight');
+  const wUnit = document.querySelector('[data-pb="body-weight"] input + div');
+  if(wEl){ const kg = Number(userProfile.weight); wEl.value = kg > 0 ? (unit === 'lbs' ? Math.round(kg * PROFILE_LB_PER_KG * 10) / 10 : kg) : ''; wEl.placeholder = unit === 'lbs' ? 'e.g. 175' : 'e.g. 80'; wEl.step = '0.1'; }
+  if(wUnit) wUnit.textContent = unit;
+  const hEl = document.getElementById('profileHeightCM');
+  if(hEl){ const h = Number(userProfile.heightCM); hEl.value = h > 0 ? h : ''; }
 }
 let _profileStatusSeq = 0, _profileCloudTimer = null, _profileCloudPending = false, _profileStatusEl = null;
 function _profileAutosaveField(id){
@@ -29532,15 +29577,20 @@ function _profileAutosaveField(id){
   const el = document.getElementById(id);
   if(!rule || !el) return;
   const statusEl = document.getElementById(rule.sec === 'pfAccount' ? 'profileSaveStatus' : rule.sec + 'Status');
-  const r = _profileFieldValue(rule, el.value, Date.now());
+  const r = _profileFieldValue(rule, el.value, Date.now(), _profileWeightUnit());
   if(!r.ok){ if(statusEl) statusEl.textContent = '⚠️ ' + r.msg; return; }
   userProfile[rule.key] = r.value;
+  if(rule.merge){
+    // One display name: the old First/Last fields and the duplicate email copy
+    // are cleared once the user saves it (the sign-in email itself is untouched).
+    userProfile.firstName = ''; userProfile.lastName = ''; userProfile.email = '';
+  }
   if(rule.kind === 'weight'){
     // Same as Save Profile did for weight — and only for weight.
     userProfile.bodyWeight = r.value; userProfile.bodyWeightUnit = 'kg';
     const today = new Date().toISOString().split('T')[0];
     bodyWeightLog = bodyWeightLog.filter(e => e.date !== today);
-    bodyWeightLog.push({ date: today, weight: r.value, unit: 'kg', displayWeight: r.value, displayUnit: 'kg' });
+    bodyWeightLog.push({ date: today, weight: r.value, unit: 'kg', displayWeight: r.display, displayUnit: r.unit });
     bodyWeightLog.sort((a, b) => a.date.localeCompare(b.date));
     try { renderBWChart(); } catch(e){}
   }
@@ -29581,6 +29631,7 @@ function renderProfile(){
   // Refresh notification button label per current permission state
   if(typeof _refreshNotificationButton === 'function') _refreshNotificationButton();
   if(typeof renderRemindersCard === 'function'){ renderRemindersCard(); _pushRefreshMetrics(); }
+  if(typeof _profileV2Fill === 'function' && _profileV2Applied) _profileV2Fill();
   if(typeof _refreshTrackRPEBtn === 'function') _refreshTrackRPEBtn();
   if(typeof _refreshPeriodizeBtn === 'function') _refreshPeriodizeBtn();
   if(typeof _refreshRotateExBtn === 'function') _refreshRotateExBtn();
@@ -29854,6 +29905,7 @@ function setWeightUnit(unit){
   localStorage.setItem('userWeightUnit', unit);
   updateWeightUnitButtons();
   cloudSaveProfile();
+  if(typeof _profileV2Fill === 'function' && _profileV2Applied) _profileV2Fill();
 }
 
 function updateSpeedUnitButtons(){
