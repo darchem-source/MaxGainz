@@ -123,6 +123,83 @@ self.addEventListener('message', e => {
   if (e.data && e.data.type === 'MEDIA_CAPS' && e.ports && e.ports[0]) {
     e.ports[0].postMessage({ media: MEDIA_CACHE });
   }
+  // Same idea for training-day reminders: the page only subscribes once the
+  // controlling worker can actually show them (an older one would not).
+  if (e.data && e.data.type === 'PUSH_CAPS' && e.ports && e.ports[0]) {
+    e.ports[0].postMessage({ push: 1, meta: PUSH_META_CACHE });
+  }
+});
+
+// ── PUSH: training-day reminders (Phase 4) ──
+// The payload is {v:1, kind:'train'|'test', label, date}. Nothing in it is
+// shown as-is: the text comes from PUSH_LABEL_TEXT below (must equal the copy
+// in index.html), unknown values fall back to the generic line, and a tap
+// always opens this app's own Today screen.
+const PUSH_META_CACHE = 'maxgainz-push-v1';
+const PUSH_METRICS_PATH = '/__mg_push_metrics';
+const PUSH_LABEL_TEXT = { upper:'Upper day today', lower:'Lower day today', full:'Full-body day today', push:'Push day today', pull:'Pull day today', legs:'Leg day today', hiit:'HIIT day today', cardio:'Cardio day today', train:"Today's a planned training day" };
+
+function _swPushNote(d) {
+  const ok = d && typeof d === 'object' && d.v === 1;
+  const kind = ok && d.kind === 'test' ? 'test' : 'train';
+  const label = ok && typeof d.label === 'string' && Object.prototype.hasOwnProperty.call(PUSH_LABEL_TEXT, d.label) ? d.label : 'train';
+  const date = ok && typeof d.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date : '';
+  return {
+    title: kind === 'test' ? 'Test reminder' : 'Time to train',
+    options: {
+      body: kind === 'test' ? 'Reminders are working on this device.' : PUSH_LABEL_TEXT[label],
+      tag: 'mg-' + kind + (date ? '-' + date : ''),
+      icon: '/icon.png',
+      badge: '/icon.png',
+      data: { go: 'today' }
+    }
+  };
+}
+function _swLocalDay() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+// Per-device counts (last 60 days kept). Never sent anywhere.
+async function _swPushCount(what) {
+  try {
+    const c = await caches.open(PUSH_META_CACHE);
+    const r = await c.match(PUSH_METRICS_PATH);
+    let m = null;
+    try { m = r ? await r.json() : null; } catch (e) { m = null; }
+    if (!m || typeof m !== 'object' || !m.days || typeof m.days !== 'object') m = { v: 1, days: {} };
+    const k = _swLocalDay();
+    const day = m.days[k] && typeof m.days[k] === 'object' ? m.days[k] : { shown: 0, opened: 0 };
+    day[what] = (Number.isFinite(day[what]) ? day[what] : 0) + 1;
+    m.days[k] = day;
+    Object.keys(m.days).sort().slice(0, -60).forEach(x => { delete m.days[x]; });
+    await c.put(PUSH_METRICS_PATH, new Response(JSON.stringify(m), { headers: { 'Content-Type': 'application/json' } }));
+  } catch (e) {}
+}
+
+self.addEventListener('push', e => {
+  let d = null;
+  try { d = e.data ? e.data.json() : null; } catch (err) { d = null; }
+  const n = _swPushNote(d);
+  e.waitUntil(Promise.all([
+    self.registration.showNotification(n.title, n.options),
+    _swPushCount('shown')
+  ]));
+});
+
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(Promise.all([
+    _swPushCount('opened'),
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+      const own = list.filter(c => { try { return new URL(c.url).origin === self.location.origin; } catch (err) { return false; } });
+      if (own.length) {
+        const c = own[0];
+        try { c.postMessage({ type: 'OPEN_TODAY' }); } catch (err) {}
+        return c.focus ? c.focus() : undefined;
+      }
+      return self.clients.openWindow ? self.clients.openWindow('/?go=today') : undefined;
+    })
+  ]));
 });
 
 // ── FETCH ──
