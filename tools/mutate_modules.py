@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Mutation check for the module gates (34: app/sync.js, 35: app/session.js,
-36: app/ai-validators.js + app/ai.js).
+36: app/ai-validators.js + app/ai.js, 37: app/rules.js).
 Plants one bug at a time — in a module (re-bundled, so only that gate's
 standalone scenarios can catch it) or in the bundle itself — and asserts the
 gate FAILS for each, and PASSES on the real tree.
-Usage: python3 tools/mutate_modules.py [app/sync.js|app/session.js|app/ai-validators.js|app/ai.js]"""
+Usage: python3 tools/mutate_modules.py [app/sync.js|app/session.js|app/ai-validators.js|app/ai.js|app/rules.js]"""
 import os, sys, shutil, tempfile, io, contextlib
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'tests')); sys.path.insert(0, os.path.join(ROOT, 'tools'))
@@ -86,6 +86,35 @@ AI_CLIENT_MUTANTS = [
     ('module touches the DOM', "function _aiHash(str){", "function _aiHash(str){ if(0) document.title = '';"),
 ]
 
+RULES_MUTANTS = [
+    ('bad dates accepted', "  if(isNaN(d)) return null;\n  const num", "  const num"),
+    ('negative numbers kept', "const num = (v) => (typeof v === 'number' && isFinite(v) && v >= 0) ? v : 0;", "const num = (v) => (typeof v === 'number' && isFinite(v)) ? v : 0;"),
+    ('validator mutates its input', "  const out = Object.assign({}, s);\n  out.date = d;", "  const out = s;\n  out.date = d;"),
+    ('RPE outside 1–10 kept', "(typeof v === 'number' && v >= 1 && v <= 10) ? v : null", "(typeof v === 'number') ? v : null"),
+    ('weight repair uses the planned weight', "        const top = Math.max(...sw);", "        const top = e.weight;"),
+    ('weight repair touches manual activities', "    if(!s || s.manualActivity || !s.setLog || typeof s.setLog !== 'object') return;", "    if(!s || !s.setLog || typeof s.setLog !== 'object') return;"),
+    ('rank boundary off by one', "  for(let i=RANKS.length-1;i>=0;i--) if(xp>=RANKS[i].min) return RANKS[i];", "  for(let i=RANKS.length-1;i>=0;i--) if(xp>RANKS[i].min) return RANKS[i];"),
+    ('rank ladder gap', "{name:'First Steps',     emoji:'👟', min:250,", "{name:'First Steps',     emoji:'👟', min:260,"),
+    ('prestige rounds up', "  return Math.floor((xp - top.min) / PRESTIGE_STEP);", "  return Math.ceil((xp - top.min) / PRESTIGE_STEP);"),
+    ('20-set bonus dropped', "  if(sets >= 20) xp += 25;", ""),
+    ('comeback counts manual activities', "    .filter(s => !s.manualActivity)\n", ""),
+    ('week key in UTC', "  dt.setHours(0,0,0,0);\n  dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7)); // back to Monday", "  dt.setUTCHours(0,0,0,0);\n  dt.setDate(dt.getDate() - ((dt.getUTCDay() + 6) % 7)); // back to Monday"),
+    ('longest streak ignores gaps', "    else run=1;", ""),
+    ('streak needs 2 sessions, not 3', "    if((weeks[key]||0)>=3) streak++;", "    if((weeks[key]||0)>=2) streak++;"),
+    ('step up skips a plate', "    const next = steps.find(s => s > current);", "    const next = steps.find(s => s > current + 2.5);"),
+    ('rep target uses the low end', "    if(!isNaN(lo) && !isNaN(hi)) return Math.round((lo + hi) / 2);", "    if(!isNaN(lo) && !isNaN(hi)) return lo;"),
+    ('no gap deload', "  if(thisSession === null && weeksAway != null && weeksAway >= 4){", "  if(false){"),
+    ('gap deload too gentle', "      const pct = weeksAway < 6 ? 0.15 : weeksAway < 8 ? 0.20 : 0.25;", "      const pct = 0.05;"),
+    ('top of range does not add weight', "    out.rule='A_topRange'; out.action='increase'; out.suggested=stepUp;", "    out.rule='A_topRange'; out.action='increase'; out.suggested=baseline;"),
+    ('rotation never returns to the original', "  return idx === 0 ? null : pool[idx - 1];", "  return pool[idx % pool.length];"),
+    ('recency curve shifted', "  if(weeksAgo<=2) return 1.0;", "  if(weeksAgo<=1) return 1.0;"),
+    ('critical imbalance missed', "  if(loPct<10){status='critical-low';level=3;", "  if(loPct<1){status='critical-low';level=3;"),
+    ('measurement change from the wrong end', "  const first = vals[0][field], latest = vals[vals.length-1][field];", "  const first = vals[vals.length-1][field], latest = vals[0][field];"),
+    ('fried muscles not demoted', "          if(s >= 0.35){ hard = true; warned.push(g); }", ""),
+    ('load-time call', "const PRESTIGE_STEP = 25000;", "const PRESTIGE_STEP = calc1RM(25000, 0);"),
+    ('rules read storage', "function _localYMD(d){", "function _localYMD(d){ if(0) localStorage.getItem('x');"),
+]
+
 def _html_mutants(m, html):
     end = bundle.end(m)
     if m == 'app/sync.js':
@@ -99,12 +128,17 @@ def _html_mutants(m, html):
         return [('region edited by hand (drift)', html.replace('const AI_CLIENT_DAILY_CALLS = 30;', 'const AI_CLIENT_DAILY_CALLS = 300;', 1)),
                 ('function re-declared in index.html', html.replace(end, end + '\nasync function _aiCall(){ return { ok:true }; }', 1)),
                 ('const re-declared in index.html', html.replace(end, end + "\nconst AI_PREFS_KEY = 'x';", 1))]
+    if m == 'app/rules.js':
+        return [('region edited by hand (drift)', html.replace('const COMEBACK_XP = 100;', 'const COMEBACK_XP = 1000;', 1)),
+                ('function re-declared in index.html', html.replace(end, end + '\nfunction getRank(xp){ return RANKS[0]; }', 1)),
+                ('const re-declared in index.html', html.replace(end, end + '\nconst RANK_TIERS = [];', 1))]
     return [('region edited by hand (drift)', html.replace('let _pendingRPE=null;', 'let _pendingRPE=0;', 1)),
             ('function re-declared in index.html', html.replace(end, end + '\nfunction calc1RM(w, r){ return w; }', 1)),
             ('var re-declared in index.html', html.replace(end, end + '\nvar _activeSessionOwner = null;', 1))]
 
 GATES = {'app/sync.js': ('gate_sync_module', SYNC_MUTANTS), 'app/session.js': ('gate_session_module', SESSION_MUTANTS),
-         'app/ai-validators.js': ('gate_ai_module', AI_VALIDATOR_MUTANTS), 'app/ai.js': ('gate_ai_module', AI_CLIENT_MUTANTS)}
+         'app/ai-validators.js': ('gate_ai_module', AI_VALIDATOR_MUTANTS), 'app/ai.js': ('gate_ai_module', AI_CLIENT_MUTANTS),
+         'app/rules.js': ('gate_rules_module', RULES_MUTANTS)}
 
 def run(gate, html, root):
     buf = io.StringIO()

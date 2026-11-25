@@ -21,7 +21,7 @@ import os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INDEX = os.path.join(ROOT, 'index.html')
-MODULES = ['app/rollout.js', 'app/sync.js', 'app/session.js', 'app/ai-validators.js', 'app/ai.js']   # load order = order in the page
+MODULES = ['app/rollout.js', 'app/sync.js', 'app/session.js', 'app/ai-validators.js', 'app/ai.js', 'app/rules.js']   # load order = order in the page
 # Modules that are ALSO copied into a marked region of another file. The AI
 # validators run on the server too (core.mjs), so both copies come from one file.
 ALSO_INTO = {'app/ai-validators.js': ['netlify/functions/ai/core.mjs']}
