@@ -407,6 +407,7 @@ button.chip { font-family:inherit; }
    .wadj-btn, .set-bub, .modal-handle, .chip) so dense rows don't bloat. */
 #s-active button:not(.sc-btn):not(.wadj-btn):not(.set-bub):not(.chip):not(.dp-chip):not(.day-badge) { min-height:44px; }
 /* ── Phase 1: session progressive disclosure + stable bottom bar ── */
+[data-a11y="1"]:focus-visible, [role="switch"]:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:8px; }
 .sr-only { position:absolute !important; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
 /* Sticky above the fixed .nav. The sticky edge is measured inside .tab-content's
    padding-bottom (90px + safe area), so bottom:-12px - safe area puts the bar's
@@ -1512,7 +1513,7 @@ details.pf-sec:not([open]){gap:0;}
 
 <!-- ONBOARDING MODAL -->
 <div class="modal-ov" id="onboardMod" style="background:rgba(0,0,0,0.97);z-index:500;">
-  <div class="modal" style="max-height:92vh;overflow-y:auto;padding:20px 20px 28px;">
+  <div aria-label="Set up your training" class="modal" style="max-height:92vh;overflow-y:auto;padding:20px 20px 28px;">
     <div id="onboardContent"></div>
   </div>
 </div>
@@ -1559,7 +1560,7 @@ details.pf-sec:not([open]){gap:0;}
 
 <!-- PROGRAMME LIBRARY PREVIEW MODAL -->
 <div class="modal-ov" id="libraryPreviewMod" style="background:rgba(0,0,0,0.97);z-index:210;" onclick="if(event.target===this)this.classList.remove('open')">
-  <div class="modal" style="max-height:92vh;overflow-y:auto;padding:20px;">
+  <div aria-label="Programme preview" class="modal" style="max-height:92vh;overflow-y:auto;padding:20px;">
     <div class="modal-handle"></div>
     <div id="libPreviewContent"></div>
   </div>
@@ -1610,7 +1611,7 @@ details.pf-sec:not([open]){gap:0;}
 <div class="modal-ov" id="shareCardMod" style="z-index:400;" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal" style="text-align:center;">
     <div class="modal-handle"></div>
-    <div style="font-size:19px;font-weight:800;margin-bottom:14px;">Share Your Win</div>
+    <div id="shareCardTitle" style="font-size:19px;font-weight:800;margin-bottom:14px;">Share Your Win</div>
     <div id="shareCardPreview" style="margin-bottom:14px;"></div>
     <button class="btn-p" style="width:100%;margin-bottom:8px;" onclick="downloadShareCard()">💾 Save image</button>
     <button id="shareCardNativeBtn" style="display:none;width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:12px;padding:12px;font-size:14px;font-weight:700;color:var(--text);cursor:pointer;margin-bottom:8px;" onclick="shareCardNative()">📲 Share to apps</button>
@@ -1653,7 +1654,7 @@ details.pf-sec:not([open]){gap:0;}
 <div class="modal-ov" id="exNoteMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal">
     <div class="modal-handle"></div>
-    <div style="font-size:19px;font-weight:800;margin-bottom:4px;">📝 Exercise Note</div>
+    <div id="exNoteTitle" style="font-size:19px;font-weight:800;margin-bottom:4px;">📝 Exercise Note</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:14px;" id="exNoteSub">Add a quick note</div>
     <textarea id="exNoteInput" placeholder="e.g. Felt strong today, elbow pain on left, slow tempo..." style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;font-size:14px;color:var(--text);box-sizing:border-box;font-family:inherit;min-height:90px;resize:vertical;margin-bottom:14px;"></textarea>
     <button class="btn-p" style="width:100%;" onclick="saveExerciseNote()">Save Note</button>
@@ -1665,7 +1666,7 @@ details.pf-sec:not([open]){gap:0;}
 <div class="modal-ov" id="createChooserMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal">
     <div class="modal-handle"></div>
-    <div style="font-size:19px;font-weight:800;margin-bottom:4px;">Create</div>
+    <div id="createChooserTitle" style="font-size:19px;font-weight:800;margin-bottom:4px;">Create</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:16px;">What would you like to build?</div>
     <button onclick="document.getElementById('createChooserMod').classList.remove('open');openCreateProgramme()" style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:14px;padding:16px;text-align:left;cursor:pointer;margin-bottom:10px;display:flex;align-items:center;gap:14px;">
       <div style="font-size:28px;flex-shrink:0;">🏋️</div>
@@ -1741,7 +1742,7 @@ details.pf-sec:not([open]){gap:0;}
 <div class="modal-ov" id="swapExMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal" style="display:flex;flex-direction:column;max-height:88vh;padding-bottom:8px;">
     <div class="modal-handle"></div>
-    <div style="font-size:19px;font-weight:800;margin-bottom:4px;">Swap exercise</div>
+    <div id="swapExTitle" style="font-size:19px;font-weight:800;margin-bottom:4px;">Swap exercise</div>
     <div id="swapExCurrent" style="font-size:13px;color:var(--text2);margin-bottom:10px;"></div>
     <div id="swapExFilter" style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:2px;flex-shrink:0;">
       <div class="chip active" onclick="setSwapFilter('all',this)">All</div>
@@ -1761,7 +1762,7 @@ details.pf-sec:not([open]){gap:0;}
 <div class="modal-ov" id="hiitTemplatesMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal" style="display:flex;flex-direction:column;max-height:92vh;padding-bottom:8px;">
     <div class="modal-handle"></div>
-    <div style="font-size:19px;font-weight:800;margin-bottom:4px;">HIIT Templates</div>
+    <div id="hiitTemplatesTitle" style="font-size:19px;font-weight:800;margin-bottom:4px;">HIIT Templates</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:12px;">Tap a template to load it. Edit anything before saving.</div>
     <div id="hiitTplFilter" style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:2px;flex-shrink:0;">
       <div class="chip active" onclick="setHIITTplFilter('all',this)">All</div>
@@ -1780,7 +1781,7 @@ details.pf-sec:not([open]){gap:0;}
 <div class="modal-ov" id="plateCalcMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal">
     <div class="modal-handle"></div>
-    <div style="font-size:19px;font-weight:800;margin-bottom:4px;">🏋️ Plate Calculator</div>
+    <div id="plateCalcTitle" style="font-size:19px;font-weight:800;margin-bottom:4px;">🏋️ Plate Calculator</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:18px;" id="plateCalcSub">Per side, on a 20kg bar</div>
     <div id="plateCalcVisual" style="margin-bottom:18px;"></div>
     <div id="plateCalcBreakdown" style="background:var(--surface2);border-radius:14px;padding:14px;margin-bottom:14px;"></div>
@@ -1847,7 +1848,7 @@ details.pf-sec:not([open]){gap:0;}
   <div class="modal" style="text-align:center;">
     <div class="modal-handle"></div>
     <div style="font-size:48px;margin-bottom:8px;">🎉</div>
-    <div style="font-size:22px;font-weight:900;margin-bottom:4px;">Session Complete!</div>
+    <div id="finTitle" style="font-size:22px;font-weight:900;margin-bottom:4px;">Session Complete!</div>
     <div style="font-size:14px;color:var(--text2);margin-bottom:20px;" id="finSummary"></div>
     <div style="display:flex;gap:8px;margin-bottom:16px;">
       <div style="background:var(--surface2);border-radius:12px;padding:14px;flex:1;"><div style="font-size:20px;font-weight:900;color:var(--accent);" id="finTime">-</div><div style="font-size:10px;color:var(--text2);">Duration</div></div>
@@ -1882,7 +1883,7 @@ details.pf-sec:not([open]){gap:0;}
 
 <!-- PATH COMPLETE CELEBRATION -->
 <div class="modal-ov" id="pathCompleteMod" style="z-index:420;" onclick="if(event.target===this)closePathCompleteModal()">
-  <div class="modal" style="text-align:center;">
+  <div aria-label="Path complete" class="modal" style="text-align:center;">
     <div class="modal-handle"></div>
     <div style="font-size:60px;margin-bottom:6px;line-height:1;">🏆</div>
     <div style="font-size:12px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:2.5px;margin-bottom:6px;">Path Complete</div>
@@ -1897,7 +1898,7 @@ details.pf-sec:not([open]){gap:0;}
 
 <!-- RANK-UP CELEBRATION -->
 <div class="modal-ov" id="rankUpMod" style="z-index:460;" onclick="if(event.target===this)closeRankUpModal()">
-  <div class="modal" style="text-align:center;overflow:hidden;">
+  <div aria-label="New rank" class="modal" style="text-align:center;overflow:hidden;">
     <div class="modal-handle"></div>
     <div id="rankUpKicker" style="font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:3px;margin-bottom:10px;color:var(--accent);">Rank Up!</div>
     <div id="rankUpBadge" style="font-size:84px;line-height:1;margin:6px 0 14px;animation:rankPop 0.6s cubic-bezier(.2,1.3,.4,1) both;">🎖️</div>
@@ -1911,7 +1912,7 @@ details.pf-sec:not([open]){gap:0;}
 
 <!-- LADDER EXPANDED (one-time migration) -->
 <div class="modal-ov" id="ladderExpandedMod" style="z-index:430;" onclick="if(event.target===this)closeLadderExpandedModal()">
-  <div class="modal" style="text-align:center;">
+  <div aria-label="Your rank" class="modal" style="text-align:center;">
     <div class="modal-handle"></div>
     <div style="font-size:52px;margin-bottom:8px;line-height:1;">🪜</div>
     <div style="font-size:12px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:2.5px;margin-bottom:6px;">The ranks have expanded</div>
@@ -1931,7 +1932,7 @@ details.pf-sec:not([open]){gap:0;}
   <div class="modal" style="max-height:88vh;overflow-y:auto;">
     <div class="modal-handle"></div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-      <div style="font-size:20px;font-weight:900;">Rank Ladder</div>
+      <div id="ladderTitle" style="font-size:20px;font-weight:900;">Rank Ladder</div>
       <button onclick="closeLadderModal()" style="background:transparent;border:none;color:var(--text2);font-size:22px;cursor:pointer;padding:4px 8px;line-height:1;">✕</button>
     </div>
     <div id="ladderModSub" style="font-size:13px;color:var(--text2);margin-bottom:14px;"></div>
@@ -1955,7 +1956,7 @@ details.pf-sec:not([open]){gap:0;}
 <div class="modal-ov" id="dataHealthMod" style="z-index:400;" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal" style="max-height:86vh;overflow-y:auto;">
     <div class="modal-handle"></div>
-    <div style="font-size:19px;font-weight:800;margin-bottom:4px;">🩺 Data health</div>
+    <div id="dataHealthTitle" style="font-size:19px;font-weight:800;margin-bottom:4px;">🩺 Data health</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:16px;">A quick integrity check of your logged data and sync state.</div>
     <div id="dataHealthBody"></div>
     <button onclick="document.getElementById('dataHealthMod').classList.remove('open')" style="width:100%;margin-top:12px;background:transparent;border:0.5px solid var(--border);border-radius:12px;padding:13px;font-size:14px;font-weight:700;color:var(--text2);cursor:pointer;">Close</button>
@@ -1966,7 +1967,7 @@ details.pf-sec:not([open]){gap:0;}
 <div class="modal-ov" id="oneRMCalcMod" style="z-index:400;" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal">
     <div class="modal-handle"></div>
-    <div style="font-size:19px;font-weight:800;margin-bottom:4px;">1RM Calculator</div>
+    <div id="oneRMCalcTitle" style="font-size:19px;font-weight:800;margin-bottom:4px;">1RM Calculator</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:16px;">Estimate your one-rep max from a set you can do, using the Epley formula.</div>
     <div style="display:flex;gap:10px;margin-bottom:16px;">
       <div style="flex:1;">
@@ -2069,7 +2070,7 @@ details.pf-sec:not([open]){gap:0;}
 <div class="modal-ov" id="bwLogMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal" style="max-width:320px;">
     <div class="modal-handle"></div>
-    <div style="font-size:17px;font-weight:800;margin-bottom:4px;">Log Body Weight</div>
+    <div id="bwLogTitle" style="font-size:17px;font-weight:800;margin-bottom:4px;">Log Body Weight</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:18px;">Track your weight over time</div>
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;">
       <input id="bwLogInput" type="number" inputmode="decimal" step="0.1" placeholder="e.g. 80" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px 12px;font-size:20px;font-weight:700;color:var(--text);text-align:center;" />
@@ -2095,7 +2096,7 @@ details.pf-sec:not([open]){gap:0;}
 <div class="modal-ov" id="measureLogMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal" style="max-width:360px;">
     <div class="modal-handle"></div>
-    <div style="font-size:17px;font-weight:800;margin-bottom:4px;">Log Measurements</div>
+    <div id="measureLogTitle" style="font-size:17px;font-weight:800;margin-bottom:4px;">Log Measurements</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:16px;">All optional, in cm. Leave a field blank to skip it.</div>
     <div style="margin-bottom:14px;">
       <div style="font-size:12px;color:var(--text2);margin-bottom:6px;">Date</div>
@@ -2136,7 +2137,7 @@ details.pf-sec:not([open]){gap:0;}
 <div class="modal-ov" id="dailyNoteMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal" style="max-width:360px;">
     <div class="modal-handle"></div>
-    <div style="font-size:17px;font-weight:800;margin-bottom:2px;">Today's Note</div>
+    <div id="dailyNoteTitle" style="font-size:17px;font-weight:800;margin-bottom:2px;">Today's Note</div>
     <div id="dailyNoteDateLabel" style="font-size:12px;color:var(--text2);margin-bottom:14px;"></div>
     <textarea id="dailyNoteInput" rows="5" placeholder="How did training feel today? Energy, niggles, wins…" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px;font-size:14px;color:var(--text);box-sizing:border-box;resize:vertical;line-height:1.4;font-family:inherit;"></textarea>
     <div style="display:flex;gap:10px;margin-top:14px;">
@@ -2161,7 +2162,7 @@ details.pf-sec:not([open]){gap:0;}
 <div class="modal-ov" id="dayPickerMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal" style="max-width:360px;">
     <div class="modal-handle"></div>
-    <div style="font-size:17px;font-weight:800;margin-bottom:2px;">Which day?</div>
+    <div id="dayPickerTitle" style="font-size:17px;font-weight:800;margin-bottom:2px;">Which day?</div>
     <div style="font-size:12px;color:var(--text2);margin-bottom:12px;">Ranked by what makes sense after your recent sessions — but it's your call.</div>
     <div id="dayPickerBody" style="max-height:55vh;overflow-y:auto;"></div>
     <button onclick="document.getElementById('dayPickerMod').classList.remove('open')" style="width:100%;margin-top:12px;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:12px;font-size:14px;font-weight:700;color:var(--text2);cursor:pointer;">Cancel</button>
@@ -2183,7 +2184,7 @@ details.pf-sec:not([open]){gap:0;}
 <div class="modal-ov" id="finishOptionsMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal" style="max-width:340px;">
     <div class="modal-handle"></div>
-    <div style="font-size:17px;font-weight:800;margin-bottom:4px;">Finish session?</div>
+    <div id="finishOptionsTitle" style="font-size:17px;font-weight:800;margin-bottom:4px;">Finish session?</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:16px;">Wind down with a guided stretch for the muscles you just trained (about 5 minutes), or save straight away.</div>
     <button onclick="startCooldown()" style="width:100%;background:var(--accent);border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:800;color:#000;cursor:pointer;margin-bottom:8px;">🧘 Cooldown first (~5 min)</button>
     <button onclick="document.getElementById('finishOptionsMod').classList.remove('open');finishSession();" style="width:100%;background:var(--green);border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:800;color:#000;cursor:pointer;margin-bottom:8px;">🏁 Finish now</button>
@@ -2248,7 +2249,7 @@ details.pf-sec:not([open]){gap:0;}
 
 <!-- SUPERSET PICKER -->
 <div class="modal-ov" id="circuitTimerMod" onclick="if(event.target===this)closeCircuitTimer()" style="z-index:200;">
-  <div class="modal" style="text-align:center;">
+  <div aria-label="Circuit timer" class="modal" style="text-align:center;">
     <div class="modal-handle"></div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:8px;" id="timerExName">Plank Hold</div>
     <div style="font-size:96px;font-weight:900;color:var(--accent);font-family:monospace;line-height:1;margin:20px 0;" id="circuitTimerDisplay">45</div>
@@ -2263,7 +2264,7 @@ details.pf-sec:not([open]){gap:0;}
 <div class="modal-ov" id="supersetMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal">
     <div class="modal-handle"></div>
-    <div style="font-size:19px;font-weight:800;margin-bottom:4px;">Create Superset</div>
+    <div id="supersetTitle" style="font-size:19px;font-weight:800;margin-bottom:4px;">Create Superset</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:16px;">Select 2+ exercises. Order shown below.</div>
     
     <!-- Selected exercises in order -->
@@ -2344,7 +2345,7 @@ details.pf-sec:not([open]){gap:0;}
 <div class="modal-ov" id="customExPickerMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal" style="display:flex;flex-direction:column;max-height:92vh;padding-bottom:8px;">
     <div class="modal-handle"></div>
-    <div style="font-size:19px;font-weight:800;margin-bottom:10px;">Exercise Library</div>
+    <div id="customExPickerTitle" style="font-size:19px;font-weight:800;margin-bottom:10px;">Exercise Library</div>
     <input id="customExSearch" type="text" placeholder="Search exercises…" oninput="filterExPicker(this.value)"
       style="width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;padding:10px 14px;font-size:14px;color:var(--text);margin-bottom:8px;box-sizing:border-box;">
     <div id="exPickerCatFilter" style="display:flex;gap:6px;margin-bottom:6px;overflow-x:auto;padding-bottom:2px;flex-shrink:0;">
@@ -5327,7 +5328,7 @@ function saveLocalFallback() { saveLocalCache(); }
 // still decide behaviour; gate 26 runs them against this registry so the two
 // can never disagree. mode: 'optIn' = on only when the key is '1';
 // 'optOut' = on unless the key is '0'. requires = another entry that must be on.
-const APP_VERSION = '2026.11.25.4';   // bump on every production push (shown in Data health)
+const APP_VERSION = '2026.11.25.5';   // bump on every production push (shown in Data health)
 const ROLLOUT_REGISTRY = [
   { id:'nav_v2', key:'maxgainz_nav_v2', mode:'optOut', label:'Simplified navigation',
     audience:'Everyone since 25 Nov 2026 (existing users get a one-time notice)', killSwitch:"Profile → Simplified navigation: Off, or 'Use classic navigation' on the notice (stores '0')",
@@ -12781,6 +12782,107 @@ function _initDialogA11y(){
 if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _initDialogA11y);
 else _initDialogA11y();
 
+// ── Priority 3: interactive layer for click targets that aren't real controls ──
+// ~130 chips, headers, rows and cards across discovery, builders, filters and
+// analytics are <div onclick>. Like the dialog layer above, one observer gives
+// each of them what a <button> has: a role, a Tab stop, Enter/Space, and its
+// state (aria-pressed for selection chips, aria-expanded + aria-controls for
+// disclosures, aria-current for the classic nav). New markup is upgraded as
+// it is rendered. Backdrops and click-swallowers are left alone.
+const A11Y_SKIP_ONCLICK = /^\s*(?:if\s*\(\s*event\.target\s*===?\s*this\s*\)|event\.stopPropagation\(\)\s*;?\s*$)/;
+const A11Y_PRESSED_CLASS = /(?:^|\s)(?:chip|dp-chip|path-duration-btn)(?:\s|$)/;
+const A11Y_ON_CLASS = /(?:^|\s)(?:active|selected|sel)(?:\s|$)/;
+// [onclick pattern, aria-controls id for the key, is it open?]
+const A11Y_DISCLOSURES = [
+  [/^toggleProgressSection\('([A-Za-z0-9_-]+)'\)/, k => 'cs-' + k, (k, d) => { const w = d.getElementById('cs-' + k); return !!(w && w.classList.contains('expanded')); }],
+  [/^togDay\('([A-Za-z0-9_-]+)'\)/, k => 'dd-' + k, (k, d) => { const w = d.getElementById('dd-' + k); return !!(w && w.style.display === 'block'); }],
+  [/^_toggleAdhocSection\('([A-Za-z0-9_-]+)'\)/, null, k => !!(typeof _adhocExpanded === 'object' && _adhocExpanded && _adhocExpanded[k])]
+];
+// Pure: what an element with an inline onclick needs, or null (leave it).
+// info: { tag, onclick, role, tabindex, cls, href, hasControlInside, insideControl }
+function _a11yPlan(info){
+  const tag = String(info.tag || '').toUpperCase(), oc = String(info.onclick || ''), cls = String(info.cls || '');
+  if(!oc.trim()) return null;
+  if(/^(?:BUTTON|INPUT|SELECT|TEXTAREA|SUMMARY|OPTION)$/.test(tag)) return null;
+  if(tag === 'A' && info.href) return null;
+  if(/(?:^|\s)modal-ov(?:\s|$)/.test(cls) || A11Y_SKIP_ONCLICK.test(oc)) return null;
+  if(info.insideControl) return null;
+  const plan = { tabindex: info.tabindex == null ? '0' : null, role: null, pressed: A11Y_PRESSED_CLASS.test(cls), disclosure: null, nav: /(?:^|\s)nav-item(?:\s|$)/.test(cls) };
+  // A card that holds its own buttons stays a plain group (no nested buttons for screen readers).
+  if(!info.role && !info.hasControlInside) plan.role = 'button';
+  for(let i = 0; i < A11Y_DISCLOSURES.length; i++){
+    const m = A11Y_DISCLOSURES[i][0].exec(oc.trim());
+    if(m){ plan.disclosure = { i, key:m[1], controls: A11Y_DISCLOSURES[i][1] ? A11Y_DISCLOSURES[i][1](m[1]) : null }; plan.pressed = false; break; }
+  }
+  return plan;
+}
+// Pure: the state attributes for a planned element right now.
+function _a11yStateAttrs(plan, cls, isOpen){
+  const out = {};
+  if(!plan) return out;
+  const on = A11Y_ON_CLASS.test(String(cls || ''));
+  if(plan.pressed) out['aria-pressed'] = String(on);
+  if(plan.disclosure) out['aria-expanded'] = String(!!isOpen);
+  if(plan.nav) out['aria-current'] = on ? 'page' : null;
+  return out;
+}
+function _a11yCls(el){ const c = el.getAttribute && el.getAttribute('class'); return c || ''; }
+function _a11ySync(el){
+  const p = el._a11y;
+  if(!p) return;
+  let open = false;
+  if(p.disclosure){ try { open = A11Y_DISCLOSURES[p.disclosure.i][2](p.disclosure.key, document); } catch(e){} }
+  const st = _a11yStateAttrs(p, _a11yCls(el), open);
+  Object.keys(st).forEach(k => { if(st[k] === null) el.removeAttribute(k); else if(el.getAttribute(k) !== st[k]) el.setAttribute(k, st[k]); });
+}
+function _a11yUpgrade(el){
+  if(el._a11y){ _a11ySync(el); return; }
+  const plan = _a11yPlan({ tag:el.tagName, onclick:el.getAttribute('onclick'), role:el.getAttribute('role'), tabindex:el.getAttribute('tabindex'),
+    cls:_a11yCls(el), href:el.getAttribute('href'),
+    hasControlInside: !!el.querySelector('button, a[href], input, select, textarea, [role="button"]:not([data-a11y])'),
+    insideControl: !!(el.parentElement && el.parentElement.closest('button, a[href]')) });
+  if(!plan){ el.setAttribute('data-a11y', '0'); return; }
+  el._a11y = plan;
+  el.setAttribute('data-a11y', '1');
+  if(plan.tabindex) el.setAttribute('tabindex', plan.tabindex);
+  if(plan.role) el.setAttribute('role', plan.role);
+  if(plan.disclosure && plan.disclosure.controls) el.setAttribute('aria-controls', plan.disclosure.controls);
+  _a11ySync(el);
+}
+function _a11yScan(){
+  _a11yScanQueued = false;
+  document.querySelectorAll('[onclick]:not([data-a11y])').forEach(_a11yUpgrade);
+  document.querySelectorAll('[data-a11y="1"]').forEach(_a11ySync);
+}
+let _a11yScanQueued = false;
+function _a11yQueue(){ if(!_a11yScanQueued){ _a11yScanQueued = true; setTimeout(_a11yScan, 60); } }   // at most ~16 scans a second, even under animations
+// Enter / Space on an upgraded element = a click (unless it has its own key handler).
+// If the click re-rendered it, focus moves to its replacement so keyboard users keep their place.
+function _a11yKeydown(e){
+  const el = e.target;
+  if(!el || !el.getAttribute || el.getAttribute('data-a11y') !== '1' || el.hasAttribute('onkeydown')) return;
+  if(e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+  e.preventDefault();
+  const sig = el.getAttribute('onclick');
+  el.click();
+  setTimeout(() => {
+    _a11yScan();
+    if(el.isConnected) return;
+    const twin = [...document.querySelectorAll('[data-a11y="1"]')].find(x => x.getAttribute('onclick') === sig && x.offsetParent !== null);
+    if(twin) twin.focus({ preventScroll:true });
+  }, 0);
+}
+function _initInteractiveA11y(){
+  if(window._a11yInit) return;
+  window._a11yInit = true;
+  new MutationObserver(_a11yQueue).observe(document.body, { subtree:true, childList:true, attributes:true, attributeFilter:['class', 'style'] });
+  document.addEventListener('keydown', _a11yKeydown);
+  document.addEventListener('click', _a11yQueue, true);
+  _a11yScan();
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _initInteractiveA11y);
+else _initInteractiveA11y();
+
 // One polite announcement for screen readers (rest start/end, PRs). Clearing
 // first makes a repeated identical message re-announce.
 function _sessAnnounce(msg){
@@ -18344,7 +18446,7 @@ function renderOnboardStep(step) {
       <div style="font-size:19px;font-weight:900;margin-bottom:5px;">How long have you been training?</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:14px;">Be honest — this calibrates your starting weights.</div>
       <div style="margin-bottom:18px;">
-        ${exps.map(o=>`<div onclick="_obSetExp('${o.val}')" style="padding:12px 14px;background:${_ob.experienceLevel===o.val?'rgba(200,255,0,0.08)':'var(--surface2)'};border:1px solid ${_ob.experienceLevel===o.val?'rgba(200,255,0,0.4)':'var(--border)'};border-radius:12px;cursor:pointer;margin-bottom:7px;">
+        ${exps.map(o=>`<div onclick="_obSetExp('${o.val}')" aria-pressed="${_ob.experienceLevel===o.val}" style="padding:12px 14px;background:${_ob.experienceLevel===o.val?'rgba(200,255,0,0.08)':'var(--surface2)'};border:1px solid ${_ob.experienceLevel===o.val?'rgba(200,255,0,0.4)':'var(--border)'};border-radius:12px;cursor:pointer;margin-bottom:7px;">
           <div style="font-size:14px;font-weight:${_ob.experienceLevel===o.val?'800':'600'};color:${_ob.experienceLevel===o.val?'var(--accent)':'var(--text)'};">${o.label}</div>
           <div style="font-size:11px;color:var(--text2);">${o.sub}</div>
         </div>`).join('')}
@@ -18424,7 +18526,7 @@ function renderOnboardStep(step) {
       <div style="font-size:19px;font-weight:900;margin-bottom:5px;">What's your main goal?</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:13px;">This adjusts your weight targets.</div>
       <div style="margin-bottom:18px;">
-        ${goals.map(o=>`<div onclick="_obSetGoal('${o.val}')" style="display:flex;align-items:center;padding:11px 14px;background:${_ob.trainingGoal===o.val?'rgba(200,255,0,0.08)':'var(--surface2)'};border:1px solid ${_ob.trainingGoal===o.val?'rgba(200,255,0,0.4)':'var(--border)'};border-radius:11px;cursor:pointer;margin-bottom:6px;gap:10px;">
+        ${goals.map(o=>`<div onclick="_obSetGoal('${o.val}')" aria-pressed="${_ob.trainingGoal===o.val}" style="display:flex;align-items:center;padding:11px 14px;background:${_ob.trainingGoal===o.val?'rgba(200,255,0,0.08)':'var(--surface2)'};border:1px solid ${_ob.trainingGoal===o.val?'rgba(200,255,0,0.4)':'var(--border)'};border-radius:11px;cursor:pointer;margin-bottom:6px;gap:10px;">
           <div style="flex:1;"><div style="font-size:13px;font-weight:${_ob.trainingGoal===o.val?'800':'600'};color:${_ob.trainingGoal===o.val?'var(--accent)':'var(--text)'};">${o.label}</div><div style="font-size:11px;color:var(--text2);">${o.sub}</div></div>
           ${_ob.trainingGoal===o.val?`<div style="width:16px;height:16px;border-radius:50%;background:var(--accent);flex-shrink:0;"></div>`:''}
         </div>`).join('')}
@@ -29569,7 +29671,7 @@ function openActivityLog(prefillISO){
   if(dateInput){ dateInput.value=_localYMD(d); dateInput.max=_localYMD(now); }
   _updateActDateSubtitle();
   document.getElementById('activityGrid').innerHTML=ACTIVITY_TYPES.map(a=>`
-    <div onclick="selectActivity('${a.id}')" id="act-${a.id}" style="background:var(--surface2);border:1.5px solid ${a.id===selectedActivity.id?'var(--accent)':'var(--border)'};border-radius:12px;padding:12px;text-align:center;cursor:pointer;transition:all 0.15s;">
+    <div onclick="selectActivity('${a.id}')" id="act-${a.id}" aria-pressed="${a.id===selectedActivity.id}" style="background:var(--surface2);border:1.5px solid ${a.id===selectedActivity.id?'var(--accent)':'var(--border)'};border-radius:12px;padding:12px;text-align:center;cursor:pointer;transition:all 0.15s;">
       <div style="font-size:24px;">${a.emoji}</div>
       <div style="font-size:12px;font-weight:700;margin-top:4px;">${a.label}</div>
       <div style="font-size:10px;color:var(--text2);">+${a.xp} XP</div>
@@ -29616,7 +29718,7 @@ function selectActivity(id){
   selectedActivity=ACTIVITY_TYPES.find(a=>a.id===id);
   ACTIVITY_TYPES.forEach(a=>{
     const el=document.getElementById('act-'+a.id);
-    if(el) el.style.borderColor=a.id===id?'var(--accent)':'var(--border)';
+    if(el){ el.style.borderColor=a.id===id?'var(--accent)':'var(--border)'; el.setAttribute('aria-pressed', String(a.id===id)); }
   });
   // Show custom name input only for 'other'
   const customWrap=document.getElementById('actCustomNameWrap');
@@ -31017,6 +31119,7 @@ function openFeedbackModal(){
   document.getElementById('fbImageLabel').textContent = 'Tap to attach an image';
   document.getElementById('fbImage').value = '';
   document.getElementById('fbAnonTog').style.background = 'var(--border)';
+  document.getElementById('fbAnonTog').setAttribute('aria-checked', 'false');
   document.getElementById('fbAnonKnob').style.transform = 'translateX(0)';
   document.getElementById('fbSubmitBtn').disabled = false;
   document.getElementById('fbSubmitBtn').textContent = 'Send Feedback 📬';
@@ -31032,6 +31135,7 @@ function toggleFbAnon(){
   _fbAnon = !_fbAnon;
   document.getElementById('fbAnonTog').style.background = _fbAnon ? 'var(--accent)' : 'var(--border)';
   document.getElementById('fbAnonKnob').style.transform = _fbAnon ? 'translateX(18px)' : 'translateX(0)';
+  document.getElementById('fbAnonTog').setAttribute('aria-checked', String(_fbAnon));
   updateFbAnonUI();
 }
 
@@ -31565,7 +31669,7 @@ window.addEventListener('offline', updateOnlineStatus);
 <div class="modal-ov" id="deleteAccountMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal">
     <div class="modal-handle"></div>
-    <div style="font-size:18px;font-weight:800;margin-bottom:8px;">Delete Account</div>
+    <div id="deleteAccountTitle" style="font-size:18px;font-weight:800;margin-bottom:8px;">Delete Account</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:20px;">Download a complete copy of your data before your account is deleted?</div>
     <div style="display:flex;gap:10px;margin-bottom:16px;">
       <button class="btn-p" style="flex:1;" onclick="proceedDeleteWithData()">⬇️ Download data &amp; delete</button>
@@ -31579,7 +31683,7 @@ window.addEventListener('offline', updateOnlineStatus);
 <div class="modal-ov" id="emailDataMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal">
     <div class="modal-handle"></div>
-    <div style="font-size:18px;font-weight:800;margin-bottom:8px;">Download your data</div>
+    <div id="emailDataTitle" style="font-size:18px;font-weight:800;margin-bottom:8px;">Download your data</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.5;">Saves two files to this device: a complete backup (workouts, weights, programmes, profile, body-weight and measurement logs, notes, Paths) that Max Gainz can import, and a CSV of your workouts for spreadsheets. Nothing is emailed or sent anywhere.</div>
     <div id="emailStatus" role="status" style="display:none;margin-bottom:16px;padding:12px;background:rgba(76,175,80,0.1);border:0.5px solid rgba(76,175,80,0.25);border-radius:8px;color:var(--green);font-size:13px;font-weight:700;"></div>
     <button class="btn-p" style="width:100%;margin-bottom:8px;" id="sendEmailBtn" onclick="downloadDataBeforeDelete()">⬇️ Download my data</button>
@@ -31592,7 +31696,7 @@ window.addEventListener('offline', updateOnlineStatus);
 <div class="modal-ov" id="finalDeleteMod" onclick="if(event.target===this)this.classList.remove('open')">
   <div class="modal">
     <div class="modal-handle"></div>
-    <div style="font-size:18px;font-weight:800;margin-bottom:8px;color:var(--red);">⚠️ Final Confirmation</div>
+    <div id="finalDeleteTitle" style="font-size:18px;font-weight:800;margin-bottom:8px;color:var(--red);">⚠️ Final Confirmation</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:20px;line-height:1.6;">Your account and all associated data will be permanently deleted. This cannot be undone.<br><br>Are you absolutely sure?</div>
     <button style="width:100%;background:var(--red);color:#fff;border:none;border-radius:10px;padding:14px;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:8px;" onclick="confirmFinalDelete()">Yes, Delete My Account Permanently</button>
     <button onclick="this.closest('.modal-ov').classList.remove('open')" style="width:100%;background:transparent;border:0.5px solid var(--border);color:var(--text2);border-radius:8px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;">Cancel</button>
@@ -31639,7 +31743,7 @@ window.addEventListener('offline', updateOnlineStatus);
         <div style="font-size:13px;font-weight:700;color:var(--text);">Submit anonymously</div>
         <div style="font-size:11px;color:var(--text2);margin-top:2px;" id="fbEmailNote"></div>
       </div>
-      <div id="fbAnonTog" onclick="toggleFbAnon()" style="width:44px;height:26px;border-radius:13px;background:var(--border);cursor:pointer;position:relative;flex-shrink:0;transition:background 0.2s;">
+      <div id="fbAnonTog" role="switch" tabindex="0" aria-checked="false" aria-label="Submit anonymously" onclick="toggleFbAnon()" style="width:44px;height:26px;border-radius:13px;background:var(--border);cursor:pointer;position:relative;flex-shrink:0;transition:background 0.2s;">
         <div id="fbAnonKnob" style="position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.3);"></div>
       </div>
     </div>

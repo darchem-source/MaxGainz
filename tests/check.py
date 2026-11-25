@@ -6451,68 +6451,175 @@ def gate_auth_forms(html, js):
     for p in problems: print('  ✗ ' + p)
     return not problems
 
+# ── Gate 29: product-wide accessibility (Priority 3) ──────────────────────
+A11Y_PURE = r"""
+var P = [];
+function eq(l, g, w){ if(JSON.stringify(g) !== JSON.stringify(w)) P.push(l + ' — got ' + JSON.stringify(g) + ', want ' + JSON.stringify(w)); }
+function pl(o){ var p = _a11yPlan(o); return p && { role:p.role, tab:p.tabindex, pressed:p.pressed, nav:p.nav, d:p.disclosure && [p.disclosure.key, p.disclosure.controls] }; }
+eq('filter chip → button, Tab stop, pressed state', pl({ tag:'DIV', onclick:"setExPickerFilter('cat','all',this)", cls:'chip active' }), { role:'button', tab:'0', pressed:true, nav:false, d:null });
+eq('dp-chip too', pl({ tag:'div', onclick:"setIntensity('easy')", cls:'dp-chip' }).pressed, true);
+eq('analytics header → disclosure controlling its section', pl({ tag:'DIV', onclick:"toggleProgressSection('muscleBal')", cls:'cs-header' }).d, ['muscleBal', 'cs-muscleBal']);
+eq('day header → disclosure', pl({ tag:'DIV', onclick:"togDay('d3')", cls:'day-head' }).d, ['d3', 'dd-d3']);
+eq('adhoc section → disclosure (no static id)', pl({ tag:'DIV', onclick:"_toggleAdhocSection('hiit')" }).d, ['hiit', null]);
+eq('classic nav item → nav (aria-current)', pl({ tag:'DIV', onclick:"goTab('today',this)", cls:'nav-item active' }).nav, true);
+eq('plain row → button', pl({ tag:'DIV', onclick:"openDailyNote()" }).role, 'button');
+eq('span / li / img / td / a without href are upgraded', ['SPAN','LI','IMG','TD','A','LABEL'].map(function(t){ return !!_a11yPlan({ tag:t, onclick:'f()' }); }), [true, true, true, true, true, true]);
+eq('native controls left alone', ['BUTTON','INPUT','SELECT','TEXTAREA','SUMMARY'].map(function(t){ return _a11yPlan({ tag:t, onclick:'f()' }); }), [null, null, null, null, null]);
+eq('link with href left alone', _a11yPlan({ tag:'A', onclick:'f()', href:'#x' }), null);
+eq('backdrop (event.target===this) left alone', _a11yPlan({ tag:'DIV', onclick:"if(event.target===this)closeX()", cls:'modal-ov' }), null);
+eq('backdrop without the class too', _a11yPlan({ tag:'DIV', onclick:"if(event.target === this) this.classList.remove('open')" }), null);
+eq('click-swallower left alone', _a11yPlan({ tag:'DIV', onclick:'event.stopPropagation()' }), null);
+eq('inside a real button left alone', _a11yPlan({ tag:'SPAN', onclick:'f()', insideControl:true }), null);
+eq('existing role and tabindex are kept', pl({ tag:'DIV', onclick:'f()', role:'tab', tabindex:'-1' }), { role:null, tab:null, pressed:false, nav:false, d:null });
+eq('card holding its own buttons: Tab stop but no button role', pl({ tag:'DIV', onclick:'openCard()', hasControlInside:true }), { role:null, tab:'0', pressed:false, nav:false, d:null });
+eq('empty onclick ignored', _a11yPlan({ tag:'DIV', onclick:'  ' }), null);
+var ch = _a11yPlan({ tag:'DIV', onclick:'f()', cls:'chip' }), nv = _a11yPlan({ tag:'DIV', onclick:'g()', cls:'nav-item' }), ds = _a11yPlan({ tag:'DIV', onclick:"togDay('x')" });
+eq('pressed follows the active/selected class', [_a11yStateAttrs(ch, 'chip active', false), _a11yStateAttrs(ch, 'chip', false), _a11yStateAttrs(ch, 'chip sel', false)], [{ 'aria-pressed':'true' }, { 'aria-pressed':'false' }, { 'aria-pressed':'true' }]);
+eq('"inactive" is not active', _a11yStateAttrs(ch, 'chip inactive', false), { 'aria-pressed':'false' });
+eq('nav current page', [_a11yStateAttrs(nv, 'nav-item active', false), _a11yStateAttrs(nv, 'nav-item', false)], [{ 'aria-current':'page' }, { 'aria-current':null }]);
+eq('expanded follows the section', [_a11yStateAttrs(ds, '', true), _a11yStateAttrs(ds, '', false)], [{ 'aria-expanded':'true' }, { 'aria-expanded':'false' }]);
+// keyboard: Enter/Space on an upgraded element clicks it; nothing else does
+function T(a1, key, own){ var c = 0, pd = 0; var el = { getAttribute:function(k){ return k === 'data-a11y' ? a1 : k === 'onclick' ? 'f()' : null; }, hasAttribute:function(k){ return k === 'onkeydown' && !!own; }, click:function(){ c++; }, isConnected:true };
+  _a11yKeydown({ target:el, key:key, preventDefault:function(){ pd++; } }); return [c, pd]; }
+var setTimeout = function(){};
+eq('Enter / Space activate', [T('1', 'Enter'), T('1', ' ')], [[1, 1], [1, 1]]);
+eq('other keys, non-upgraded targets and own key handlers do not', [T('1', 'a'), T('0', 'Enter'), T(null, 'Enter'), T('1', 'Enter', true)], [[0, 0], [0, 0], [0, 0], [0, 0]]);
+JSON.stringify(P);
+"""
+
+def _a11y_click_sites(html):
+    """Every element (static or in a template) with an inline onclick: (tag, attrs, onclick)."""
+    out = []
+    for m in re.finditer(r'<([a-zA-Z][a-zA-Z0-9]*)\b((?:[^>"\'`]|"[^"]*"|\'[^\']*\')*?)\bonclick="([^"]*)"((?:[^>"]|"[^"]*")*)>', html):
+        out.append((m.group(1), m.group(2) + ' ' + m.group(4), m.group(3)))
+    return out
+
+def gate_a11y_product(html, js):
+    problems = []
+    def whole_line(name):
+        m = re.search(r'^const ' + name + r' = .*$', js, re.M)
+        return m.group(0) if m else ''
+    pure = [whole_line('A11Y_SKIP_ONCLICK'), whole_line('A11Y_PRESSED_CLASS'), whole_line('A11Y_ON_CLASS'),
+            extract_const_array(js, 'A11Y_DISCLOSURES') or '', extract_decl(js, '_a11yPlan') or '', extract_decl(js, '_a11yStateAttrs') or '', extract_decl(js, '_a11yKeydown') or '']
+    if not all(pure): problems.append('interactive-layer functions not found')
+    else:
+        out, _ = run_jxa('function _a11yScan(){}\n' + '\n'.join(pure) + '\n' + A11Y_PURE)
+        try: problems += json.loads(out)
+        except Exception: problems.append('a11y runner errored: ' + out[:300])
+    # inventory: run the real plan over every click site in the file
+    sites = _a11y_click_sites(html)
+    rows = []
+    for tag, attrs, oc in sites:
+        cls = re.search(r'class="([^"]*)"', attrs); role = re.search(r'role="([^"]*)"', attrs); tab = re.search(r'tabindex="([^"]*)"', attrs); href = re.search(r'href="([^"]*)"', attrs)
+        rows.append({'tag': tag, 'onclick': oc.replace('&quot;', '"'), 'cls': cls.group(1) if cls else '', 'role': role.group(1) if role else None,
+                     'tabindex': tab.group(1) if tab else None, 'href': href.group(1) if href else None})
+    if all(pure):
+        res, _ = run_jxa('\n'.join(pure[:6]) + '\nvar R = ' + json.dumps(rows) + ';\nJSON.stringify(R.map(function(r){ var p = _a11yPlan(r); return p ? (p.disclosure ? "disclosure" : p.pressed ? "pressed" : p.nav ? "nav" : "button") : "skip"; }));')
+        try: kinds = json.loads(res)
+        except Exception: kinds = None; problems.append('inventory runner errored: ' + res[:200])
+        if kinds:
+            native = {'button', 'input', 'select', 'textarea'}
+            for r, k in zip(rows, kinds):
+                if k != 'skip' or r['tag'].lower() in native: continue
+                legit = 'modal-ov' in r['cls'] or re.match(r'\s*(if\s*\(\s*event\.target\s*===?\s*this|event\.stopPropagation\(\)\s*;?\s*$)', r['onclick']) or (r['tag'].lower() == 'a' and r['href'])
+                if not legit: problems.append(f'click target <{r["tag"]} onclick="{r["onclick"][:50]}"> is left mouse-only')
+            nonnative = [k for r, k in zip(rows, kinds) if r['tag'].lower() not in native and k != 'skip']
+            counts = {x: nonnative.count(x) for x in ('button', 'pressed', 'disclosure', 'nav')}
+            if counts['pressed'] < 30 or counts['disclosure'] < 6 or counts['nav'] < 5: problems.append(f'inventory looks wrong (parser drift?): {counts}')
+    # wiring
+    ini = extract_decl(js, '_initInteractiveA11y') or ''
+    for need in ["observe(document.body, { subtree:true, childList:true, attributes:true, attributeFilter:['class', 'style'] })", "addEventListener('keydown', _a11yKeydown)", "addEventListener('click', _a11yQueue, true)", '_a11yScan()']:
+        if need not in ini: problems.append(f'interactive layer not wired ({need})')
+    if 'document.addEventListener(\'DOMContentLoaded\', _initInteractiveA11y);' not in js: problems.append('interactive layer never starts')
+    if '[data-a11y="1"]:focus-visible' not in html: problems.append('upgraded controls need a visible focus ring')
+    if "setTimeout(_a11yScan, 60)" not in (extract_decl(js, '_a11yQueue') or ''): problems.append('scans must be throttled (animations change style every frame)')
+    up = extract_decl(js, '_a11yUpgrade') or ''
+    if "el.setAttribute('data-a11y', '0')" not in up: problems.append('skipped elements must be marked, or every scan rechecks them')
+    # selection shown only by inline style → explicit state
+    for need, why in [('aria-pressed="${_ob.trainingGoal===o.val}"', 'onboarding goal'), ('aria-pressed="${_ob.experienceLevel===o.val}"', 'onboarding experience'),
+                      ('aria-pressed="${a.id===selectedActivity.id}"', 'activity type'), ('id="fbAnonTog" role="switch" tabindex="0" aria-checked="false" aria-label="Submit anonymously"', 'anonymous switch')]:
+        if need not in html: problems.append(f'{why} must expose its selected state')
+    if "setAttribute('aria-pressed', String(a.id===id))" not in (extract_decl(js, 'selectActivity') or ''): problems.append('selectActivity must update aria-pressed')
+    if "setAttribute('aria-checked', String(_fbAnon))" not in (extract_decl(js, 'toggleFbAnon') or ''): problems.append('the anonymous switch must update aria-checked')
+    # every overlay is a named dialog (the dialog layer labels it from an …Title id, a heading, or aria-label)
+    body = html[html.index('<body'):]
+    ids = re.findall(r'<div class="modal-ov[^"]*" id="([^"]+)"', body)
+    unnamed = []
+    for i in ids:
+        st = body.index(f'id="{i}"'); nxt = body.find('class="modal-ov', st + 10)
+        seg = body[st:nxt if nxt > 0 else st + 8000]
+        if not re.search(r'id="[A-Za-z0-9_]*Title"|<h[123]\b|class="modal-title|aria-label(?:ledby)?=', seg): unnamed.append(i)
+    if len(ids) < 40: problems.append(f'only {len(ids)} overlays found (parser drift?)')
+    for i in unnamed: problems.append(f'dialog #{i} has no name (add an id ending in Title to its heading, or aria-label)')
+    if not problems:
+        print(f'  ✓ {len(sites)} click sites: every non-native one keyboard-reachable ({counts["button"]} buttons, {counts["pressed"]} pressed-state chips, {counts["disclosure"]} disclosures, {counts["nav"]} classic-nav items); Enter/Space; style-only selections expose state; {len(ids)} overlays all named dialogs')
+    for p in problems: print('  ✗ ' + p)
+    return not problems
+
 def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/28] parse')
+    print('[1/29] parse')
     p = gate_parse(js)
-    print('[2/28] invariants')
+    print('[2/29] invariants')
     inv = gate_invariants(js)
-    print('[3/28] video map')
+    print('[3/29] video map')
     vm = gate_videomap(js)
-    print('[4/28] inline handler wiring')
+    print('[4/29] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/28] auth log hygiene')
+    print('[5/29] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/28] sign-out scrub')
+    print('[6/29] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/28] safe rendering of user text')
+    print('[7/29] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/28] sync honesty')
+    print('[8/29] sync honesty')
     sy = gate_sync(js)
-    print('[9/28] media fallback + reminder copy')
+    print('[9/29] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/28] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/29] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/28] core-journey accessibility (session + dialogs)')
+    print('[11/29] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/28] Start today (first-use flow) + shortened Path wizard')
+    print('[12/29] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/28] simplified navigation (default, reversible, one-time notice)')
+    print('[13/29] simplified navigation (default, reversible, one-time notice)')
     nv = gate_nav_v2(html, js)
-    print('[14/28] Progress weekly briefing')
+    print('[14/29] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/28] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/29] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/28] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/29] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/28] Phase 2 typed sets (preview before save)')
+    print('[17/29] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
-    print('[18/28] Phase 2 weekly AI recap + measurement')
+    print('[18/29] Phase 2 weekly AI recap + measurement')
     rc = gate_recap(html, js)
-    print('[19/28] Phase 3 offline media (download, cache versioning, fallback order)')
+    print('[19/29] Phase 3 offline media (download, cache versioning, fallback order)')
     om = gate_offline_media(html, js)
-    print('[20/28] Phase 3 programme discovery (metadata, finder, why, switch preview)')
+    print('[20/29] Phase 3 programme discovery (metadata, finder, why, switch preview)')
     dc = gate_discovery(html, js)
-    print('[21/28] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
+    print('[21/29] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
     sh = gate_sharing(html, js)
-    print('[22/28] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
+    print('[22/29] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
     lf = gate_leftovers(html, js)
-    print('[23/28] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
+    print('[23/29] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
     rm = gate_reminders(html, js)
-    print('[24/28] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
+    print('[24/29] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
     rs = gate_reminders_server(html, js)
-    print('[25/28] Profile & settings information model (flagged)')
+    print('[25/29] Profile & settings information model (flagged)')
     pv = gate_profile_v2(html, js)
-    print('[26/28] rollout registry + configuration in Data health')
+    print('[26/29] rollout registry + configuration in Data health')
     ro = gate_rollout(html, js)
-    print('[27/28] Today headline metric (context-sensitive, pinnable)')
+    print('[27/29] Today headline metric (context-sensitive, pinnable)')
     tm = gate_today_metric(html, js)
-    print('[28/28] authentication forms (Enter, password managers, errors, local data kept)')
+    print('[28/29] authentication forms (Enter, password managers, errors, local data kept)')
     af = gate_auth_forms(html, js)
+    print('[29/29] product-wide accessibility (click targets, state, dialog names)')
+    ax = gate_a11y_product(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af and ax:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 
