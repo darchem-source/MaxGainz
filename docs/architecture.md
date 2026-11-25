@@ -25,7 +25,9 @@ So code moves out **for editing and testing**, not for loading.
 
    Modules are bundled in `MODULES` order: the first at the very top of the script, each next one directly after the previous region.
 
-4. **Gate 34 checks `app/sync.js`:** region equals the file, nothing it declares is declared again in `index.html`, no DOM or toasts. It then loads the file on its own in `jsc`: first bare (load time must not call into `index.html`), then with hand-written stubs for browser APIs, `sbFetch` and the documented run-time dependencies, and runs the queue scenarios (per-account normalisation, dequeue only on confirmed success, a failed weight upsert stays queued, `on_conflict=user_id,exercise_name` on every `custom_weights` upsert, keyset paging, merge, stash). `python3 tools/mutate_sync.py` plants bugs and confirms the gate catches each one; run it whenever the gate or the module changes.
+4. **Gate 34 checks `app/sync.js`:** region equals the file, nothing it declares is declared again in `index.html`, no DOM or toasts. It then loads the file on its own in `jsc`: first bare (load time must not call into `index.html`), then with hand-written stubs for browser APIs, `sbFetch` and the documented run-time dependencies, and runs the queue scenarios (per-account normalisation, dequeue only on confirmed success, a failed weight upsert stays queued, `on_conflict=user_id,exercise_name` on every `custom_weights` upsert, keyset paging, merge, stash). `python3 tools/mutate_modules.py` plants bugs and confirms the gate catches each one; run it whenever a module gate or module changes.
+
+5. **Gate 35 checks `app/session.js`** the same way (region, no duplicate declarations, no DOM), then loads it in `jsc` with nothing but a console stub and runs its scenarios: the state's empty shape at load, last-time sets, set delta, repeat-set, next-step text, Epley 1RM, the cooldown picker and trained groups.
 
 ### Run-time vs load-time dependencies
 
@@ -41,8 +43,9 @@ Never edit inside a region by hand. Gate 33 fails, and the next `bundle.py` run 
 |---|---|---|
 | 1 | Rollout and configuration registry: `app/rollout.js` (registry, `APP_VERSION`, every flag key, URL switch and flag function, nav migration rules, AI beta plan) | **Done**, build 2026.11.25.9 |
 | 2 | Sync and pending-operation queue: `app/sync.js` (pending queue `maxgainz_pending_v1`, `_P`, `flushPending`, retry/backoff, `_uploadSession`, stash, `cloudSave*`/`cloudDeleteSession`/`cloudLoadAll`, keyset paging, `_sessionKey` + `_mergeSessions`). UI that drives it (`retrySync`, `confirmSignOut`, re-auth, save toasts, the status line) stays in `index.html`. Run-time dependencies on `index.html` are listed at the top of the file | **Done**, build 2026.11.25.10 |
-| 3 | Active-session state machine and renderers | Next |
-| 4 | AI consent, validation and client: share validators with `netlify/functions/ai/core.mjs` from one file instead of keeping two byte-identical copies | |
+| 3 | Active-session state, pure parts: `app/session.js` (declarations of the running workout's state; last-time sets, set delta, repeat-set, next-step text, `calc1RM`, `_buildCooldown`, `_sessionTrainedGroups`) | **Done (pure parts)**, build 2026.11.25.11 |
+| 3b | Active-session transitions and renderers (`startSession*`, set logging, `finishSession`, `cancelSession`, `_teardownActiveSession`). They change state and update the page in the same functions, so they cannot move verbatim: this needs a refactor that splits state changes from rendering, with its own manual test pass of the workout flow | Not started (needs a decision on the refactor) |
+| 4 | AI consent, validation and client (next): share validators with `netlify/functions/ai/core.mjs` from one file instead of keeping two byte-identical copies | |
 | 5 | Data contracts and pure training rules: progression, rotation, PB and XP derivation | |
 | 6 | Lower-priority screens and media manifests: these are the candidates for loading later, once a service-worker change makes extra files safe | |
 
