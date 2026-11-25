@@ -648,6 +648,12 @@ details.pf-sec:not([open]){gap:0;}
     <!-- TODAY -->
     <div class="screen active" id="s-today">
       <button type="button" id="resumeSessBtn" class="resume-pill" onclick="resumeSession()" hidden>▶ Resume your workout</button>
+      <section id="navNotice" class="ach-card" aria-labelledby="navNoticeTitle" hidden>
+        <h2 id="navNoticeTitle" style="font-size:15px;font-weight:800;margin:0;">🧭 A simpler layout</h2>
+        <p style="font-size:13px;color:var(--text2);line-height:1.45;margin:6px 0 0;">Max Gainz now has four tabs: <b>Today</b>, <b>Plan</b> (your Path and programmes), <b>Progress</b> (stats, ranks and achievements) and <b>Profile</b>. Your workouts, history and settings are unchanged.</p>
+        <button type="button" class="st-secondary" onclick="navNoticeDone()">Got it</button>
+        <button type="button" class="st-secondary" onclick="navNoticeClassic()">Use classic navigation</button>
+      </section>
       <div class="page-header">
         <div class="page-title" id="todayGreeting">Good morning, <span class="ac">Max</span></div>
         <div style="font-size:13px;color:var(--text2);margin-top:2px;" id="todayMeta"></div>
@@ -1468,7 +1474,7 @@ details.pf-sec:not([open]){gap:0;}
       <div class="nav-label">Gainz</div>
     </div>
   </nav>
-  <!-- Phase 1 simplified navigation (behind the maxgainz_nav_v2 flag; the
+  <!-- Phase 1 simplified navigation (default since 25 Nov 2026; maxgainz_nav_v2='0' restores classic; the
        original nav above stays in the DOM because many callers use its ids). -->
   <nav class="nav" id="navV2" aria-label="Main">
    <div class="nav-v2-list" role="tablist" aria-label="Main sections" onkeydown="_navKey(event)">
@@ -5300,10 +5306,10 @@ function saveLocalFallback() { saveLocalCache(); }
 // still decide behaviour; gate 26 runs them against this registry so the two
 // can never disagree. mode: 'optIn' = on only when the key is '1';
 // 'optOut' = on unless the key is '0'. requires = another entry that must be on.
-const APP_VERSION = '2026.11.25';   // bump on every production push (shown in Data health)
+const APP_VERSION = '2026.11.25.2';   // bump on every production push (shown in Data health)
 const ROLLOUT_REGISTRY = [
-  { id:'nav_v2', key:'maxgainz_nav_v2', mode:'optIn', label:'Simplified navigation',
-    audience:'New users after Start today; anyone via Profile', killSwitch:"Profile → Simplified navigation: Off (stores '0')",
+  { id:'nav_v2', key:'maxgainz_nav_v2', mode:'optOut', label:'Simplified navigation',
+    audience:'Everyone since 25 Nov 2026 (existing users get a one-time notice)', killSwitch:"Profile → Simplified navigation: Off, or 'Use classic navigation' on the notice (stores '0')",
     scope:'device', owner:'Phase 1 · UX', removeWhen:'Default-on for everyone for 4 weeks with no rollback needed → delete the classic nav bar and this key' },
   { id:'p5_profile', key:'maxgainz_p5_profile', mode:'optOut', label:'Grouped Profile layout',
     audience:'Everyone', killSwitch:"?p5=0 (stores '0')",
@@ -8392,13 +8398,60 @@ async function _recapRequest(facts, key, names){
 }
 
 // ── Phase 1: simplified navigation (Today · Plan · Progress · Profile) ─────
-// Behind a reversible, device-local flag (maxgainz_nav_v2: '1' on, anything
-// else off). The original six-item nav and every screen stay in the DOM.
+// The default since 25 Nov 2026 (Priority 0 slice 2). Device-local and
+// reversible: maxgainz_nav_v2 = '0' keeps the classic nav, anything else
+// (including never set) is the simplified nav. The original six-item nav and
+// every screen stay in the DOM as the fallback.
 const NAV_V2_KEY = 'maxgainz_nav_v2';
+// One-time notice for people moved from the classic nav: 'pending:<ms>' from
+// the first open after the default changed, 'done' once answered.
+const NAV_NOTICE_KEY = 'maxgainz_nav_notice_v1';
 const NAV_V2_TAB_FOR = { today:'today', path:'path', workout:'path', progress:'progress', game:'progress', profile:'profile', active:null };
 
-// Pure: is the flag on for this stored value?
-function _navV2On(raw){ return raw === '1'; }
+// Pure: is the simplified nav on for this stored value? Only '0' (a choice) keeps classic.
+function _navV2On(raw){ return raw !== '0'; }
+// Pure: the notice value to store on this open, or null for no change. Only a
+// device that never chose (raw null) and never had a notice starts one.
+function _navMigrationStep(raw, notice, nowMs){
+  return raw === null && notice === null ? 'pending:' + nowMs : null;
+}
+// Pure: show the one-time notice now? Only while it is pending, the simplified
+// nav is showing, and there is a session from BEFORE the switch (a brand-new
+// user has nothing to compare with, so never sees it).
+function _navNoticeDue(notice, sessions, navOn){
+  if(!navOn) return false;
+  const m = /^pending:(\d+)$/.exec(String(notice || ''));
+  if(!m) return false;
+  const at = Number(m[1]);
+  return (Array.isArray(sessions) ? sessions : []).some(x => { const t = x ? new Date(x.date).getTime() : NaN; return isFinite(t) && t < at; });
+}
+function _navMigrate(){
+  try {
+    const next = _navMigrationStep(localStorage.getItem(NAV_V2_KEY), localStorage.getItem(NAV_NOTICE_KEY), Date.now());
+    if(next) localStorage.setItem(NAV_NOTICE_KEY, next);
+  } catch(e){}
+}
+function _navNoticeClose(){
+  try { localStorage.setItem(NAV_NOTICE_KEY, 'done'); } catch(e){}
+  const el = document.getElementById('navNotice');
+  if(el) el.hidden = true;
+}
+function renderNavNotice(){
+  const el = document.getElementById('navNotice');
+  if(!el) return;
+  let notice = null;
+  try { notice = localStorage.getItem(NAV_NOTICE_KEY); } catch(e){}
+  el.hidden = !_navNoticeDue(notice, typeof completedSessions !== 'undefined' ? completedSessions : [], isNavV2());
+}
+function navNoticeDone(){ _navNoticeClose(); _focusAfterSwitch('today'); }
+function navNoticeClassic(){
+  _navNoticeClose();
+  try { localStorage.setItem(NAV_V2_KEY, '0'); } catch(e){}
+  applyNavMode();
+  showToast('🧭 Classic navigation restored — switch any time in Profile → Preferences');
+  const t = document.getElementById('nav-today');
+  if(t && t.offsetParent !== null) t.focus({ preventScroll: true });
+}
 // Pure: which V2 tab lights up for a screen (null = none: full-screen session).
 function _navV2TabFor(tab){ return Object.prototype.hasOwnProperty.call(NAV_V2_TAB_FOR, tab) ? NAV_V2_TAB_FOR[tab] : 'today'; }
 // Pure: roving-tab index after a key (Left/Right wrap, Home/End), or -1.
@@ -8479,6 +8532,7 @@ function applyNavMode(){
 function toggleNavV2(){
   const on = !isNavV2();
   try { localStorage.setItem(NAV_V2_KEY, on ? '1' : '0'); } catch(e){}
+  _navNoticeClose();   // an explicit choice answers the one-time notice
   applyNavMode();
   showToast(on ? '🧭 Simplified navigation on — Today · Plan · Progress · Profile' : '🧭 Classic navigation restored');
 }
@@ -8508,8 +8562,9 @@ function renderProgressAchievements(){
 }
 function openAchievements(){ goTab('game', document.getElementById('nav-game')); _focusAfterSwitch('game'); }
 
-if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', applyNavMode);
-else applyNavMode();
+function _navBoot(){ _navMigrate(); applyNavMode(); }
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _navBoot);
+else _navBoot();
 
 function renderTodayToggle(){
   const wrap=document.getElementById('todayToggleWrap');
@@ -8808,6 +8863,7 @@ function renderToday(){
   } catch(e){}
   if(_isColdSyncing()){ _renderTodaySkeleton(); return; }
   _renderGreeting();
+  renderNavNotice();
   if(typeof renderTrainingReminder === 'function') renderTrainingReminder();
   if(isPathActive()){ renderTodayWithPath(); return; }
   renderTodayLegacy();

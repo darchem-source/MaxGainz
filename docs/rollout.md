@@ -14,7 +14,7 @@ Bump `APP_VERSION` (format `YYYY.MM.DD`, optionally with a suffix) on every prod
 
 | Key | Feature | Fresh device | Audience | Kill switch | Scope | Owner | Removal condition |
 |---|---|---|---|---|---|---|---|
-| `maxgainz_nav_v2` | Simplified navigation | **Off** (classic). Switched on when a new user finishes Start today, unless a choice is already stored | New users after Start today; anyone via Profile | Profile → Simplified navigation: Off (stores `'0'`) | device | Phase 1 · UX | Default-on for everyone for 4 weeks with no rollback needed → delete the classic nav bar and this key |
+| `maxgainz_nav_v2` | Simplified navigation | **On** (since build 2026.11.25.2). Only a stored `'0'` keeps classic | Everyone; existing users get a one-time notice | Profile → Simplified navigation: Off, or "Use classic navigation" on the notice (stores `'0'`) | device | Phase 1 · UX | Default-on for everyone for 4 weeks with no rollback needed → delete the classic nav bar and this key |
 | `maxgainz_p5_profile` | Grouped Profile layout | **On** | Everyone | `?p5=0` (stores `'0'`) | device | Profile & settings | 4 weeks after rollout (25 Nov 2026) with no opt-outs → delete the old Profile layout and this key |
 | `maxgainz_p4_reminders` | Training-day reminders card | **On** (the reminder itself stays off until the user turns it on) | Everyone | `?p4=0` on a device; unset `PUSH_ENABLED` on the server to stop all sends | device + account | Phase 4 | 4 weeks after rollout (25 Nov 2026) → keep the server kill switch, delete this key |
 | `maxgainz_p3_offline` | Offline downloads | **Off** | Beta via `?p3=offline` | `?p3=0` | device | Phase 3 | After Priority 4 (offline coverage) ships → default on, then delete this key |
@@ -36,28 +36,39 @@ AI features also need the account's own consent, and the server checks that cons
 
 A new install with no URL parameters gets:
 
-- classic navigation until Start today finishes;
+- simplified navigation;
 - the grouped Profile;
 - the reminders card;
 - no Phase 3 features;
 - no AI.
 
-Support code: `mg <build> nav:0d pf:1 p3:000 ai:0000- rem:10 sw:?`
+Support code: `mg <build> nav:1d pf:1 p3:000 ai:0000- rem:10 sw:?`
 
 ## Migration policy
 
-**Status: proposed. Navigation behaviour is not changed yet.** The next slice implements this once it is approved.
+**Status: implemented in build 2026.11.25.2** (`_navMigrate`, `renderNavNotice`; gate 13).
 
-The rules for simplified navigation are:
+| Who | Stored value | What happens |
+|---|---|---|
+| New user | `maxgainz_nav_v2` not set, no sessions dated before the switch | Simplified navigation from the first open. No notice. |
+| Existing user who never chose | not set, with sessions dated before the switch | Simplified navigation, plus a one-time notice on Today. It explains the four tabs and has **Got it** and **Use classic navigation** buttons. |
+| User who opted out | `'0'` | Never moved and no notice. A stored choice always wins. |
+| User already on it | `'1'` | No change and no notice. |
 
-- **New users** (no completed sessions and the key not set): simplified navigation from first open. Today, they only get it after Start today.
-- **Existing users who never chose** (key not set): moved to simplified navigation once, with a one-time notice. The notice explains the four tabs, says where the old screens went and gives a one-tap "Use classic navigation" button. Showing the notice is recorded per device (`maxgainz_nav_notice_v1`) so it never repeats.
-- **Users who opted out** (key `'0'`): never moved. A stored choice always wins.
-- **Users already on it** (key `'1'`): no change and no notice.
+How the notice works:
+
+- On the first open after the switch, a device that never chose stores `maxgainz_nav_notice_v1 = 'pending:<time>'`. The migration never writes `maxgainz_nav_v2` itself, so an opt-out can't be overwritten.
+- The notice shows on Today only while it is pending, the simplified navigation is showing, and at least one session predates that time. That covers an existing user signing in on a new device after cloud history loads.
+- Any answer stores `'done'`: Got it, Use classic navigation, or the Profile toggle.
 
 Profile layout and reminders are already on by default. Their opt-outs (`'0'`) are kept as they are.
 
 No migration touches workout data, the pending sync queue or account settings. Flags are device-local, so signing out and back in keeps them.
+
+**Rollback:**
+
+- *Everyone:* change `_navV2On` back to `raw === '1'`. Users who explicitly chose `'1'` (Start today, the Profile toggle) stay on simplified; everyone else returns to classic.
+- *One device:* Profile toggle or the notice button.
 
 ## Removing legacy paths
 
@@ -77,4 +88,4 @@ Planned order:
 
 1. old Profile layout (`maxgainz_p5_profile`);
 2. reminders device flag (`maxgainz_p4_reminders`);
-3. classic navigation (`maxgainz_nav_v2`), only after the migration above has run for 4 weeks.
+3. classic navigation (`maxgainz_nav_v2` and `maxgainz_nav_notice_v1`), no earlier than 23 Dec 2026, 4 weeks after the switch.

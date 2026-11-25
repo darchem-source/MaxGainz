@@ -2397,9 +2397,24 @@ def gate_start_today(html, js):
 NAV_ASSERTIONS = r"""
 var fails = [];
 function eq(label, got, want){ if(JSON.stringify(got)!==JSON.stringify(want)) fails.push(label+' — got '+JSON.stringify(got)+', want '+JSON.stringify(want)); }
-eq('flag off when never set', _navV2On(null), false);
-eq('flag off for "0"', _navV2On('0'), false);
-eq('flag on only for "1"', _navV2On('1'), true);
+// Default since 25 Nov 2026 (Priority 0 slice 2): only a stored '0' keeps classic.
+eq('on when never set (fresh device, existing user who never chose)', _navV2On(null), true);
+eq('off for "0" (an opt-out always wins)', _navV2On('0'), false);
+eq('on for "1"', _navV2On('1'), true);
+// migration: start the one-time notice only for a device that never chose
+eq('never chose, no notice yet → notice pending from now', _navMigrationStep(null, null, 1000), 'pending:1000');
+eq('opted out → never moved, no notice', _navMigrationStep('0', null, 1000), null);
+eq('already on → no notice', _navMigrationStep('1', null, 1000), null);
+eq('notice already started → unchanged (not restarted every open)', _navMigrationStep(null, 'pending:5', 1000), null);
+eq('notice answered → never again', _navMigrationStep(null, 'done', 1000), null);
+var T0 = Date.UTC(2026, 10, 25);
+var OLD = [{ date: new Date(T0 - 864e5).toISOString() }], NEW = [{ date: new Date(T0 + 864e5).toISOString() }];
+eq('existing user with history from before the switch sees it', _navNoticeDue('pending:' + T0, OLD, true), true);
+eq('brand-new user (only sessions after the switch) never sees it', _navNoticeDue('pending:' + T0, NEW, true), false);
+eq('no history → no notice', _navNoticeDue('pending:' + T0, [], true), false);
+eq('answered → hidden', _navNoticeDue('done', OLD, true), false);
+eq('classic showing → hidden', _navNoticeDue('pending:' + T0, OLD, false), false);
+eq('junk notice / bad dates / null sessions are safe', [_navNoticeDue('pending:x', OLD, true), _navNoticeDue('pending:' + T0, [{date:'nope'}, null], true), _navNoticeDue('pending:' + T0, null, true)], [false, false, false]);
 eq('screens map to the 4 tabs', ['today','path','workout','progress','game','profile'].map(_navV2TabFor), ['today','path','path','progress','progress','profile']);
 eq('session lights no tab (full-screen mode)', _navV2TabFor('active'), null);
 eq('unknown screen falls back to Today', _navV2TabFor('nope'), 'today');
@@ -2413,7 +2428,7 @@ JSON.stringify(fails);
 def gate_nav_v2(html, js):
     ok_all = True
     pieces = [extract_const_line(js, 'NAV_V2_TAB_FOR')]
-    for fn in ['_navV2On', '_navV2TabFor', '_navKeyIndex']:
+    for fn in ['_navV2On', '_navV2TabFor', '_navKeyIndex', '_navMigrationStep', '_navNoticeDue']:
         pieces.append(extract_decl(js, fn))
     if not all(pieces):
         print('  ✗ could not extract the nav helpers'); return False
@@ -2424,7 +2439,7 @@ def gate_nav_v2(html, js):
         fails = ['nav runner errored: ' + out[:300]]
     for f in fails: print('  ✗ ' + f)
     if fails: ok_all = False
-    else: print('  ✓ flag defaults off; screens map to Today/Plan/Progress/Profile; session is full-screen; arrow keys wrap')
+    else: print('  ✓ simplified nav is the default, a stored opt-out wins; one-time notice only for users with earlier history; screens map to Today/Plan/Progress/Profile; session is full-screen; arrow keys wrap')
 
     lint = []
     m = re.search(r'<nav class="nav" id="navV2"[\s\S]*?</nav>', html)
@@ -2453,6 +2468,21 @@ def gate_nav_v2(html, js):
         lint.append('Profile still offers programme changes under the simplified nav (Plan should be the one place)')
     if 'id="navV2Btn"' not in html or 'toggleNavV2' not in (extract_decl(js, 'toggleNavV2') and 'toggleNavV2' or ''):
         lint.append('no reversible toggle for the simplified nav in Profile')
+    # migration wiring: runs before the nav is drawn, notice on Today, every exit answers it
+    boot = extract_decl(js, '_navBoot') or ''
+    if boot.replace(' ', '') != 'function_navBoot(){_navMigrate();applyNavMode();}': lint.append('the migration must run before the nav is first drawn')
+    if "document.addEventListener('DOMContentLoaded', _navBoot);" not in js or '\nelse _navBoot();' not in js: lint.append('_navBoot is not the boot path')
+    if 'renderNavNotice();' not in (extract_decl(js, 'renderToday') or ''): lint.append('Today does not show the one-time notice')
+    for fn in ['navNoticeDone', 'navNoticeClassic', 'toggleNavV2']:
+        if '_navNoticeClose()' not in (extract_decl(js, fn) or ''): lint.append(f'{fn} must answer the notice so it never returns')
+    if "localStorage.setItem(NAV_V2_KEY, '0')" not in (extract_decl(js, 'navNoticeClassic') or ''): lint.append('"Use classic navigation" must store the opt-out')
+    mig = extract_decl(js, '_navMigrate') or ''
+    if 'NAV_V2_KEY, ' in mig.replace('getItem(NAV_V2_KEY)', ''): lint.append('the migration must never write the nav choice itself (an opt-out must survive)')
+    m2 = re.search(r'<section id="navNotice"[\s\S]*?</section>', html)
+    card = m2.group(0) if m2 else ''
+    if not card or ' hidden>' not in card.split('\n')[0] or 'aria-labelledby="navNoticeTitle"' not in card or 'id="navNoticeTitle"' not in card:
+        lint.append('#navNotice must be a labelled section, hidden until due')
+    if card.count('type="button"') != 2: lint.append('#navNotice needs exactly two real buttons (Got it / Use classic navigation)')
     sv = extract_decl(js, '_stSaveProfile') or ''
     if 'getItem(NAV_V2_KEY) === null' not in sv:
         lint.append('Start today may override an existing navigation choice')
@@ -6102,20 +6132,20 @@ ROLLOUT_REGISTRY.forEach(function(e){
 });
 // a throwing storage (private mode) never breaks the snapshot
 var thrown = _rolloutSnapshot(ROLLOUT_REGISTRY, function(){ throw new Error('denied'); });
-if(!thrown.p5_profile || thrown.p5_profile.on !== true || thrown.nav_v2.on !== false) P.push('snapshot with blocked storage must fall back to defaults');
+if(!thrown.p5_profile || thrown.p5_profile.on !== true || thrown.nav_v2.on !== true || thrown.p3_offline.on !== false) P.push('snapshot with blocked storage must fall back to defaults');
 // fresh device: what a new install gets (documented in docs/rollout.md)
 store = {};
 var fresh = _rolloutSnapshot(ROLLOUT_REGISTRY, function(k){ return localStorage.getItem(k); });
 var c = _configRows({ version:'2026.11.25', sw:false, snap:fresh, aiConsent:false, pushCap:'ok', pushOn:false });
 var txt = JSON.stringify(c.rows);
-['Classic — default', 'Grouped sections — default', 'offline downloads off', 'AI rollout","off on this device', 'off — nothing is sent', 'available · supported · off', 'no service worker'].forEach(function(s){ if(txt.indexOf(s) === -1) P.push('fresh-device configuration should show ' + s + ': ' + txt); });
-if(c.code !== 'mg 2026.11.25 nav:0d pf:1 p3:000 ai:0000- rem:10 sw:0') P.push('fresh support code wrong: ' + c.code);
-store = { maxgainz_nav_v2:'1', maxgainz_ai_v1:'1', maxgainz_ai_recap:'1', maxgainz_p3_share:'1', maxgainz_p5_profile:'0' };
+['Simplified (Today · Plan · Progress · Profile) — default', 'Grouped sections — default', 'offline downloads off', 'AI rollout","off on this device', 'off — nothing is sent', 'available · supported · off', 'no service worker'].forEach(function(s){ if(txt.indexOf(s) === -1) P.push('fresh-device configuration should show ' + s + ': ' + txt); });
+if(c.code !== 'mg 2026.11.25 nav:1d pf:1 p3:000 ai:0000- rem:10 sw:0') P.push('fresh support code wrong: ' + c.code);
+store = { maxgainz_nav_v2:'0', maxgainz_ai_v1:'1', maxgainz_ai_recap:'1', maxgainz_p3_share:'1', maxgainz_p5_profile:'0' };
 var s2 = _rolloutSnapshot(ROLLOUT_REGISTRY, function(k){ return localStorage.getItem(k); });
 var c2 = _configRows({ version:'X', sw:true, snap:s2, aiConsent:true, pushCap:'denied', pushOn:true });
 var t2 = JSON.stringify(c2.rows);
-['Simplified (Today · Plan · Progress · Profile) — set on this device', 'Classic list — set on this device', 'private links on', 'coach off · typed sets off · recap on', 'on for this account', 'notifications blocked', 'offline shell active'].forEach(function(s){ if(t2.indexOf(s) === -1) P.push('configured device should show ' + s + ': ' + t2); });
-if(c2.code !== 'mg X nav:1s pf:0 p3:001 ai:1001c rem:11 sw:1') P.push('configured support code wrong: ' + c2.code);
+['Classic — set on this device', 'Classic list — set on this device', 'private links on', 'coach off · typed sets off · recap on', 'on for this account', 'notifications blocked', 'offline shell active'].forEach(function(s){ if(t2.indexOf(s) === -1) P.push('configured device should show ' + s + ': ' + t2); });
+if(c2.code !== 'mg X nav:0s pf:0 p3:001 ai:1001c rem:11 sw:1') P.push('configured support code wrong: ' + c2.code);
 var c3 = _configRows({ version:'v', snap:{}, pushCap:'weird' });
 if(JSON.stringify(c3.rows).indexOf('weird') === -1) P.push('unknown capability must be shown as-is (escaped by the caller)');
 JSON.stringify(P);
@@ -6196,7 +6226,7 @@ def main():
     ca = gate_core_a11y(html, js)
     print('[12/26] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/26] simplified navigation (flagged)')
+    print('[13/26] simplified navigation (default, reversible, one-time notice)')
     nv = gate_nav_v2(html, js)
     print('[14/26] Progress weekly briefing')
     br = gate_briefing(html, js)
