@@ -6977,7 +6977,14 @@ def gate_modules(html, js, root=None):
         if re.search(r'\bdocument\b|\bwindow\.', re.sub(r'//[^\n]*', '', src)): problems.append(f'{m} must not touch the DOM (keep UI in index.html)')
         # the region must come before any other script code (its consts are read at load time)
         si = html.find('\n<script>\n') + len('\n<script>\n')
-        if html.find(bundle.begin(m)) != si: problems.append(f'{m} must be bundled at the very top of the script')
+        k = bundle.MODULES.index(m)
+        if k == 0:
+            if html.find(bundle.begin(m)) != si: problems.append(f'{m} must be bundled at the very top of the script')
+        else:
+            # later modules follow the previous region directly (load order = MODULES order)
+            prev = bundle.MODULES[k - 1]
+            if html.find(bundle.begin(m)) != html.find(bundle.end(prev)) + len(bundle.end(prev)) + 1:
+                problems.append(f'{m} must be bundled directly after {prev}')
     # loaded on its own, the file must work (no hidden dependency on index.html)
     pth = os.path.join(root, 'app', 'rollout.js')
     if os.path.exists(pth):
@@ -7001,7 +7008,187 @@ def gate_modules(html, js, root=None):
                 if re.search(r'^(?:const|let|var)\s+' + re.escape(n) + r'\s*=|^(?:async\s+)?function\s+' + re.escape(n) + r'\s*\(', outside, re.M):
                     problems.append(f'{n} is declared both in app/rollout.js and in index.html')
     if not problems:
-        print(f'  ✓ app/rollout.js bundled verbatim at the top; works loaded on its own (registry ↔ flags, URL switches, migration, blocked storage); no flag key or declaration outside it')
+        print(f'  ✓ ' + ', '.join(bundle.MODULES) + ' bundled verbatim at the top in order; app/rollout.js works loaded on its own (registry ↔ flags, URL switches, migration, blocked storage); no flag key or declaration outside it')
+    for p in problems: print('  ✗ ' + p)
+    return not problems
+
+# ── GATE 34: app/sync.js as a module (Priority 7, slice 2) ─────────────────
+# The pending-sync queue and sync engine live in app/sync.js. This gate checks
+# the bundle (region == file, placed right after app/rollout.js, no
+# declaration duplicated in index.html) and then loads app/sync.js ON ITS OWN
+# in jsc — no HTML parsing, nothing extracted from index.html. The stubs below
+# are browser APIs, sbFetch (failure injection) and the run-time dependencies
+# documented at the top of app/sync.js, each written here by hand.
+SYNC_MODULE_STUBS = r'''
+var console = { log(){}, warn(){}, error(){}, info(){} };
+var __ls = {};
+var localStorage = { getItem(k){ return Object.prototype.hasOwnProperty.call(__ls,k) ? __ls[k] : null; },
+  setItem(k,v){ __ls[k] = String(v); }, removeItem(k){ delete __ls[k]; } };
+var navigator = { onLine: true };
+var __timers = [];
+function setTimeout(f, ms){ __timers.push({ f: f, ms: ms }); return __timers.length; }
+function clearTimeout(){}
+// sbFetch: records every call; __net decides the response (null = failure).
+var __calls = [];
+var __net = function(path, opts){ return []; };
+async function sbFetch(path, opts){ opts = opts || {}; __calls.push({ path: path, method: opts.method || 'GET', body: opts.body || null }); return __net(path, opts); }
+// run-time dependencies on index.html (see the header of app/sync.js)
+var __st = { auth: true, uid: 'userA' };
+function isAuthenticated(){ return __st.auth; }
+function getCurrentUserId(){ return __st.auth ? __st.uid : null; }
+function lsGet(key, fallback){ if (fallback === undefined) fallback = null; try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); } catch(e){ return fallback; } }
+function lsSet(key, value){ localStorage.setItem(key, JSON.stringify(value)); }
+function lsGetRaw(key, fallback){ const v = localStorage.getItem(key); return v === null ? (fallback === undefined ? null : fallback) : v; }
+function lsSetRaw(key, value){ localStorage.setItem(key, value); }
+var STORAGE_KEY = 'maxgainz_v1';
+function saveLocalCache(){ localStorage.setItem(STORAGE_KEY, JSON.stringify({ userId: getCurrentUserId() })); }
+var __statuses = [];
+function setSyncStatus(s){ __statuses.push(s); }
+function last(){ return __statuses[__statuses.length - 1]; }
+function _validateSession(s){ if(!s || !s.date) return null; const o = Object.assign({}, s); o.date = new Date(s.date); return isNaN(o.date) ? null : o; }
+function _normalizeSessionWeights(){}
+function applyCustomWeights(){}
+var _dashWeightsOk = false;
+var completedSessions = [], customWeights = {}, customWorkouts = [], HIIT = [];
+var userProfile = { firstName: 'Local' }, userPreferences = { audioEnabled: true };
+var todayProg = 'ULF', userPath = { id: 'p1' }, pathHistory = [], bodyWeightLog = [], measurementsLog = [], dailyNotes = {}, pbLifts = [];
+var AI_PREFS_KEY = 'maxgainz_ai_prefs';
+function _aiPrefsNormalize(p){ return p || {}; }
+function _aiPrefsMerge(a, b){ return b; }
+function posts(re){ return __calls.filter(c => c.method === 'POST' && re.test(c.path)); }
+'''
+
+SYNC_MODULE_SCENARIOS = {
+    'queue is normalised per account: another account never sees (or inherits) it': r'''
+      _P().weights['Bench Press'] = 80; _P().deletes.push('c9'); _savePending();
+      const storedA = JSON.parse(localStorage.getItem(PENDING_KEY));
+      __st.uid = 'userB';
+      const b = _P();
+      const bEmpty = b.userId === 'userB' && _countPending(b, 0) === 0;
+      __st.uid = 'userA'; _pending = null;
+      const a = _P();
+      __st.auth = false;
+      const signedOut = _P().userId === null && _countPending(_P(), 0) === 0;
+      __st.auth = true;
+      const junk = _normalisePending({ userId: 'userA', profile: 'yes', weights: { __profile__: 1, Squat: NaN, Row: 60 }, deletes: [{}, 'x', 3], deletedKeys: [1, 'k'] }, 'userA');
+      const wrong = _normalisePending(storedA, 'userB');
+      return storedA.userId === 'userA' && bEmpty && a.weights['Bench Press'] === 80 && a.deletes[0] === 'c9' && signedOut
+        && junk.profile === false && JSON.stringify(junk.weights) === '{"Row":60}' && JSON.stringify(junk.deletes) === '["x",3]'
+        && JSON.stringify(junk.deletedKeys) === '["k"]' && wrong.userId === 'userB' && _countPending(wrong, 0) === 0;
+    ''',
+    'flushPending dequeues only what the cloud confirmed': r'''
+      const p = _P(); p.weights = { Squat: 100, Row: 60 }; p.deletes = ['d1', 'd2']; _savePending();
+      __net = (path, o) => (/Row/.test(o.body || '') || /d2/.test(path)) ? null : [];
+      const ok = await flushPending();
+      const after1 = JSON.parse(localStorage.getItem(PENDING_KEY));
+      const kept = ok === false && !('Squat' in _P().weights) && _P().weights.Row === 60
+        && JSON.stringify(_P().deletes) === '["d2"]' && after1.weights.Row === 60 && JSON.stringify(after1.deletes) === '["d2"]'
+        && __timers.length > 0 && last() !== 'synced';
+      __net = () => [];
+      const ok2 = await flushPending();
+      return kept && ok2 === true && _pendingCount() === 0 && last() === 'synced';
+    ''',
+    'a failed weight upsert stays queued (persisted, retry scheduled, never synced)': r'''
+      __net = () => null;
+      const r = await cloudSaveWeight('Bench Press', 82.5);
+      const stored = JSON.parse(localStorage.getItem(PENDING_KEY));
+      return r === null && _P().weights['Bench Press'] === 82.5 && stored.weights['Bench Press'] === 82.5
+        && __timers.length > 0 && _pendingCount() === 1 && last() !== 'synced';
+    ''',
+    'a newer local weight made while the upsert is in flight stays queued': r'''
+      let release; const gate = new Promise(r => release = r);
+      __net = () => gate.then(() => []);
+      const first = cloudSaveWeight('Squat', 100);
+      _P().weights.Squat = 105; _savePending();
+      release([]); await first;
+      return _P().weights.Squat === 105;
+    ''',
+    'every custom_weights upsert names on_conflict=user_id,exercise_name': r'''
+      lsSetRaw(HYDRATED_KEY, 'userA');
+      __net = () => [];
+      await cloudSaveWeight('Bench Press', 80);
+      await cloudSaveProfile();
+      _P().weights.Row = 60; _P().profile = true; _savePending();
+      await flushPending();
+      const ups = posts(/^custom_weights/);
+      return ups.length === 4 && ups.every(c => c.path === 'custom_weights?on_conflict=user_id,exercise_name');
+    ''',
+    'keyset paging fetches every page by id and keeps date order': r'''
+      const rows = []; for (let i = 0; i < 1203; i++) rows.push({ id: 'r' + String(i).padStart(5, '0'), date: new Date(Date.UTC(2026, 0, 1) + (1203 - i) * 6e4).toISOString() });
+      __net = (path) => { const lim = +/limit=(\d+)/.exec(path)[1]; const gt = /id=gt\.([^&]+)/.exec(path); const after = gt ? decodeURIComponent(gt[1]) : null;
+        return rows.filter(r => after === null || r.id > after).slice(0, lim); };
+      const got = await _fetchAllSessionRows('userA');
+      const pages = __calls.length;
+      __net = (path) => /id=gt/.test(path) ? null : rows.slice(0, 500);
+      const partial = await _fetchAllSessionRows('userA');
+      return got && got.length === 1203 && new Set(got.map(r => r.id)).size === 1203 && pages === 3
+        && __calls.every(c => !/offset=/.test(c.path)) && got[0].id === 'r01202' && got[1202].id === 'r00000' && partial === null;
+    ''',
+    'merge keeps local-only sessions for upload and never duplicates a matched one': r'''
+      const local = [{ date: '2026-11-01T10:00:00.000Z', day: 'Push' }, { date: '2026-11-02T10:00:00.000Z', day: 'Pull' }];
+      const cloud = [{ cloud_id: 'c1', date: new Date('2026-11-01T10:00:00.400Z'), day: 'Push' }];
+      const m = _mergeSessions(local, cloud);
+      return m.length === 2 && m[0].cloud_id === 'c1' && !m[0]._needsUpload && m[1]._needsUpload === true && !m[1].cloud_id;
+    ''',
+    'unsynced work is stashed per account and restored only for that account': r'''
+      completedSessions.push({ date: new Date('2026-11-03T10:00:00Z'), day: 'Legs' }, { cloud_id: 'c2', date: new Date('2026-11-04T10:00:00Z'), day: 'Arms' });
+      _P().weights.Row = 60; _savePending();
+      const n = _stashUnsynced();
+      completedSessions.length = 0; _pending = null; localStorage.removeItem(PENDING_KEY);
+      __st.uid = 'userB';
+      const other = _restoreStash();
+      __st.uid = 'userA';
+      const back = _restoreStash();
+      return n === 2 && other === 0 && back === 2 && completedSessions.length === 1 && completedSessions[0].day === 'Legs'
+        && _P().weights.Row === 60 && !(lsGet(STASH_KEY, {}) || {}).userA;
+    ''',
+}
+
+def _top_decls(src):
+    """Names declared at the top level of a classic script (column 0)."""
+    names = set(re.findall(r'^(?:async\s+)?function\s+([A-Za-z0-9_$]+)\s*\(', src, re.M))
+    for line in re.findall(r'^(?:var|let|const)\s+[^\n]*', src, re.M):   # `var a = 0, b = null, c = …;`
+        names.update(re.findall(r'(?:^(?:var|let|const)\s+|,\s*)([A-Za-z_$][A-Za-z0-9_$]*)\s*=', re.sub(r'//.*$', '', line)))
+    return names
+
+def gate_sync_module(html, js, root=None):
+    root = root or ROOT
+    problems = []
+    sys.path.insert(0, os.path.join(root, 'tools'))
+    try:
+        import importlib; bundle = importlib.import_module('bundle'); importlib.reload(bundle)
+    except Exception as e:
+        print('  ✗ tools/bundle.py not importable: ' + str(e)); return False
+    m = 'app/sync.js'
+    pth = os.path.join(root, m)
+    if m not in bundle.MODULES: problems.append(f'{m} is not in tools/bundle.py MODULES')
+    if not os.path.exists(pth):
+        print(f'  ✗ {m} missing'); return False
+    src = open(pth, encoding='utf-8').read()
+    r = bundle.region_re(m).search(html)
+    if not r: problems.append(f'{m}: no BEGIN/END region in index.html')
+    elif r.group(1) != (src if src.endswith('\n') else src + '\n'): problems.append(f'{m}: index.html region differs from the file — run python3 tools/bundle.py')
+    if r:
+        outside = html[:r.start()] + html[r.end():]
+        for n in sorted(_top_decls(src)):
+            if re.search(r'^(?:var|let|const)\s+' + re.escape(n) + r'\b|^(?:async\s+)?function\s+' + re.escape(n) + r'\s*\(', outside, re.M):
+                problems.append(f'{n} is declared both in {m} and in index.html')
+    # the engine only: nothing that renders or toasts
+    code = re.sub(r'//[^\n]*', '', src)
+    for pat, what in [(r'\bdocument\b|\bwindow\.', 'touches the DOM'), (r'\bshowToast\s*\(', 'shows a toast'), (r'\binnerHTML\b|\.classList\b', 'renders')]:
+        if re.search(pat, code): problems.append(f'{m} {what} — keep UI in index.html')
+    if not os.path.exists(JSC):
+        problems.append(f'jsc not found at {JSC}')
+    else:
+        # load time must not call into index.html: the bare file with ONLY
+        # browser stubs (no sbFetch, no ls helpers, no app state) has to load.
+        bare = _run_jsc_scenarios('var console = { log(){}, warn(){}, error(){}, info(){} };\n' + src + '\n',
+                                  {'loads with no index.html globals': 'return typeof flushPending === "function" && _pending === null && _sessUploading.size === 0;'})
+        problems += ['standalone ' + f for f in bare]
+        problems += ['standalone ' + f for f in _run_jsc_scenarios(SYNC_MODULE_STUBS + src + '\n', SYNC_MODULE_SCENARIOS)]
+    if not problems:
+        print(f'  ✓ {m} bundled verbatim right after app/rollout.js; no declaration duplicated in index.html; no DOM/toasts; '
+              f'loads on its own and passes {len(SYNC_MODULE_SCENARIOS)} standalone scenarios (per-account queue, confirmed-only dequeue, failed weight stays queued, on_conflict upserts, keyset paging, merge, stash)')
     for p in problems: print('  ✗ ' + p)
     return not problems
 
@@ -7009,74 +7196,76 @@ def main():
     html = read_index()
     js = inline_script(html)
     print('Max Gainz checks:')
-    print('[1/33] parse')
+    print('[1/34] parse')
     p = gate_parse(js)
-    print('[2/33] invariants')
+    print('[2/34] invariants')
     inv = gate_invariants(js)
-    print('[3/33] video map')
+    print('[3/34] video map')
     vm = gate_videomap(js)
-    print('[4/33] inline handler wiring')
+    print('[4/34] inline handler wiring')
     wi = gate_wiring(html, js)
-    print('[5/33] auth log hygiene')
+    print('[5/34] auth log hygiene')
     au = gate_authlogs(js)
-    print('[6/33] sign-out scrub')
+    print('[6/34] sign-out scrub')
     sc = gate_logout_scrub(js)
-    print('[7/33] safe rendering of user text')
+    print('[7/34] safe rendering of user text')
     sr = gate_safe_render(html, js)
-    print('[8/33] sync honesty')
+    print('[8/34] sync honesty')
     sy = gate_sync(js)
-    print('[9/33] media fallback + reminder copy')
+    print('[9/34] media fallback + reminder copy')
     mf = gate_media_fallback(js, html)
-    print('[10/33] Phase 1 session logic (last time, repeat, feedback)')
+    print('[10/34] Phase 1 session logic (last time, repeat, feedback)')
     ps = gate_phase1_session(js)
-    print('[11/33] core-journey accessibility (session + dialogs)')
+    print('[11/34] core-journey accessibility (session + dialogs)')
     ca = gate_core_a11y(html, js)
-    print('[12/33] Start today (first-use flow) + shortened Path wizard')
+    print('[12/34] Start today (first-use flow) + shortened Path wizard')
     st = gate_start_today(html, js)
-    print('[13/33] simplified navigation (default, reversible, one-time notice)')
+    print('[13/34] simplified navigation (default, reversible, one-time notice)')
     nv = gate_nav_v2(html, js)
-    print('[14/33] Progress weekly briefing')
+    print('[14/34] Progress weekly briefing')
     br = gate_briefing(html, js)
-    print('[15/33] Phase 2 AI foundation (consent, gated calls, validation, limits)')
+    print('[15/34] Phase 2 AI foundation (consent, gated calls, validation, limits)')
     ai = gate_ai_foundation(html, js)
-    print('[16/33] Phase 2 Today coach card (engine-built, undoable)')
+    print('[16/34] Phase 2 Today coach card (engine-built, undoable)')
     cc = gate_coach_card(html, js)
-    print('[17/33] Phase 2 typed sets (preview before save)')
+    print('[17/34] Phase 2 typed sets (preview before save)')
     nl = gate_nl_log(html, js)
-    print('[18/33] Phase 2 weekly AI recap + measurement')
+    print('[18/34] Phase 2 weekly AI recap + measurement')
     rc = gate_recap(html, js)
-    print('[19/33] Phase 3 offline media (download, cache versioning, fallback order)')
+    print('[19/34] Phase 3 offline media (download, cache versioning, fallback order)')
     om = gate_offline_media(html, js)
-    print('[20/33] Phase 3 programme discovery (metadata, finder, why, switch preview)')
+    print('[20/34] Phase 3 programme discovery (metadata, finder, why, switch preview)')
     dc = gate_discovery(html, js)
-    print('[21/33] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
+    print('[21/34] Phase 3 private sharing (whitelist, viewer isolation, links, revocation)')
     sh = gate_sharing(html, js)
-    print('[22/33] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
+    print('[22/34] Phase 3 leftovers (self-hosted Lottie, anonymous feedback, data download before deletion)')
     lf = gate_leftovers(html, js)
-    print('[23/33] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
+    print('[23/34] Phase 4 training-day reminders (opt-in, payload privacy, capability)')
     rm = gate_reminders(html, js)
-    print('[24/33] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
+    print('[24/34] Phase 4 reminders server (scheduler, payload privacy, cleanup, SQL)')
     rs = gate_reminders_server(html, js)
-    print('[25/33] Profile & settings information model (flagged)')
+    print('[25/34] Profile & settings information model (flagged)')
     pv = gate_profile_v2(html, js)
-    print('[26/33] rollout registry + configuration in Data health')
+    print('[26/34] rollout registry + configuration in Data health')
     ro = gate_rollout(html, js)
-    print('[27/33] Today headline metric (context-sensitive, pinnable)')
+    print('[27/34] Today headline metric (context-sensitive, pinnable)')
     tm = gate_today_metric(html, js)
-    print('[28/33] authentication forms (Enter, password managers, errors, local data kept)')
+    print('[28/34] authentication forms (Enter, password managers, errors, local data kept)')
     af = gate_auth_forms(html, js)
-    print('[29/33] product-wide accessibility (click targets, state, dialog names)')
+    print('[29/34] product-wide accessibility (click targets, state, dialog names)')
     ax = gate_a11y_product(html, js)
-    print('[30/33] offline coverage explained (what works in the gym, what removal deletes)')
+    print('[30/34] offline coverage explained (what works in the gym, what removal deletes)')
     oc = gate_offline_coverage(html, js)
-    print('[31/33] feedback operational controls (bounded payloads, safe retries, rate limits, receipt)')
+    print('[31/34] feedback operational controls (bounded payloads, safe retries, rate limits, receipt)')
     fo = gate_feedback_ops(html, js)
-    print('[32/33] controlled AI beta (cohort, explanations, outcomes, failure review)')
+    print('[32/34] controlled AI beta (cohort, explanations, outcomes, failure review)')
     ab = gate_ai_beta(html, js)
-    print('[33/33] extracted modules (app/rollout.js: verbatim bundle, works standalone, one source of truth)')
+    print('[33/34] extracted modules (app/rollout.js: verbatim bundle, works standalone, one source of truth)')
     md = gate_modules(html, js)
+    print('[34/34] sync module (app/sync.js: verbatim bundle, no duplicate declarations, works standalone)')
+    sm = gate_sync_module(html, js)
     print()
-    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af and ax and oc and fo and ab and md:
+    if p and inv and vm and wi and au and sc and sr and sy and mf and ps and ca and st and nv and br and ai and cc and nl and rc and om and dc and sh and lf and rm and rs and pv and ro and tm and af and ax and oc and fo and ab and md and sm:
         print('✅ ALL CHECKS PASSED'); return 0
     print('❌ CHECKS FAILED'); return 1
 

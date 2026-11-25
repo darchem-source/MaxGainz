@@ -18,7 +18,7 @@ import os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INDEX = os.path.join(ROOT, 'index.html')
-MODULES = ['app/rollout.js']   # load order = order in the page
+MODULES = ['app/rollout.js', 'app/sync.js']   # load order = order in the page
 
 def begin(m): return f'// ==== BEGIN MODULE {m} — generated: edit {m}, then run python3 tools/bundle.py ===='
 def end(m): return f'// ==== END MODULE {m} ===='
