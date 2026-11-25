@@ -609,10 +609,11 @@ button.sess-row { width:100%; text-align:left; font-family:inherit; color:inheri
 .pf-v2{padding:8px 16px 16px;display:flex;flex-direction:column;gap:14px;max-width:500px;}
 .pf-sec{background:var(--surface);border:0.5px solid var(--border);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:12px;}
 .pf-h{font-size:12px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:1.4px;margin:0;}
-details.pf-sec > summary.pf-h{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;min-height:24px;}
-details.pf-sec > summary.pf-h::-webkit-details-marker{display:none;}
-details.pf-sec > summary.pf-h::after{content:'▾';font-size:14px;transition:transform .15s;}
-details.pf-sec:not([open]) > summary.pf-h::after{transform:rotate(-90deg);}
+details.pf-sec > summary.pf-sum{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;min-height:44px;margin:-10px 0;}
+details.pf-sec > summary.pf-sum::-webkit-details-marker{display:none;}
+.pf-chev{font-size:14px;color:var(--text2);transition:transform .15s;}
+details.pf-sec:not([open]) .pf-chev{transform:rotate(-90deg);}
+.pf-status:empty{display:none;}
 details.pf-sec:not([open]){gap:0;}
 .pf-caption{font-size:12px;font-weight:700;color:var(--accent);margin:4px 0 -6px;}
 .pf-note{font-size:11px;color:var(--text2);line-height:1.5;margin:-4px 0 0;}
@@ -29411,7 +29412,7 @@ const PROFILE_V2_LAYOUT = [
     blocks:['train-recommend', 'train-path', 'train-finetune', 'train-rpe', 'train-periodize', 'train-variety', { k:'train-runner', caption:'🏃 For Garry\'s treadmill workouts' }, '#aiSettings'] },
   { id:'pfBody',     title:'Body',             note:'Your current weight is used for bodyweight exercises and the Muscle Balance chart.',
     blocks:['body-weight', 'body-history', 'body-measure'] },
-  { id:'pfAbout',    title:'About you',        collapsed:true, note:'Optional. Saved to your account; not used to change your training today.',
+  { id:'pfAbout',    title:'About you',        collapsed:true, note:'Optional. Saved on this device, and to your account when you\'re signed in. Not used to change your training today.',
     blocks:['about-gender', 'about-dob', 'about-height'] },
   { id:'pfPrefs',    title:'Preferences',      blocks:['pref-weightunit', 'pref-speed', 'pref-sound', 'pref-theme', 'pref-nav', '#remindersCard', 'pref-alerts'] },
   { id:'pfData',     title:'Data & account',   blocks:['data-backup', 'data-health', 'data-shares', 'data-feedback', 'data-clear', 'data-delete'] }
@@ -29433,16 +29434,26 @@ function _profileApplyLayoutV2(){
   const v2 = document.createElement('div');
   v2.id = 'profileV2';
   v2.className = 'pf-v2';
+  // In the page FIRST, so a failure part-way never leaves moved controls detached.
+  if(header && header.nextSibling) screen.insertBefore(v2, header.nextSibling); else screen.appendChild(v2);
   PROFILE_V2_LAYOUT.forEach(sec => {
     const wrap = document.createElement(sec.collapsed ? 'details' : 'section');
     wrap.id = sec.id;
     wrap.className = 'pf-sec';
-    const head = document.createElement(sec.collapsed ? 'summary' : 'h2');
-    head.className = 'pf-h';
-    head.id = sec.id + 'H';
-    head.textContent = sec.title + (sec.collapsed ? ' (optional)' : '');
-    wrap.appendChild(head);
-    if(!sec.collapsed) wrap.setAttribute('aria-labelledby', head.id);
+    const h = document.createElement('h2');
+    h.className = 'pf-h';
+    h.id = sec.id + 'H';
+    h.textContent = sec.title + (sec.collapsed ? ' (optional)' : '');
+    if(sec.collapsed){
+      const sum = document.createElement('summary');
+      sum.className = 'pf-sum';
+      sum.appendChild(h);
+      const chev = document.createElement('span'); chev.className = 'pf-chev'; chev.setAttribute('aria-hidden', 'true'); chev.textContent = '▾';
+      sum.appendChild(chev);
+      wrap.appendChild(sum);
+    } else wrap.appendChild(h);
+    wrap.setAttribute('aria-labelledby', h.id);
+    v2.appendChild(wrap);
     if(sec.note){ const n = document.createElement('p'); n.className = 'pf-note'; n.textContent = sec.note; wrap.appendChild(n); }
     sec.blocks.forEach(b => {
       const k = typeof b === 'string' ? b : b.k;
@@ -29455,48 +29466,107 @@ function _profileApplyLayoutV2(){
         els.forEach(el => g.appendChild(el)); wrap.appendChild(g);
       } else els.forEach(el => wrap.appendChild(el));
     });
-    if(sec.id === 'pfAccount'){
+    if(sec.id === 'pfAccount' || sec.id === 'pfBody' || sec.id === 'pfAbout'){
+      // Each section that has profile fields shows its own save status.
       const st = document.createElement('div');
-      st.id = 'profileSaveStatus'; st.className = 'pf-note';
+      st.id = sec.id === 'pfAccount' ? 'profileSaveStatus' : sec.id + 'Status';
+      st.className = 'pf-note pf-status';
       st.setAttribute('role', 'status'); st.setAttribute('aria-live', 'polite');
-      st.textContent = 'Changes save as you leave each field.';
+      st.textContent = sec.id === 'pfAccount' ? 'Changes save as you leave each field.' : '';
       wrap.appendChild(st);
     }
-    v2.appendChild(wrap);
   });
   PROFILE_V2_KEEP.forEach(k => _profileV2Blocks(screen, k).forEach(el => v2.appendChild(el)));
-  PROFILE_V2_HIDDEN.forEach(k => _profileV2Blocks(screen, k).forEach(el => { el.hidden = true; el.setAttribute('data-pb-hidden', '1'); }));
-  if(header && header.nextSibling) screen.insertBefore(v2, header.nextSibling); else screen.appendChild(v2);
-  // The old containers now hold only hidden leftovers.
-  screen.querySelectorAll('[data-pbc]').forEach(c => { c.hidden = true; });
+  PROFILE_V2_HIDDEN.forEach(k => _profileV2Blocks(screen, k).forEach(el => { el.hidden = true; el.style.display = 'none'; el.setAttribute('data-pb-hidden', '1'); }));
+  // The old containers now hold only hidden leftovers (inline display:flex beats [hidden]).
+  screen.querySelectorAll('[data-pbc]').forEach(c => { c.hidden = true; c.style.display = 'none'; });
   const accountWrap = screen.querySelector('[data-pb="account-cloud"]');
   if(accountWrap) accountWrap.style.padding = '0';
   const sub = document.getElementById('profileSubtitle');
   if(sub) sub.textContent = 'Your account, training settings and data';
-  // Profile fields save as you leave them (no Save button in this layout).
-  ['profileFirstName', 'profileLastName', 'profileEmail', 'profilePreferredName', 'profileGender', 'profileDOB', 'profileHeightCM', 'profileWeight'].forEach(id => {
+  // Each field saves itself, right away, as you leave it (no Save button here).
+  Object.keys(PROFILE_FIELD_RULES).forEach(id => {
     const el = document.getElementById(id);
-    if(el) el.addEventListener('change', _profileAutosave);
+    if(el) el.addEventListener('change', () => _profileAutosaveField(id));
   });
+  document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'hidden') _profileFlushCloud(); });
   screen.classList.add('pf-v2-on');
   _profileV2Applied = true;
   return true;
 }
-// Same honesty as _announceSave, shown in place instead of a toast per field.
-function _profileSaveStatus(cloudPromise){
-  const el = document.getElementById('profileSaveStatus');
-  if(!el) return;
-  if(!isAuthenticated()){ el.textContent = '✓ Saved on this device'; return; }
-  el.textContent = '✓ Saved on this device · syncing…';
-  Promise.resolve(cloudPromise).then(res => {
+// Per-field rules. A field only ever writes ITS OWN value, and only when valid —
+// so an unrelated edit can never touch body weight, and a cleared field never
+// saves a made-up default.
+const PROFILE_FIELD_RULES = {
+  profilePreferredName: { key:'preferredName', kind:'text', greet:true, sec:'pfAccount' },
+  profileFirstName:     { key:'firstName',     kind:'text', greet:true, sec:'pfAccount' },
+  profileLastName:      { key:'lastName',      kind:'text', sec:'pfAccount' },
+  profileEmail:         { key:'email',         kind:'text', sec:'pfAccount' },
+  profileWeight:        { key:'weight',        kind:'weight', min:20, max:500, sec:'pfBody' },
+  profileGender:        { key:'gender',        kind:'gender', sec:'pfAbout' },
+  profileDOB:           { key:'dob',           kind:'date', sec:'pfAbout' },
+  profileHeightCM:      { key:'heightCM',      kind:'num', min:100, max:250, sec:'pfAbout', label:'height in cm' }
+};
+// Pure: validate one field. → { ok:true, value } or { ok:false, msg }
+function _profileFieldValue(rule, raw, now){
+  const v = String(raw == null ? '' : raw).trim();
+  if(rule.kind === 'text') return { ok:true, value: v.slice(0, 60) };
+  if(rule.kind === 'gender') return ['', 'M', 'F', 'O'].indexOf(v) !== -1 ? { ok:true, value:v } : { ok:false, msg:'Pick an option from the list.' };
+  if(rule.kind === 'date'){
+    if(v === '') return { ok:true, value:'' };
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+    const y = m ? +m[1] : 0, nowY = new Date(now).getFullYear();
+    if(!m || y < 1900 || y > nowY || isNaN(Date.parse(v))) return { ok:false, msg:'Enter a full date of birth.' };
+    return { ok:true, value:v };
+  }
+  const n = parseFloat(v);
+  if(v === '' || !isFinite(n) || n < rule.min || n > rule.max){
+    return { ok:false, msg: rule.kind === 'weight' ? 'Enter a weight between ' + rule.min + ' and ' + rule.max + ' kg — not saved.'
+                                                   : 'Enter your ' + (rule.label || 'value') + ' (' + rule.min + '–' + rule.max + ') — not saved.' };
+  }
+  return { ok:true, value: rule.kind === 'weight' ? Math.round(n * 10) / 10 : Math.round(n) };
+}
+let _profileStatusSeq = 0, _profileCloudTimer = null, _profileCloudPending = false, _profileStatusEl = null;
+function _profileAutosaveField(id){
+  const rule = PROFILE_FIELD_RULES[id];
+  const el = document.getElementById(id);
+  if(!rule || !el) return;
+  const statusEl = document.getElementById(rule.sec === 'pfAccount' ? 'profileSaveStatus' : rule.sec + 'Status');
+  const r = _profileFieldValue(rule, el.value, Date.now());
+  if(!r.ok){ if(statusEl) statusEl.textContent = '⚠️ ' + r.msg; return; }
+  userProfile[rule.key] = r.value;
+  if(rule.kind === 'weight'){
+    // Same as Save Profile did for weight — and only for weight.
+    userProfile.bodyWeight = r.value; userProfile.bodyWeightUnit = 'kg';
+    const today = new Date().toISOString().split('T')[0];
+    bodyWeightLog = bodyWeightLog.filter(e => e.date !== today);
+    bodyWeightLog.push({ date: today, weight: r.value, unit: 'kg', displayWeight: r.value, displayUnit: 'kg' });
+    bodyWeightLog.sort((a, b) => a.date.localeCompare(b.date));
+    try { renderBWChart(); } catch(e){}
+  }
+  saveLocalCache();
+  if(rule.greet){ try { renderToday(); } catch(e){} }
+  // The device copy is saved now; the account copy follows shortly (one upload for a burst of edits).
+  const seq = ++_profileStatusSeq;
+  _profileStatusEl = statusEl;
+  if(statusEl) statusEl.textContent = isAuthenticated() ? '✓ Saved on this device · syncing…' : '✓ Saved on this device';
+  _profileCloudPending = true;
+  clearTimeout(_profileCloudTimer);
+  _profileCloudTimer = setTimeout(() => _profileFlushCloud(seq), 800);
+}
+function _profileFlushCloud(seq){
+  clearTimeout(_profileCloudTimer);
+  if(!_profileCloudPending) return;
+  _profileCloudPending = false;
+  const s = seq || _profileStatusSeq;
+  const el = _profileStatusEl;
+  const cloud = typeof cloudSaveProfile === 'function' ? cloudSaveProfile() : null;
+  if(!el || !isAuthenticated()) return;
+  Promise.resolve(cloud).then(res => {
+    if(s !== _profileStatusSeq) return;   // a newer edit's status wins
     el.textContent = res === false ? '✓ Saved on this device · syncs once your account has finished loading'
       : (res !== null && res !== undefined ? '☁️ Saved and synced to your account' : '✓ Saved on this device · will sync automatically');
   }).catch(() => {});
-}
-let _profileSaveTimer = null;
-function _profileAutosave(){
-  clearTimeout(_profileSaveTimer);
-  _profileSaveTimer = setTimeout(() => { try { saveProfile({ quiet: true }); } catch(e){} }, 150);
 }
 if(typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', () => {
   try { _p5ApplyFlagQuery(); } catch(e){}
@@ -29820,7 +29890,7 @@ function updateWeightUnitButtons(){
   }
 }
 
-function saveProfile(opts){
+function saveProfile(){
   // Save profile data to userProfile
   userProfile.firstName = document.getElementById('profileFirstName').value.trim();
   userProfile.lastName = document.getElementById('profileLastName').value.trim();
@@ -29848,8 +29918,7 @@ function saveProfile(opts){
 
   // Confirmation names WHERE it's saved; the cloud outcome follows (never a
   // blanket "saved!" while only the local copy is guaranteed).
-  if(opts && opts.quiet) _profileSaveStatus(_cloud);
-  else _announceSave('Profile', _cloud);
+  _announceSave('Profile', _cloud);
   renderToday(); // Update greeting if name changed
   renderBWChart(); // Reflect new weight in body weight graph
 }
