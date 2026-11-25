@@ -8700,7 +8700,8 @@ function _renderGreeting(){
   if(hour < 5)                 greeting = 'Good evening';   // night owls
   else if(hour >= 12 && hour < 18) greeting = 'Good afternoon';
   else if(hour >= 18)          greeting = 'Good evening';
-  const displayName = userProfile.preferredName || currentUser?.name || (currentUser?.email ? currentUser.email.split('@')[0] : 'Max');
+  const displayName = ((typeof _profileV2Applied !== 'undefined' && _profileV2Applied) ? _profileDisplayName(userProfile, currentUser) : userProfile.preferredName)
+    || currentUser?.name || (currentUser?.email ? currentUser.email.split('@')[0] : 'Max');
   el.innerHTML = greeting + ', <span class="ac">' + esc(displayName) + '</span>';
 }
 
@@ -29421,7 +29422,7 @@ const PROFILE_V2_LAYOUT = [
 const PROFILE_V2_HIDDEN = ['garry', 'save', 'info', 'settings-head', 'data-exportjson', 'names'];
 const PROFILE_V2_KEEP = ['runner-modal'];   // overlays: moved, never hidden
 
-let _profileV2Applied = false;
+var _profileV2Applied = false;   // var: read by the greeting, which can run before this line
 function _profileV2Blocks(root, key){
   if(key.charAt(0) === '#'){ const el = root.querySelector(key); return el ? [el] : []; }
   return Array.from(root.querySelectorAll('[data-pb="' + key + '"]'));
@@ -29510,7 +29511,7 @@ function _profileDisplayName(p, user){
   return fl || String((user && user.name) || '').trim();
 }
 const PROFILE_FIELD_RULES = {
-  profilePreferredName: { key:'preferredName', kind:'text', greet:true, merge:true, sec:'pfAccount' },
+  profilePreferredName: { key:'preferredName', kind:'text', required:'Enter a name — not saved.', greet:true, merge:true, sec:'pfAccount' },
   profileFirstName:     { key:'firstName',     kind:'text', greet:true, sec:'pfAccount' },
   profileLastName:      { key:'lastName',      kind:'text', sec:'pfAccount' },
   profileEmail:         { key:'email',         kind:'text', sec:'pfAccount' },
@@ -29522,7 +29523,10 @@ const PROFILE_FIELD_RULES = {
 // Pure: validate one field. → { ok:true, value } or { ok:false, msg }
 function _profileFieldValue(rule, raw, now, unit){
   const v = String(raw == null ? '' : raw).trim();
-  if(rule.kind === 'text') return { ok:true, value: v.slice(0, 60) };
+  if(rule.kind === 'text'){
+    if(rule.required && !v) return { ok:false, msg: rule.required };   // clearing it to retype must never wipe the name
+    return { ok:true, value: v.slice(0, 60) };
+  }
   if(rule.kind === 'gender') return ['', 'M', 'F', 'O'].indexOf(v) !== -1 ? { ok:true, value:v } : { ok:false, msg:'Pick an option from the list.' };
   if(rule.kind === 'date'){
     if(v === '') return { ok:true, value:'' };
@@ -29533,7 +29537,7 @@ function _profileFieldValue(rule, raw, now, unit){
   }
   const n = parseFloat(v);
   const lbs = rule.kind === 'weight' && unit === 'lbs';
-  const min = lbs ? Math.round(rule.min * PROFILE_LB_PER_KG) : rule.min, max = lbs ? Math.round(rule.max * PROFILE_LB_PER_KG) : rule.max;
+  const min = lbs ? Math.ceil(rule.min * PROFILE_LB_PER_KG) : rule.min, max = lbs ? Math.floor(rule.max * PROFILE_LB_PER_KG) : rule.max;
   if(v === '' || !isFinite(n) || n < min || n > max){
     return { ok:false, msg: rule.kind === 'weight' ? 'Enter a weight between ' + min + ' and ' + max + ' ' + (lbs ? 'lbs' : 'kg') + ' — not saved.'
                                                    : 'Enter your ' + (rule.label || 'value') + ' (' + rule.min + '–' + rule.max + ') — not saved.' };
@@ -29552,24 +29556,31 @@ function _profileV2Fill(){
   const nameEl = document.getElementById('profilePreferredName');
   const nameLbl = document.querySelector('[data-pb="prefname"] label');
   if(nameLbl){ nameLbl.textContent = 'Display name'; nameLbl.setAttribute('for', 'profilePreferredName'); }
-  if(nameEl){ nameEl.value = _profileDisplayName(userProfile, typeof currentUser !== 'undefined' ? currentUser : null); nameEl.placeholder = 'What should we call you?'; nameEl.maxLength = 60; }
+  const focused = typeof document !== 'undefined' ? document.activeElement : null;   // never overwrite what the user is typing
+  if(nameEl){ if(nameEl !== focused) nameEl.value = _profileDisplayName(userProfile, typeof currentUser !== 'undefined' ? currentUser : null); nameEl.placeholder = 'What should we call you?'; nameEl.maxLength = 60; }
   const emailEl = document.getElementById('profileEmail');
   const emailLbl = document.querySelector('[data-pb="email"] label');
   if(emailLbl){ emailLbl.textContent = 'Sign-in email'; emailLbl.setAttribute('for', 'profileEmail'); }
   if(emailEl){
-    emailEl.readOnly = true; emailEl.setAttribute('aria-readonly', 'true');
+    emailEl.readOnly = true;
     emailEl.value = (typeof getCurrentUserEmail === 'function' && getCurrentUserEmail()) || '';
     emailEl.placeholder = 'Not signed in';
-    emailEl.style.opacity = '0.75';
-    emailEl.title = 'The email you sign in with. It can\'t be changed here.';
+    emailEl.style.color = 'var(--text2)';
+    let help = document.getElementById('profileEmailHelp');
+    if(!help && emailEl.parentNode){
+      help = document.createElement('div'); help.id = 'profileEmailHelp'; help.className = 'pf-note'; help.style.marginTop = '4px';
+      help.textContent = 'The email you sign in with. It can\'t be changed here.';
+      emailEl.parentNode.appendChild(help);
+    }
+    emailEl.setAttribute('aria-describedby', 'profileEmailHelp');
   }
   const unit = _profileWeightUnit();
   const wEl = document.getElementById('profileWeight');
   const wUnit = document.querySelector('[data-pb="body-weight"] input + div');
-  if(wEl){ const kg = Number(userProfile.weight); wEl.value = kg > 0 ? (unit === 'lbs' ? Math.round(kg * PROFILE_LB_PER_KG * 10) / 10 : kg) : ''; wEl.placeholder = unit === 'lbs' ? 'e.g. 175' : 'e.g. 80'; wEl.step = '0.1'; }
+  if(wEl){ const kg = Number(userProfile.weight); if(wEl !== focused) wEl.value = kg > 0 ? (unit === 'lbs' ? Math.round(kg * PROFILE_LB_PER_KG * 10) / 10 : kg) : ''; wEl.placeholder = unit === 'lbs' ? 'e.g. 175' : 'e.g. 80'; wEl.step = 'any'; }
   if(wUnit) wUnit.textContent = unit;
   const hEl = document.getElementById('profileHeightCM');
-  if(hEl){ const h = Number(userProfile.heightCM); hEl.value = h > 0 ? h : ''; }
+  if(hEl && hEl !== focused){ const h = Number(userProfile.heightCM); hEl.value = h > 0 ? h : ''; }
 }
 let _profileStatusSeq = 0, _profileCloudTimer = null, _profileCloudPending = false, _profileStatusEl = null;
 function _profileAutosaveField(id){
@@ -29631,7 +29642,6 @@ function renderProfile(){
   // Refresh notification button label per current permission state
   if(typeof _refreshNotificationButton === 'function') _refreshNotificationButton();
   if(typeof renderRemindersCard === 'function'){ renderRemindersCard(); _pushRefreshMetrics(); }
-  if(typeof _profileV2Fill === 'function' && _profileV2Applied) _profileV2Fill();
   if(typeof _refreshTrackRPEBtn === 'function') _refreshTrackRPEBtn();
   if(typeof _refreshPeriodizeBtn === 'function') _refreshPeriodizeBtn();
   if(typeof _refreshRotateExBtn === 'function') _refreshRotateExBtn();
@@ -29665,6 +29675,8 @@ function renderProfile(){
   updateRunnerLevelButtons();
   _updateAudioToggleBtn();
   renderThemeSwatches();
+  // New layout: last, after every legacy field fill above.
+  if(typeof _profileV2Fill === 'function' && _profileV2Applied) _profileV2Fill();
 }
 
 function selectProfileIcon(iconId){
