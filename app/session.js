@@ -14,15 +14,21 @@
 // are shared globals, exactly as before. Load time only runs the initialisers
 // below (literals); nothing here touches the DOM.
 //
-// What is NOT here yet: the transitions (startSession*, set logging,
-// finishSession, cancelSession, _teardownActiveSession) and every renderer.
-// They update the page in the same functions that change this state, so they
-// can't move verbatim; separating them is a refactor slice of its own.
+// Slice 3b added the STATE TRANSITIONS the page calls (no DOM here):
+//   _resetSessionLog   — every start path (ULF, PPL, custom, HIIT)
+//   _recordSetValues   — reps / weight / optional RPE (rep modal, typed sets,
+//                        repeat set, swipe-to-log)
+//   _markSetDone       — done-set list, set count, completion timestamp
+//   _buildSessionRecord— what finishSession saves (duration, volume, setLog,
+//                        topLifts); pure, inputs passed in
+//   _sessionPhase / _loggedSetCount — what _activeSessionInfo reports
+// The page still owns timers, the DOM, toasts, XP, saving and navigation, and
+// the timed / core-circuit / AMRAP paths that write sets their own way.
 //
 // RUN-TIME dependencies on index.html (never at load time):
 //   _sessionTrainedGroups → getSplits (typeof-guarded)
-// Everything else here is pure (inputs in, values out) or a declaration.
-// index.html assigns all of this state; this file only declares it.
+// Everything else here is pure (inputs in, values out), a declaration, or a
+// transition that only touches the state declared below.
 
 // ═══ Running-workout state (declarations moved from STATE / SESSION STATE) ═══
 let sessDay=null,sessExs=[],curIdx=0,setsDone={},repsLogged={},sessTimeSec=0,sessInterval=null,restInterval=null,restSec=0,totalSets=0;
@@ -215,4 +221,121 @@ function _sessionTrainedGroups(){
   sessExs.forEach((ex, i) => { if((setsDone[i]||[]).length > 0){ add(ex.name); any = true; } });
   if(!any) sessExs.forEach(ex => add(ex.name));
   return { groups: Object.keys(weights), weights };
+}
+
+// ═══ Transitions (Priority 7 slice 3b) ═══
+// Fresh per-workout log. Called by every start path; the page then sets
+// sessDay / sessExs / sessStartTime and its own window flags.
+function _resetSessionLog(){
+  curIdx = 0; setsDone = {}; repsLogged = {}; rpeLogged = {}; _pendingRPE = null; totalSets = 0; sessTimeSec = 0;
+  supersets = {}; warmupShown = {}; warmupDone = {}; equipOverride = {}; setWeights = {}; setTimestamps = {};
+}
+// Record a set's reps and weight. rpe: a number stores it, null clears it,
+// undefined leaves any stored RPE alone (callers that don't manage RPE).
+function _recordSetValues(exIdx, setIdx, reps, weight, rpe){
+  if(!repsLogged[exIdx]) repsLogged[exIdx] = {};
+  if(!setWeights[exIdx]) setWeights[exIdx] = {};
+  repsLogged[exIdx][setIdx] = reps;
+  setWeights[exIdx][setIdx] = weight;
+  if(rpe === undefined) return;
+  if(!rpeLogged[exIdx]) rpeLogged[exIdx] = {};
+  if(rpe != null) rpeLogged[exIdx][setIdx] = rpe;
+  else delete rpeLogged[exIdx][setIdx];
+}
+// Mark a set done. Returns true the first time (counts it once); the
+// completion time is kept from the first mark.
+function _markSetDone(exIdx, setIdx, nowMs){
+  if(!setsDone[exIdx]) setsDone[exIdx] = [];
+  const isNew = !setsDone[exIdx].includes(setIdx);
+  if(isNew){ setsDone[exIdx].push(setIdx); totalSets++; }
+  if(!setTimestamps[exIdx]) setTimestamps[exIdx] = {};
+  if(setTimestamps[exIdx][setIdx] === undefined) setTimestamps[exIdx][setIdx] = nowMs;
+  return isNew;
+}
+// Pure: 'idle' (no workout on screen), 'active', or 'finished' (Finish ran;
+// the Session tab may still show while the summary is open).
+function _sessionPhase(tabShown, finalized){
+  if(!tabShown) return 'idle';
+  return finalized === true ? 'finished' : 'active';
+}
+// Pure: sets logged across every exercise.
+function _loggedSetCount(done){
+  let sets = 0;
+  Object.keys(done || {}).forEach(k => { if(Array.isArray(done[k])) sets += done[k].length; });
+  return sets;
+}
+// Pure: the record finishSession saves. The body is finishSession's own code,
+// unchanged: its inputs arrive as locals named exactly like the globals.
+// Returns { dMin, volume, setLog, topLifts }.
+function _buildSessionRecord(input){
+  const { sessExs, setsDone, repsLogged, setWeights, setTimestamps, rpeLogged, equipOverride, _exerciseNotes, sessTimeSec } = input;
+  const dMin=Math.max(1,Math.round(sessTimeSec/60));
+  let volume=0;
+  sessExs.forEach((ex,i)=>{
+    const done=(setsDone[i]||[]).length;
+    if(done>0){
+      const rl=repsLogged[i]||{}, sw=setWeights[i]||{};
+      for(let s=0;s<done;s++){
+        const w=sw[s]||ex.weight||0;
+        const r=rl[s]||parseInt((ex.reps||'8').split('–')[0])||8;
+        volume+=w*r;
+      }
+    }
+  });
+  // console.log('finishSession: step 4 - setLog');
+  // topLifts is computed AFTER setLog (below) so it uses each exercise's
+  // actual logged top-set weight, not sessExs[i].weight (the planned value,
+  // which is stale once the user amends weight per-set during logging).
+  const setLog={};
+  sessExs.forEach((ex,i)=>{
+    const done=(setsDone[i]||[]).length;
+    const rl=repsLogged[i]||{}, sw=setWeights[i]||{};
+    if(done>0){
+      // Per-set rest deltas in seconds: gap between consecutive set completions, minus the working set itself
+      // Approximation: rest = (t[k] - t[k-1]) - estimated_working_seconds. We just store the raw deltas
+      // (between consecutive completions) — they include the next set's working time, but for averaging
+      // across many sets the working time is roughly constant and the trend is what matters.
+      const ts = setTimestamps[i] || {};
+      const sortedKeys = Object.keys(ts).map(k => parseInt(k)).sort((a,b)=>a-b);
+      const restSecs = [];
+      for(let k = 1; k < sortedKeys.length; k++){
+        const dt = (ts[sortedKeys[k]] - ts[sortedKeys[k-1]]) / 1000;
+        if(dt > 0 && dt < 600) restSecs.push(Math.round(dt)); // sanity: drop > 10min outliers
+      }
+      // Sanitize weight to a non-negative finite number. HIIT exercise
+      // definitions sometimes set weight to objects ({kg:"12-15"}) or strings
+      // ("bodyweight") — storing those would NaN-poison muscle balance.
+      // Also sanitize each entry in setWeights (per-set logged weights).
+      const _exWPlanned = (typeof ex.weight === 'number' && isFinite(ex.weight) && ex.weight >= 0) ? ex.weight : 0;
+      const _swArr = Object.values(sw).map(v => (typeof v === 'number' && isFinite(v) && v >= 0) ? v : 0);
+      // Representative weight for this exercise this session = the heaviest
+      // set ACTUALLY logged. Weight amendments made while logging (e.g. the
+      // user drops a planned 90kg bench to 80kg per set) live only in
+      // setWeights — ex.weight keeps the planned value forever. Recording
+      // ex.weight here mis-stored the session weight (summary showed 90kg
+      // while the sets were logged at 80kg) AND created false PBs (a 90kg
+      // "personal best" that never happened). Derive from the logged sets;
+      // fall back to the planned weight only when no per-set weight was
+      // captured. Bodyweight moves stay 0.
+      const _loggedW = _swArr.filter(w => w > 0);
+      const _exW = _loggedW.length ? Math.max(..._loggedW) : _exWPlanned;
+      const _rpeArr = rpeLogged[i] ? Object.values(rpeLogged[i]).filter(v => typeof v === 'number' && v > 0) : [];
+      // ord = position in the session's exercise list = performed order.
+      // setLog is a name-keyed object; when round-tripped through Supabase
+      // (jsonb), Postgres normalizes object key order by (length, bytewise),
+      // scrambling the displayed exercise order on reload. Storing ord as a
+      // NUMBER inside each value survives jsonb intact, so order-sensitive
+      // views can re-sort by it. (Array/number values keep their order in
+      // jsonb; only object KEY order is normalized.)
+      setLog[ex.name]={ord:i,sets:done,reps:Object.values(rl),weight:_exW,bw:!!ex.bw,setWeights:_swArr,equipOverride:equipOverride[i]||null,note:_exerciseNotes[ex.name]||null,restSecs:restSecs.length?restSecs:undefined,...(_rpeArr.length?{rpe:_rpeArr}:{})};
+    }
+  });
+  // Top lifts for the summary header / share card — derived from the
+  // corrected setLog (actual logged top-set weights), excluding bodyweight.
+  const topLifts = Object.entries(setLog)
+    .filter(([, e]) => !e.bw && e.weight > 0)
+    .map(([name, e]) => ({ name, weight: e.weight }))
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, 2);
+  return { dMin, volume, setLog, topLifts };
 }

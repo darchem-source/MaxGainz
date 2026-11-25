@@ -3564,7 +3564,7 @@ def gate_nl_log(html, js):
         out, _ = run_jxa('\n'.join(pieces) + '\n' + NL_ASSERTIONS)
         try: problems += json.loads(out)
         except Exception: problems.append('grammar runner errored: ' + out[:300])
-        glue = '\n'.join(extract_decl(js, f) or '' for f in ['nlSave', 'nlCancel', '_nlRender', '_nlSetLine'])
+        glue = '\n'.join(extract_decl(js, f) or '' for f in ['nlSave', 'nlCancel', '_nlRender', '_nlSetLine', '_recordSetValues'])  # slice 3b: nlSave records through _recordSetValues
         out, _ = run_jxa('var _nlState = null;\n' + glue + '\n' + NL_SAVE_PRELUDE + NL_SAVE_ASSERTIONS)
         try: problems += json.loads(out)
         except Exception: problems.append('save runner errored: ' + out[:300])
@@ -7270,6 +7270,50 @@ SESSION_MODULE_SCENARIOS = {
       const planned = _sessionTrainedGroups();
       return JSON.stringify(logged) === '{"groups":["legs"],"weights":{"legs":1}}'
         && JSON.stringify(planned.groups.sort()) === '["legs","push"]' && planned.weights.push === 0.7;
+    """,    'start: every per-workout log is reset': r"""
+      curIdx = 4; setsDone = { 0: [0] }; repsLogged = { 0: { 0: 8 } }; rpeLogged = { 0: { 0: 8 } }; _pendingRPE = 9; totalSets = 3; sessTimeSec = 99;
+      supersets = { 0: 's' }; warmupShown = { 0: 1 }; warmupDone = { 0: 1 }; equipOverride = { 0: 'db' }; setWeights = { 0: { 0: 80 } }; setTimestamps = { 0: { 0: 1 } };
+      _resetSessionLog();
+      return curIdx === 0 && _pendingRPE === null && totalSets === 0 && sessTimeSec === 0
+        && JSON.stringify([setsDone, repsLogged, rpeLogged, supersets, warmupShown, warmupDone, equipOverride, setWeights, setTimestamps]) === '[{},{},{},{},{},{},{},{},{}]';
+    """,
+    'set values: RPE number stores, null clears, undefined leaves it': r"""
+      _resetSessionLog();
+      _recordSetValues(0, 0, 8, 80, 8);
+      const stored = rpeLogged[0][0] === 8 && repsLogged[0][0] === 8 && setWeights[0][0] === 80;
+      _recordSetValues(0, 0, 9, 82.5);
+      const kept = rpeLogged[0][0] === 8 && repsLogged[0][0] === 9 && setWeights[0][0] === 82.5;
+      _recordSetValues(0, 0, 9, 82.5, null);
+      const cleared = !(0 in rpeLogged[0]);
+      _recordSetValues(1, 2, 5, 0);
+      return stored && kept && cleared && repsLogged[1][2] === 5 && setWeights[1][2] === 0 && rpeLogged[1] === undefined;
+    """,
+    'mark done: counted once, first completion time kept': r"""
+      _resetSessionLog();
+      const a = _markSetDone(0, 1, 1000), b = _markSetDone(0, 1, 5000), c = _markSetDone(0, 0, 7000), d = _markSetDone(2, 0, 9000);
+      return a === true && b === false && c === true && d === true && totalSets === 3 && JSON.stringify(setsDone) === '{"0":[1,0],"2":[0]}'
+        && setTimestamps[0][1] === 1000 && setTimestamps[0][0] === 7000 && _loggedSetCount(setsDone) === 3 && _loggedSetCount(null) === 0;
+    """,
+    'phase: idle, active, finished': r"""
+      return _sessionPhase(false, false) === 'idle' && _sessionPhase(false, true) === 'idle'
+        && _sessionPhase(true, false) === 'active' && _sessionPhase(true, undefined) === 'active' && _sessionPhase(true, true) === 'finished';
+    """,
+    'saved record: logged weights, rep fallback, bodyweight, rest, RPE, notes, top lifts': r"""
+      const exs = [{ name: 'Bench', weight: 90, reps: '8–10', sets: 3 }, { name: 'Dips', weight: 0, reps: '10', bw: true, sets: 2 },
+        { name: 'Row', weight: 50, reps: '8–10', sets: 3 }, { name: 'Curl', weight: 12, reps: '12', sets: 3 }, { name: 'Odd', weight: { kg: '12-15' }, reps: '10', sets: 1 }];
+      // 'Odd' (object weight, as some HIIT definitions have) is left out of the
+      // volume case: it makes volume NaN — known, kept as-is in slice 3b (no behaviour change).
+      const r = _buildSessionRecord({ sessExs: exs, setsDone: { 0: [0, 1], 1: [0], 2: [0], 4: [0] }, repsLogged: { 0: { 0: 8, 1: 6 }, 1: { 0: 12 }, 4: { 0: 10 } },
+        setWeights: { 0: { 0: 80, 1: 80 }, 1: { 0: 60 } }, setTimestamps: { 0: { 0: 1000, 1: 91000 } }, rpeLogged: { 0: { 0: 8 } },   // Dips: BW +60
+        equipOverride: { 2: 'dumbbell' }, _exerciseNotes: { Bench: 'ok' }, sessTimeSec: 1830 });
+      const L = r.setLog;
+      const v = _buildSessionRecord({ sessExs: exs.slice(0, 4), setsDone: { 0: [0, 1], 1: [0], 2: [0] }, repsLogged: { 0: { 0: 8, 1: 6 }, 1: { 0: 12 } },
+        setWeights: { 0: { 0: 80, 1: 80 }, 1: { 0: 0 } }, setTimestamps: {}, rpeLogged: {}, equipOverride: {}, _exerciseNotes: {}, sessTimeSec: 60 });
+      return r.dMin === 31 && v.volume === 80 * 8 + 80 * 6 + 0 + 50 * 8 && Object.keys(L).join() === 'Bench,Dips,Row,Odd'
+        && JSON.stringify(L.Bench) === '{"ord":0,"sets":2,"reps":[8,6],"weight":80,"bw":false,"setWeights":[80,80],"equipOverride":null,"note":"ok","restSecs":[90],"rpe":[8]}'
+        && L.Dips.bw === true && L.Dips.weight === 60 && L.Dips.restSecs === undefined && L.Row.weight === 50 && L.Row.equipOverride === 'dumbbell'
+        && L.Odd.weight === 0 && JSON.stringify(r.topLifts) === '[{"name":"Bench","weight":80},{"name":"Row","weight":50}]'
+        && _buildSessionRecord({ sessExs: [], setsDone: {}, repsLogged: {}, setWeights: {}, setTimestamps: {}, rpeLogged: {}, equipOverride: {}, _exerciseNotes: {}, sessTimeSec: 0 }).dMin === 1;
     """,
 }
 
@@ -7281,7 +7325,7 @@ def gate_session_module(html, js, root=None):
         problems += ['standalone ' + f for f in _run_jsc_scenarios(JSC_CONSOLE + src + '\n', SESSION_MODULE_SCENARIOS)]
     if not problems:
         print(f'  ✓ {m} bundled verbatim right after app/sync.js; no declaration duplicated in index.html; no DOM; '
-              f'loads on its own and passes {len(SESSION_MODULE_SCENARIOS)} standalone scenarios (state shape, last time, set delta, repeat set, next step, 1RM, cooldown, trained groups)')
+              f'loads on its own and passes {len(SESSION_MODULE_SCENARIOS)} standalone scenarios (state shape, last time, set delta, repeat set, next step, 1RM, cooldown, trained groups; transitions: reset, set values, mark done, phase, saved record)')
     for p in problems: print('  ✗ ' + p)
     return not problems
 
@@ -7707,7 +7751,7 @@ def main():
     md = gate_modules(html, js)
     print('[34/37] sync module (app/sync.js: verbatim bundle, no duplicate declarations, works standalone)')
     sm = gate_sync_module(html, js)
-    print('[35/37] session module (app/session.js: state declarations + pure session logic, works standalone)')
+    print('[35/37] session module (app/session.js: state, pure session logic and transitions, works standalone)')
     ss = gate_session_module(html, js)
     print('[36/37] AI modules (app/ai-validators.js one source for app + server; app/ai.js client works standalone)')
     am = gate_ai_module(html, js)
