@@ -52,6 +52,18 @@ SESSION_MUTANTS = [
     ('trained groups ignore what was logged', "if((setsDone[i]||[]).length > 0){ add(ex.name); any = true; }", "add(ex.name); any = true;"),
     ('load-time call into index.html', "let sessStartTime = null;", "let sessStartTime = getSplits('x');"),
     ('module touches the DOM', "function calc1RM(weight, reps){", "function calc1RM(weight, reps){ if(0) document.title = '';"),
+    # slice 3b transitions
+    ('start keeps last workout\'s timestamps', "warmupDone = {}; equipOverride = {}; setWeights = {}; setTimestamps = {};", "warmupDone = {}; equipOverride = {}; setWeights = {};"),
+    ('start keeps the set count', "_pendingRPE = null; totalSets = 0; sessTimeSec = 0;", "_pendingRPE = null; sessTimeSec = 0;"),
+    ('RPE wiped by callers that do not manage it', "  if(rpe === undefined) return;\n", ""),
+    ('cleared RPE kept', "  else delete rpeLogged[exIdx][setIdx];", ""),
+    ('re-marking a set counts it twice', "  if(isNew){ setsDone[exIdx].push(setIdx); totalSets++; }", "  setsDone[exIdx].push(setIdx); totalSets++;"),
+    ('completion time overwritten', "  if(setTimestamps[exIdx][setIdx] === undefined) setTimestamps[exIdx][setIdx] = nowMs;", "  setTimestamps[exIdx][setIdx] = nowMs;"),
+    ('finished workout still reported active', "  return finalized === true ? 'finished' : 'active';", "  return 'active';"),
+    ('saved weight is the planned one', "      const _exW = _loggedW.length ? Math.max(..._loggedW) : _exWPlanned;", "      const _exW = _exWPlanned;"),
+    ('volume ignores the rep fallback', "        const r=rl[s]||parseInt((ex.reps||'8').split('–')[0])||8;", "        const r=rl[s]||0;"),
+    ('bodyweight in top lifts', "    .filter(([, e]) => !e.bw && e.weight > 0)", "    .filter(([, e]) => e.weight > 0)"),
+    ('duration rounds to zero', "  const dMin=Math.max(1,Math.round(sessTimeSec/60));", "  const dMin=Math.round(sessTimeSec/60);"),
 ]
 
 AI_VALIDATOR_MUTANTS = [
