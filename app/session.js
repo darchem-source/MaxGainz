@@ -276,7 +276,10 @@ function _buildSessionRecord(input){
     if(done>0){
       const rl=repsLogged[i]||{}, sw=setWeights[i]||{};
       for(let s=0;s<done;s++){
-        const w=sw[s]||ex.weight||0;
+        // Same sanitising as the setLog weight below: object/string weights
+        // (some HIIT definitions) count as 0 instead of making volume NaN.
+        const _w=sw[s]||ex.weight||0;
+        const w=(typeof _w==='number'&&isFinite(_w)&&_w>=0)?_w:0;
         const r=rl[s]||parseInt((ex.reps||'8').split('–')[0])||8;
         volume+=w*r;
       }
