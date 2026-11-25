@@ -15685,6 +15685,7 @@ function _renderMyProgrammesSection(){
           scored.map(s => byId[s.id].render()).join('')
         : `<div style="margin-top:10px;font-size:12px;color:var(--text2);">No perfect match — loosen a filter or browse the shelves below.</div>`;
     })() : `<div style="margin-top:8px;font-size:11px;color:var(--text2);">Tap a chip or two — we'll pick the programmes that fit.</div>`}
+    ${(typeof _p3FlagOn === 'function' && _p3FlagOn('discover')) ? `<button type="button" onclick="openProgrammeFinder()" style="margin-top:10px;width:100%;background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:10px;padding:10px;font-size:13px;font-weight:800;cursor:pointer;">🔎 Compare all programmes — filters, side by side, why one fits you</button>` : ''}
   </div>`;
 
   html += subLabel('Pre-made · by goal');
@@ -26469,6 +26470,7 @@ function _renderPathTabEmpty() {
         You're training without a structured path. Tap <strong>Start a Path</strong> whenever you're ready.
       </div>`}
     </div>
+    ${_discEntryHtml()}
     ${_offlineCardHtml()}
     ${_renderCompletedPathsSection()}`;
 }
@@ -26799,6 +26801,7 @@ function _renderPathTabActive() {
       ${scheduleHtml}
     </div>
 
+    ${_discEntryHtml()}
     ${_offlineCardHtml()}
 
     <!-- Settings -->
@@ -27422,6 +27425,14 @@ function _progSwitchDiff(fromPath, toKey, toDays, ctx){
 }
 
 // ── Finder UI (inside the existing library sheet) ──
+// Entry point for the classic navigation (Today · Path · Programme · …): the
+// new navigation shows its own button under Plan (#planMoreLinks, which the
+// classic layout hides), so this returns '' there to avoid a duplicate.
+function _discEntryHtml(){
+  if(!_p3FlagOn('discover')) return '';
+  if(typeof document !== 'undefined' && document.documentElement && document.documentElement.classList.contains('nav-v2')) return '';
+  return `<div style="padding:16px 16px 0;"><button type="button" class="st-secondary" onclick="openProgrammeFinder()">🔎 Find &amp; compare programmes</button></div>`;
+}
 function openProgrammeFinder(){
   if(typeof openLibraryBrowse === 'function') openLibraryBrowse();
 }
