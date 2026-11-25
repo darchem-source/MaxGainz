@@ -19216,7 +19216,17 @@ function _offlineStateLoad(raw){
 function _offlineStateGet(){ let raw = null; try { raw = localStorage.getItem(OFFLINE_STATE_KEY); } catch(e){} return _offlineStateLoad(raw); }
 function _offlineStatePut(st){ try { localStorage.setItem(OFFLINE_STATE_KEY, JSON.stringify(st)); } catch(e){} }
 // The state key for the active Path: HIIT series paths carry their series id.
+// With no argument: the programme the user trains now — the active Path, or
+// (no active Path, e.g. it completed) the Today programme if it is a built-in
+// or library programme. Custom workouts and freestyle HIIT have no fixed list.
 function _offlineProgKey(path){
+  if(!path){
+    const active = typeof isPathActive === 'function' && isPathActive() && typeof userPath !== 'undefined' && userPath;
+    if(!active){
+      const t = typeof todayProg === 'string' ? todayProg : '';
+      return (t === 'ULF' || t === 'PPL' || (typeof isLibraryProgramme === 'function' && isLibraryProgramme(t) && getLibraryProgramme(t))) ? t : null;
+    }
+  }
   const p = path || (typeof userPath !== 'undefined' ? userPath : null);
   if(!p || !p.programme) return null;
   if(p.programme === 'HIIT') return p.hiitSeries ? 'HIIT:' + p.hiitSeries : null;
@@ -26404,7 +26414,7 @@ function renderPathTab() {
   const el = document.getElementById('pathTabContent');
   if(!el) return;
   el.innerHTML = isPathActive() ? _renderPathTabActive() : _renderPathTabEmpty();
-  if(isPathActive()) _offlineRefreshCard();
+  _offlineRefreshCard();   // active Path, or the Today programme when there is none
   const fp = document.getElementById('planFindProg'); if(fp) fp.hidden = !_p3FlagOn('discover');
 }
 
@@ -26431,6 +26441,7 @@ function _renderPathTabEmpty() {
         You're training without a structured path. Tap <strong>Start a Path</strong> whenever you're ready.
       </div>`}
     </div>
+    ${_offlineCardHtml()}
     ${_renderCompletedPathsSection()}`;
 }
 
