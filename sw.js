@@ -138,7 +138,7 @@ self.addEventListener('fetch', e => {
 
   // The private-share viewer is independent of the app: never cached here and
   // never answered with the app shell (it needs the network anyway).
-  if (url.origin === self.location.origin && (url.pathname === '/share.html' || url.pathname === '/share.js')) return;
+  if (url.origin === self.location.origin && (url.pathname === '/share' || url.pathname === '/share.html' || url.pathname === '/share.js')) return;
 
   // Self-hosted exercise media: served from the offline download when present,
   // otherwise straight from the network (nothing is cached lazily — the media

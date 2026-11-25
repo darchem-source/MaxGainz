@@ -4184,6 +4184,7 @@ async function sbFetch(path, options = {}, _isRetry = false) {
 
     const text = await res.text();
     if (!res.ok) {
+      if (typeof options.onError === 'function') { try { options.onError(res.status, text); } catch(e) {} }
       console.warn('Supabase error', res.status, text);
       _lastSyncError = 'http';
       _lastSyncErrorDetail = { status: res.status, text: String(text || '').slice(0, 400) };
@@ -18163,12 +18164,32 @@ function _shareIsCatalogueName(n){
   if(typeof EX_ROTATION_POOLS === 'object' && EX_ROTATION_POOLS && Object.keys(EX_ROTATION_POOLS).some(k => k === n || (EX_ROTATION_POOLS[k] || []).some(p => p && p.name === n))) return true;
   return typeof CORE_EXERCISES !== 'undefined' && Array.isArray(CORE_EXERCISES) && CORE_EXERCISES.some(c => c && c.name === n);
 }
+// Cut by code points, never inside an emoji (Postgres rejects lone surrogates).
+function _shareCut(v, n){ return Array.from(String(v == null ? '' : v)).slice(0, n).join(''); }
+// Pure: is this a workout/day name the APP wrote (programme days, library
+// days, built-in HIIT classes)? Decided by the name itself — progKey is not
+// synced, so a cloud-loaded custom session has none. Custom HIIT names (also
+// pushed into HIIT) don't count.
+function _shareIsKnownDayName(n){
+  const name = String(n || '');
+  if(!name) return false;
+  const custom = new Set(((typeof customHIITs !== 'undefined' && Array.isArray(customHIITs)) ? customHIITs : []).map(w => w && w.name));
+  if(custom.has(name)) return false;
+  if([ULF, PPL, ULF_VARIANTS].some(t => t && Object.prototype.hasOwnProperty.call(t, name))) return true;
+  if((LIBRARY_PROGRAMMES || []).some(p => p && (p.name === name || (p.schedule || []).some(d => d && d.day === name)))) return true;
+  return (typeof HIIT !== 'undefined' && Array.isArray(HIIT) ? HIIT : []).some(h => h && h.name === name);
+}
+function _shareDayTitle(day, ownNames){
+  const t = _shareCut(String(day || '').replace(/\s+/g, ' ').trim(), 60);
+  if(!t) return 'Workout';
+  return (ownNames || _shareIsKnownDayName(t)) ? t : 'Workout';
+}
 // Names from the app's own catalogue go as they are; anything the user typed
 // goes as "Exercise N" unless they ticked "Names I typed myself".
 function _shareNamer(ownNames){
   const seen = {}; let k = 0;
   return n => {
-    const s = String(n == null ? '' : n).replace(/\s+/g, ' ').trim().slice(0, 60);
+    const s = _shareCut(String(n == null ? '' : n).replace(/\s+/g, ' ').trim(), 60);
     if(!s) return 'Exercise';
     if(ownNames || _shareIsCatalogueName(s)) return s;
     if(!seen[s]) seen[s] = 'Exercise ' + (++k);
@@ -18196,19 +18217,18 @@ function _shareSessionSnapshot(s, all, opts){
     const e = { name: name(n) };
     if(o.exercises){
       e.sets = Array.from({ length: count }, (_, i) => ({
-        w: (o.weights && !(v && v.bw)) ? _shareNum(sw[i] != null && sw[i] !== '' ? sw[i] : (v && v.weight), 2) : null,
+        w: (o.weights && !(v && v.bw)) ? (_shareNum(sw[i] != null && sw[i] !== '' ? sw[i] : (v && v.weight), 2) || null) : null,
         r: _shareNum(reps[i], 0)
       }));
     }
     if(pbSet) e.pb = pbSet.has(n);
-    if(o.notes && v && typeof v.note === 'string' && v.note.trim()) e.note = v.note.trim().slice(0, 200);
+    if(o.notes && v && typeof v.note === 'string' && v.note.trim()) e.note = _shareCut(v.note.trim(), 200);
     return e;
   });
-  const custom = s && s.progKey === 'custom';
   return {
     v: 1, kind: 'session',
     date: isFinite(t) ? _shareLocalDate(t) : null,
-    title: (custom && !o.ownNames) ? 'Workout' : (String((s && s.day) || 'Workout').slice(0, 60)),
+    title: _shareDayTitle(s && s.day, !!o.ownNames),
     programme: _shareProgName(s && s.progKey),
     durationMin: o.duration ? _shareNum(s && s.durationMin, 0) : null,
     totals: { sets: setCount, volumeKg: o.weights ? _shareNum(s && s.volume, 0) : null },
@@ -18230,7 +18250,7 @@ function _shareWeekSnapshot(B, sessions, opts, nowMs){
     planned: B && B.plannedSource === 'plan' ? B.planned : null,
     trendPct: (o.trend && B && B.trend) ? B.trend.pct : null,
     newPBs: (o.pbs && B) ? (B.newPBs || []).map(p => ({ name: name(p.name), weight: o.weights ? _shareNum(p.weight, 2) : null })) : [],
-    sessions: o.sessions ? gym.slice(0, 14).map(s => ({ date: _shareLocalDate(_sessTime(s)), title: (s.progKey === 'custom' && !o.ownNames) ? 'Workout' : String(s.day || 'Workout').slice(0, 60) })) : [],
+    sessions: o.sessions ? gym.slice(0, 14).map(s => ({ date: _shareLocalDate(_sessTime(s)), title: _shareDayTitle(s.day, !!o.ownNames) })) : [],
     unit: 'kg'
   };
 }
@@ -18239,7 +18259,7 @@ function _shareWeekSnapshot(B, sessions, opts, nowMs){
 function _shareClean(p){
   if(!p || typeof p !== 'object' || (p.kind !== 'session' && p.kind !== 'week')) return null;
   const pick = (obj, keys) => { const r = {}; keys.forEach(k => { if(obj && Object.prototype.hasOwnProperty.call(obj, k) && obj[k] !== undefined) r[k] = obj[k]; }); return r; };
-  const str = (v, n) => (typeof v === 'string') ? v.slice(0, n) : null;
+  const str = (v, n) => (typeof v === 'string') ? _shareCut(v, n) : null;
   const num = v => (typeof v === 'number' && isFinite(v)) ? v : null;
   const out = pick(p, SHARE_SCHEMA[p.kind]);
   out.v = 1; out.unit = 'kg';
@@ -18261,12 +18281,15 @@ function _shareClean(p){
     out.newPBs = (Array.isArray(out.newPBs) ? out.newPBs : []).slice(0, 20).map(b => { const y = pick(b, SHARE_SCHEMA.pb); return { name: str(y.name, 60) || 'Exercise', weight: num(y.weight) }; });
     out.sessions = (Array.isArray(out.sessions) ? out.sessions : []).slice(0, 14).map(x => { const y = pick(x, SHARE_SCHEMA.weeksession); return { date: str(y.date, 10), title: str(y.title, 60) || 'Workout' }; });
   }
-  return JSON.stringify(out).length <= 16000 ? out : null;
+  // Server limit is 16 KB of jsonb text (adds ', ' / ': '); keep 25% headroom in UTF-8 bytes.
+  const j = JSON.stringify(out);
+  const bytes = (typeof TextEncoder === 'function') ? new TextEncoder().encode(j).length : unescape(encodeURIComponent(j)).length;
+  return bytes <= 12000 ? out : null;
 }
 // Pure: the short label in the owner's "Shared links" list.
 function _shareTitle(p){
   const m = _shareModel(p);
-  return (m.heading + (p && p.kind === 'session' && m.sub ? ' · ' + m.sub.split(' · ')[0] : '')).slice(0, 80);
+  return _shareCut(m.heading + (p && p.kind === 'session' && m.sub ? ' · ' + m.sub.split(' · ')[0] : ''), 80);
 }
 
 // ── share sheet ──
@@ -18275,12 +18298,12 @@ function _shareDefaults(kind){ const o = {}; SHARE_OPTS[kind].forEach(x => { o[x
 function openShareSession(idx){
   const s = completedSessions[idx];
   if(!_shareFlagOn() || !s || s.manualActivity) return;
-  _share = { kind:'session', idx, opts:_shareDefaults('session'), days:30, link:null, busy:false, msg:'' };
+  _share = { kind:'session', idx, sess:s, opts:_shareDefaults('session'), days:30, link:null, busy:false, msg:'', payload:null };
   _shareOpen();
 }
 function openShareWeek(){
   if(!_shareFlagOn()) return;
-  _share = { kind:'week', idx:null, opts:_shareDefaults('week'), days:30, link:null, busy:false, msg:'' };
+  _share = { kind:'week', idx:null, sess:null, opts:_shareDefaults('week'), days:30, link:null, busy:false, msg:'', payload:null };
   _shareOpen();
 }
 function _shareOpen(){
@@ -18288,7 +18311,7 @@ function _shareOpen(){
   document.getElementById('shareSheetMod').classList.add('open');
   const h = document.getElementById('shareSheetTitle'); if(h){ try { h.focus(); } catch(e){} }
 }
-function closeShareSheet(){ document.getElementById('shareSheetMod').classList.remove('open'); _share = null; }
+function closeShareSheet(){ document.getElementById('shareSheetMod').classList.remove('open'); _share = null; const b = document.getElementById('shareSheetBody'); if(b) b.innerHTML = ''; }
 function _shareBriefing(){
   let balance = null;
   try {
@@ -18302,7 +18325,8 @@ function _shareBriefing(){
 function _shareCurrentPayload(){
   if(!_share) return null;
   if(_share.kind === 'session'){
-    const s = completedSessions[_share.idx];
+    // The session object itself, not an index: a cloud reload may re-sort the list.
+    const s = _share.sess;
     return s ? _shareClean(_shareSessionSnapshot(s, completedSessions, _share.opts)) : null;
   }
   return _shareClean(_shareWeekSnapshot(_shareBriefing(), completedSessions, _share.opts, Date.now()));
@@ -18327,7 +18351,9 @@ function _shareModelHtml(m, kind){
 function _shareRender(){
   const el = document.getElementById('shareSheetBody');
   if(!el || !_share) return;
-  const p = _shareCurrentPayload();
+  // Freeze what the preview shows: this exact object is what a link sends.
+  const p = _share.link ? _share.payload : _shareCurrentPayload();
+  _share.payload = p;
   const m = _shareModel(p);
   const locked = !!_share.link;
   const opts = SHARE_OPTS[_share.kind].map((x, i) => `<label style="display:flex;gap:10px;align-items:center;padding:7px 0;font-size:13px;cursor:pointer;"><input type="checkbox" id="shareOpt${i}" ${_share.opts[x[0]] ? 'checked' : ''} ${locked ? 'disabled' : ''} onchange="shareSetOpt(${i}, this.checked)"> ${esc(x[1])}</label>`).join('');
@@ -18419,19 +18445,23 @@ async function shareCreateLink(){
   if(!_share || _share.busy || _share.link) return;
   if(typeof isAuthenticated !== 'function' || !isAuthenticated()){ _share.msg = _shareErrText('auth'); _shareRender(); return; }
   if(typeof navigator !== 'undefined' && navigator.onLine === false){ _share.msg = _shareErrText('offline'); _shareRender(); return; }
-  const p = _shareCurrentPayload();
+  const p = _share.payload;   // exactly what the preview is showing
   if(!p){ _share.msg = _shareErrText('payload'); _shareRender(); return; }
   const mine = _share;
   mine.busy = true; mine.msg = ''; _shareRender();
-  _lastSyncErrorDetail = null;
-  const r = await sbFetch('rpc/share_create', { method:'POST', silent:true, body: JSON.stringify({ p_kind: p.kind, p_title: _shareTitle(p), p_payload: p, p_days: mine.days }) });
+  let errStatus = 0, errText = '';
+  const r = await sbFetch('rpc/share_create', { method:'POST', silent:true, onError:(st, tx) => { errStatus = st; errText = String(tx || ''); },
+    body: JSON.stringify({ p_kind: p.kind, p_title: _shareTitle(p), p_payload: p, p_days: mine.days }) });
   mine.busy = false;
+  const ok = r && r.ok === true && typeof r.token === 'string' && /^[A-Za-z0-9_-]{24}$/.test(r.token) && r.id;
+  // Keep the token even if the sheet was closed meanwhile, so the link can be
+  // copied (or turned off) from Profile → Shared links.
+  if(ok){ const st = _shareLinksLoad(); st.links[String(r.id)] = r.token; _shareLinksSave(st); }
   if(_share !== mine) return;   // sheet closed or replaced meanwhile
-  if(r && r.ok === true && typeof r.token === 'string' && /^[A-Za-z0-9_-]{24}$/.test(r.token) && r.id){
+  if(ok){
     mine.link = { id: String(r.id), token: r.token };
-    const st = _shareLinksLoad(); st.links[mine.link.id] = r.token; _shareLinksSave(st);
   } else {
-    const missing = !r && typeof _lastSyncErrorDetail === 'object' && _lastSyncErrorDetail && /share_create|PGRST202|does not exist/i.test(String(_lastSyncErrorDetail.text || ''));
+    const missing = !r && errStatus === 404 && /PGRST202/.test(errText);
     mine.msg = _shareErrText(r && r.reason ? r.reason : missing ? 'setup' : (navigator.onLine === false ? 'offline' : ''));
   }
   _shareRender();
@@ -18452,11 +18482,15 @@ async function _shareRevokeId(id){
   return false;
 }
 async function shareRevokeCurrent(){
-  if(!_share || !_share.link) return;
-  const ok = await _shareRevokeId(_share.link.id);
-  if(!_share) return;
-  if(ok){ _share.link = null; _share.msg = ''; showToast('Link turned off — it no longer opens'); }
-  else _share.msg = 'Couldn\'t turn the link off — check your connection and try again.';
+  const mine = _share;
+  if(!mine || !mine.link || mine.busy) return;
+  mine.busy = true;
+  const ok = await _shareRevokeId(mine.link.id);
+  mine.busy = false;
+  if(ok) showToast('Link turned off — it no longer opens');
+  if(_share !== mine) return;
+  if(ok){ mine.link = null; mine.msg = ''; }
+  else mine.msg = 'Couldn\'t turn the link off — check your connection and try again.';
   _shareRender();
 }
 
@@ -18468,11 +18502,14 @@ async function openSharedLinks(){
   await _shareListRender();
   const h = document.getElementById('sharedLinksTitle'); if(h){ try { h.focus(); } catch(e){} }
 }
+let _shareListGen = 0;
 async function _shareListRender(){
   const el = document.getElementById('sharedLinksBody'); if(!el) return;
+  const gen = ++_shareListGen;
   if(typeof isAuthenticated !== 'function' || !isAuthenticated()){ el.innerHTML = '<p style="font-size:13px;color:var(--text2);">Sign in to see and manage your links.</p>'; return; }
   el.innerHTML = '<p role="status" style="font-size:13px;color:var(--text2);">Loading…</p>';
   const rows = await sbFetch('shares?select=id,kind,title,created_at,expires_at,view_count&order=created_at.desc', { silent:true });
+  if(gen !== _shareListGen) return;   // a newer render is under way
   if(!Array.isArray(rows)){ el.innerHTML = '<p role="alert" style="font-size:13px;color:var(--orange);">Couldn\'t load your links — check your connection.</p>'; return; }
   const now = Date.now();
   _shareList = rows.filter(r => r && new Date(r.expires_at).getTime() > now);
@@ -29204,6 +29241,7 @@ function authLogout(opts){
   localStorage.removeItem(OFFLINE_METRICS_KEY); localStorage.removeItem(OFFLINE_SESS_KEY);
   // Share-link tokens let this device re-copy the account's links: never for the next account.
   localStorage.removeItem(SHARE_LINKS_KEY); _share = null; _shareList = [];
+  ['shareSheetBody', 'sharedLinksBody'].forEach(id => { const n = document.getElementById(id); if(n) n.innerHTML = ''; });
   localStorage.removeItem(AI_CACHE_KEY);
   localStorage.removeItem(AI_CONSENT_SYNC_KEY);
   localStorage.removeItem(COACH_ACCEPT_KEY);
@@ -29434,9 +29472,9 @@ async function deleteUserAccount(){
     // still sitting in Supabase.
     // Shared links first: they are copies of this account's workouts. If the
     // sharing functions were never installed there is nothing to delete.
-    _lastSyncErrorDetail = null;
-    const shareRes  = await sbFetch('rpc/share_revoke_all', {method: 'POST', silent: true, body: '{}'});
-    const shareNone = shareRes === null && !!_lastSyncErrorDetail && /share_revoke_all|PGRST202|does not exist/i.test(String(_lastSyncErrorDetail.text || ''));
+    let shareErr = 0, shareErrText = '';
+    const shareRes  = await sbFetch('rpc/share_revoke_all', {method: 'POST', silent: true, body: '{}', onError: (st, tx) => { shareErr = st; shareErrText = String(tx || ''); }});
+    const shareNone = shareRes === null && shareErr === 404 && /PGRST202/.test(shareErrText);
     const shareOk   = shareNone || (shareRes && shareRes.ok === true);
     const sessRes   = await sbFetch('sessions?user_id=eq.' + userId, {method: 'DELETE'});
     const weightRes = await sbFetch('custom_weights?user_id=eq.' + userId, {method: 'DELETE'});

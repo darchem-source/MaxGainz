@@ -20,7 +20,9 @@
 --   • Revoking DELETES the row (the copy is gone, not hidden).
 --   • Payload checked against the same whitelist as SHARE_SCHEMA in index.html
 --     (gate 21 keeps the two identical); ≤ 16 KB; per-user caps: 50 live links,
---     20 new links per UTC day; links expire after 1–90 days (default 30).
+--     20 new links per UTC day (counted in share_counts, so revoking doesn't
+--     reset it; creates are serialised per user); links expire after 1–90 days
+--     (default 30) and expired copies are deleted on the next share call.
 --   • Deleting the auth user cascades; the app also calls share_revoke_all()
 --     when the user deletes their account.
 
@@ -38,6 +40,18 @@ create table if not exists public.shares (
   view_count  int not null default 0
 );
 create index if not exists shares_user_idx on public.shares(user_id, created_at desc);
+create index if not exists shares_expiry_idx on public.shares(expires_at);
+
+-- Links created per user per UTC day (revoking does not give the allowance back).
+create table if not exists public.share_counts (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  day     date not null,
+  n       int not null default 0,
+  primary key (user_id, day)
+);
+alter table public.share_counts enable row level security;
+revoke all on table public.share_counts from anon, authenticated;
+-- No policies: invisible to clients; only share_create() writes.
 
 alter table public.shares enable row level security;
 revoke all on table public.shares from anon;
@@ -142,11 +156,16 @@ begin
   if octet_length(coalesce(p_payload::text, '')) > 16384 or not share_payload_ok(p_payload, p_kind) then
     return jsonb_build_object('ok', false, 'reason', 'payload');
   end if;
-  delete from shares where user_id = uid and expires_at < now();
+  -- One create at a time per user, so the caps can't be raced.
+  perform pg_advisory_xact_lock(hashtext('share_create:' || uid::text));
+  delete from shares where expires_at < now();
   if (select count(*) from shares where user_id = uid) >= 50 then return jsonb_build_object('ok', false, 'reason', 'too_many'); end if;
-  if (select count(*) from shares where user_id = uid and created_at > now() - interval '1 day') >= 20 then
+  insert into share_counts(user_id, day) values (uid, (now() at time zone 'utc')::date) on conflict (user_id, day) do nothing;
+  if (select n from share_counts where user_id = uid and day = (now() at time zone 'utc')::date) >= 20 then
     return jsonb_build_object('ok', false, 'reason', 'rate');
   end if;
+  update share_counts set n = n + 1 where user_id = uid and day = (now() at time zone 'utc')::date;
+  delete from share_counts where user_id = uid and day < (now() at time zone 'utc')::date - 7;
   tok := translate(encode(gen_random_bytes(18), 'base64'), '+/', '-_');
   insert into shares(user_id, token_hash, kind, title, payload, expires_at)
     values (uid, digest(tok, 'sha256'), p_kind, p_title, p_payload, now() + n_days * interval '1 day')
@@ -165,6 +184,7 @@ declare
   r record;
 begin
   if p_token is null or p_token !~ '^[A-Za-z0-9_-]{24}$' then return jsonb_build_object('ok', false); end if;
+  delete from shares where expires_at < now();   -- expired copies are deleted, not just hidden
   update shares set view_count = view_count + 1
     where token_hash = digest(p_token, 'sha256') and expires_at > now()
     returning kind, created_at, expires_at, payload into r;
@@ -215,10 +235,10 @@ revoke all on function public.share_revoke_all() from public, anon;
 grant execute on function public.share_revoke_all() to authenticated;
 revoke all on function public.share_get(text) from public;
 grant execute on function public.share_get(text) to anon, authenticated;
-revoke all on function public.share_payload_ok(jsonb, text) from public, anon;
-revoke all on function public.share_keys_ok(jsonb, text[]) from public, anon;
-revoke all on function public.share_str_ok(jsonb, int) from public, anon;
-revoke all on function public.share_num_ok(jsonb) from public, anon;
+revoke all on function public.share_payload_ok(jsonb, text) from public, anon, authenticated;
+revoke all on function public.share_keys_ok(jsonb, text[]) from public, anon, authenticated;
+revoke all on function public.share_str_ok(jsonb, int) from public, anon, authenticated;
+revoke all on function public.share_num_ok(jsonb) from public, anon, authenticated;
 
 -- Check after running (expect RLS on; four functions security definer; anon may only run share_get):
 -- select relname, relrowsecurity from pg_class where relname = 'shares';

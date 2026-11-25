@@ -4404,7 +4404,7 @@ SHARE_HTML = os.path.join(ROOT, 'share.html')
 SHARE_SQL = os.path.join(ROOT, 'supabase', 'shares.sql')
 NETLIFY_TOML = os.path.join(ROOT, 'netlify.toml')
 
-SHARE_FNS = ['_shareModel', '_shareLocalDate', '_shareIsCatalogueName', '_shareNamer', '_shareNum', '_shareProgName',
+SHARE_FNS = ['_shareModel', '_shareLocalDate', '_shareCut', '_shareIsKnownDayName', '_shareDayTitle', '_shareIsCatalogueName', '_shareNamer', '_shareNum', '_shareProgName',
              '_shareSessionSnapshot', '_shareWeekSnapshot', '_shareClean', '_shareTitle', '_shareFlagOn', '_shareDefaults',
              '_shareCurrentPayload', 'shareSetOpt', '_shareModelHtml', '_shareLinksLoad', '_shareLinksSave', '_shareErrText',
              'shareCreateLink', '_shareRevokeId', 'shareRevokeCurrent', 'openShareSession', 'openShareWeek',
@@ -4422,8 +4422,13 @@ var AUTH = true, UID = 'user-7f3a', CALLS = [];
 function isAuthenticated(){ return AUTH; } function getCurrentUserId(){ return UID; }
 var _lastSyncErrorDetail = null, RPC = {};
 function sbFetch(path, o){ CALLS.push({ path: path, body: o && o.body }); var f = RPC[path]; return Promise.resolve(f ? f(o) : null); }
+function TextEncoder(){} TextEncoder.prototype.encode = function(str){ return { length: unescape(encodeURIComponent(str)).length }; };
 function showToast(){}
-function _shareRender(){}
+function _shareRender(){ if(_share && !_share.link) _share.payload = _shareCurrentPayload(); }
+var ULF = { 'Upper':[], 'Lower':[], 'Full Body':[] }, PPL = { 'Push A':[] }, ULF_VARIANTS = { 'Upper':[] };
+var LIBRARY_PROGRAMMES = [{ id:'sl5x5', name:'StrongLifts 5×5', schedule:[{ day:'Workout A' }] }];
+var customHIITs = [{ name:"Sarah's PT circuit" }];
+var HIIT = [{ name:'AMRAP 20 – Full Body Blitz' }, { name:"Sarah's PT circuit" }];
 function _shareOpen(){}
 var _share = null, _shareList = [];
 function _calcMuscleGroupShare(){ return { share:{}, hasData:false }; } function _muscleBalanceVerdict(){ return null; }
@@ -4440,7 +4445,11 @@ var completedSessions = [
       'Bench Press': { ord:0, sets:3, reps:[5,5,4], weight:85, setWeights:[85,85,85], note:'Left shoulder tweak — email me at max.test@example.com', rpe:[8,9,9] },
       "Grandma's Secret Press": { ord:1, sets:2, reps:[10,9], weight:22.5, setWeights:[22.5,22.5] },
       'Squat': { ord:2, sets:2, reps:[5,5], weight:100, bw:false }
-    } }
+    } },
+  { date: new Date(NOW - 2 * DAY), day: 'Dr Patel rehab block', durationMin: 30, volume: 100,
+    setLog: { 'Squat': { ord:0, sets:1, reps:[5], weight:60, note: new Array(200).join('a') + '💪💪' } } },
+  { date: new Date(NOW - 3 * DAY), day: "Sarah's PT circuit", progKey: 'hiit', durationMin: 20, volume: 0, setLog: {} },
+  { date: new Date(NOW - 4 * DAY), day: 'Workout A', durationMin: 40, volume: 500, setLog: {} }
 ];
 function walkKeys(o, schemaFor, path, bad){
   if(Array.isArray(o)){ o.forEach(function(x){ walkKeys(x, schemaFor, path, bad); }); return; }
@@ -4462,11 +4471,19 @@ var s = completedSessions[1];
 function snap(o){ return _shareClean(_shareSessionSnapshot(s, completedSessions, o)); }
 var pd = snap(DEF), jd = JSON.stringify(pd);
 ['max.test@example.com', '@', 'user-7f3a', 'cloud-99', 'cli-42', 'Maximilian', '87.3', '81.7', 'waist', 'rpe', 'Secret', 'shoulder'].forEach(function(t){ ok('default payload leaks "' + t + '"', jd.indexOf(t) === -1); });
+// Titles decided by the NAME: progKey is not synced, custom HIITs live in HIIT too.
+ok('cloud-loaded custom day name masked', JSON.stringify(_shareClean(_shareSessionSnapshot(completedSessions[2], completedSessions, DEF))).indexOf('Patel') === -1);
+ok('custom HIIT name masked', _shareSessionSnapshot(completedSessions[3], completedSessions, DEF).title === 'Workout');
+ok('library day kept without progKey', _shareSessionSnapshot(completedSessions[4], completedSessions, DEF).title === 'Workout A');
+ok('own names shown only when ticked', _shareSessionSnapshot(completedSessions[2], completedSessions, ALL).title === 'Dr Patel rehab block');
+var emo = _shareClean(_shareSessionSnapshot(completedSessions[2], completedSessions, ALL)).exercises[0].note;
+ok('no lone surrogate at a cut', !/[\uD800-\uDBFF]$/.test(emo) && !/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(emo));
+ok('missing weight is not 0 kg', _shareSessionSnapshot({ date:new Date(NOW), day:'Upper', setLog:{ 'Squat':{ sets:1, reps:[5], weight:0 } } }, [], DEF).exercises[0].sets[0].w === null);
 ok('defaults: notes and own names off', DEF.notes === false && DEF.ownNames === false && _shareDefaults('week').ownNames === false);
 ok('custom exercise masked by default', jd.indexOf('Exercise 1') !== -1);
 ok('catalogue names kept', jd.indexOf('Bench Press') !== -1 && jd.indexOf('Squat') !== -1);
 ok('date is a local day only', /^\d{4}-\d{2}-\d{2}$/.test(pd.date) && jd.indexOf('T') === -1 || /^\d{4}-\d{2}-\d{2}$/.test(pd.date));
-ok('PB marked from history (Bench 85 > 80)', pd.exercises[0].pb === true && pd.exercises[2].pb === false);
+ok('PB marked from history (Bench 85 > 80; custom lift has no baseline)', pd.exercises[0].pb === true && pd.exercises[1].pb === false);
 var bad = []; walkKeys(pd, schemaFor('session'), 'root', bad); ok('only whitelisted keys: ' + bad.join(','), !bad.length);
 // The builders themselves must be clean too (not only after _shareClean).
 [DEF, ALL, NONE].forEach(function(o, i){ var raw = _shareSessionSnapshot(s, completedSessions, o), b0 = []; walkKeys(raw, schemaFor('session'), 'root', b0);
@@ -4496,7 +4513,9 @@ var w = _shareClean(_shareWeekSnapshot(BRIEF, completedSessions, _shareDefaults(
 var bad3 = []; walkKeys(w, schemaFor('week'), 'root', bad3); ok('week: only whitelisted keys ' + bad3.join(','), !bad3.length);
 ok('week: default target is not presented as a plan', w.planned === null);
 ok('week: custom names masked', jw.indexOf('Secret') === -1 && jw.indexOf('Exercise 1') !== -1);
-ok('week: sessions are date + title only', w.sessions.length === 1 && Object.keys(w.sessions[0]).join() === 'date,title');
+var wAll = _shareClean(_shareWeekSnapshot({ weekStartMs: NOW - 6 * DAY, done: 4, planned: 3, plannedSource: 'plan', trend: null, newPBs: [] }, completedSessions, _shareDefaults('week'), NOW));
+ok('week: custom day / HIIT titles masked', JSON.stringify(wAll).indexOf('Patel') === -1 && JSON.stringify(wAll).indexOf('Sarah') === -1 && JSON.stringify(wAll).indexOf('Workout A') !== -1);
+ok('week: sessions are date + title only', w.sessions.length >= 1 && Object.keys(w.sessions[0]).join() === 'date,title');
 var w2 = _shareClean(_shareWeekSnapshot(BRIEF, completedSessions, { sessions:false, pbs:true, weights:false, trend:false, ownNames:false }, NOW));
 ok('week: weights/trend/sessions off', w2.newPBs.every(function(b){ return b.weight === null; }) && w2.trendPct === null && w2.sessions.length === 0);
 // The model the preview and the viewer draw.
@@ -4510,8 +4529,9 @@ JSON.stringify(fails);
 """
 SHARE_ASYNC = {
  'create sends exactly the previewed payload, then stores the token for this account only': r"""
-   LS['maxgainz_p3_share'] = '1'; openShareSession(1); _share = { kind:'session', idx:1, opts:_shareDefaults('session'), days:30, link:null, busy:false, msg:'' };
-   var preview = JSON.stringify(_shareCurrentPayload());
+   LS['maxgainz_p3_share'] = '1'; openShareSession(1); _shareRender();
+   var preview = JSON.stringify(_share.payload);
+   completedSessions.unshift({ date: new Date(NOW), day:'Lower', progKey:'ULF', setLog:{} });   // a cloud reload re-sorts the list
    RPC['rpc/share_create'] = function(o){ return { ok:true, id:'id-1', token:'AbCdEfGhIjKlMnOpQrStUvWx' }; };
    await shareCreateLink();
    if(CALLS.length !== 1 || CALLS[0].path !== 'rpc/share_create') return 'calls ' + JSON.stringify(CALLS);
@@ -4525,7 +4545,7 @@ SHARE_ASYNC = {
    return true;""",
  'nothing is sent signed out, offline, twice, or with a malformed token reply': r"""
    LS['maxgainz_p3_share'] = '1';
-   _share = { kind:'session', idx:1, opts:_shareDefaults('session'), days:30, link:null, busy:false, msg:'' };
+   openShareSession(1); _shareRender();
    AUTH = false; await shareCreateLink(); AUTH = true;
    navigator.onLine = false; await shareCreateLink(); navigator.onLine = true;
    if(CALLS.length) return 'sent while signed out/offline';
@@ -4533,12 +4553,20 @@ SHARE_ASYNC = {
    var p1 = shareCreateLink(); var p2 = shareCreateLink(); await p1; await p2;
    if(CALLS.length !== 1) return 'double send ' + CALLS.length;
    if(_share.link) return 'accepted a malformed token';
-   RPC['rpc/share_create'] = function(){ _lastSyncErrorDetail = { status:404, text:'Could not find the function public.share_create' }; return null; };
+   RPC['rpc/share_create'] = function(o){ o.onError(404, '{"code":"PGRST202","message":"Could not find the function public.share_create"}'); return null; };
    await shareCreateLink(); if(!/switched on yet/.test(_share.msg)) return 'missing-SQL message: ' + _share.msg;
+   RPC['rpc/share_create'] = function(o){ _lastSyncErrorDetail = { status:404, text:'PGRST202 share_create does not exist' }; return null; };
+   _share.msg = ''; await shareCreateLink(); if(/switched on yet/.test(_share.msg)) return 'trusted a stale global error';
+   return true;""",
+ 'closing the sheet mid-create still keeps the token': r"""
+   LS['maxgainz_p3_share'] = '1'; openShareSession(1); _shareRender();
+   RPC['rpc/share_create'] = function(){ _share = null; return { ok:true, id:'id-5', token:'AbCdEfGhIjKlMnOpQrStUvW5' }; };
+   await shareCreateLink();
+   if(JSON.parse(LS['maxgainz_shares_v1']).links['id-5'] !== 'AbCdEfGhIjKlMnOpQrStUvW5') return 'orphan link: token dropped';
    return true;""",
  'turning a link off calls share_revoke and forgets the token': r"""
    LS['maxgainz_shares_v1'] = JSON.stringify({ uid:'user-7f3a', links:{ 'id-9':'AbCdEfGhIjKlMnOpQrStUvWx' } });
-   _share = { kind:'session', idx:1, opts:{}, days:30, link:{ id:'id-9', token:'AbCdEfGhIjKlMnOpQrStUvWx' }, busy:false, msg:'' };
+   _share = { kind:'session', idx:1, sess:completedSessions[1], opts:{}, days:30, link:{ id:'id-9', token:'AbCdEfGhIjKlMnOpQrStUvWx' }, busy:false, msg:'', payload:{} };
    RPC['rpc/share_revoke'] = function(o){ return JSON.parse(o.body).p_id === 'id-9' ? { ok:true, deleted:1 } : null; };
    await shareRevokeCurrent();
    if(_share.link) return 'link still shown';
@@ -4592,6 +4620,8 @@ def gate_sharing(html, js, share_js=None, share_html=None, sql=None, toml=None, 
     if re.search(r'<script(?![^>]*\bsrc=)[^>]*>', share_html) or 'src="share.js"' not in share_html or 'on' + 'click=' in share_html:
         problems.append('share.html must have no inline script or handlers')
     if 'noindex' not in share_html: problems.append('share.html must be noindex')
+    if not re.search(r'for = "/share"\s', toml): problems.append('pretty URL /share has no headers')
+    if "url.pathname === '/share'" not in sw: problems.append('sw.js does not bypass /share')
     blk = re.search(r'for = "/share\.html"[\s\S]*?(?=\[\[headers\]\]|\Z)', toml)
     hdr = blk.group(0) if blk else ''
     if "script-src 'self'" not in hdr or "default-src 'none'" not in hdr or 'unsafe-eval' in hdr or "script-src 'self' 'unsafe-inline'" in hdr: problems.append('share.html CSP missing or weak')
@@ -4617,17 +4647,23 @@ def gate_sharing(html, js, share_js=None, share_html=None, sql=None, toml=None, 
     rv = re.search(r'create or replace function public\.share_revoke\([\s\S]*?\$\$;', low); rv = rv.group(0) if rv else ''
     if 'delete from shares where id = p_id and user_id = uid' not in rv: sqlp.append('revoke must delete only the caller\'s row')
     if 'share_payload_ok(p_payload, p_kind)' not in low: sqlp.append('share_create does not validate the payload')
+    if 'pg_advisory_xact_lock' not in low or 'share_counts' not in low or 'update share_counts set n = n + 1' not in low: sqlp.append('daily cap can be reset by revoking or raced')
+    if 'delete from shares where expires_at < now()' not in get: sqlp.append('expired copies are only hidden, not deleted')
+    if not re.search(r'revoke all on function public\.share_payload_ok\(jsonb, text\) from public, anon, authenticated', low): sqlp.append('helper functions callable by clients')
     problems += ['SQL: ' + x for x in sqlp]
     # (g) wiring
     if 'id="sessShareBtn" class="st-secondary" hidden' not in html or 'id="sharedLinksSection" hidden' not in html: problems.append('entry points not hidden by default')
     if '_shareFlagOn()' not in (extract_decl(js, 'openSessDetail') or '') or '_shareFlagOn()' not in (extract_decl(js, 'renderWeeklyBriefing') or ''): problems.append('entry points not flag-gated')
     if "rpc/share_create" in js.replace(extract_decl(js, 'shareCreateLink') or '', ''): problems.append('share_create called outside the Create button')
     scl = extract_decl(js, 'shareCreateLink') or ''
-    if not re.search(r'const p = _shareCurrentPayload\(\);', scl) or 'p_payload: p,' not in scl or '_shareClean' not in (extract_decl(js, '_shareCurrentPayload') or ''):
+    rnd = extract_decl(js, '_shareRender') or ''
+    if 'const p = _share.payload;' not in scl or 'p_payload: p,' not in scl or '_shareClean' not in (extract_decl(js, '_shareCurrentPayload') or '') \
+       or not re.search(r'const p = _share\.link \? _share\.payload : _shareCurrentPayload\(\);\s*_share\.payload = p;', rnd):
         problems.append('the link must send exactly the cleaned, previewed payload')
     lo = extract_decl(js, 'authLogout') or ''
     if 'SHARE_LINKS_KEY' not in lo: problems.append('sign-out keeps share tokens')
     dua = extract_decl(js, 'deleteUserAccount') or ''
+    if not re.search(r"shareNone = shareRes === null && shareErr === 404 && /PGRST202/", dua): problems.append('account deletion trusts a shared error global to skip shared links')
     if 'rpc/share_revoke_all' not in dua or not re.search(r'if\(sessRes === null \|\| weightRes === null \|\| !shareOk\)', dua): problems.append('account deletion leaves (or ignores failure to delete) shared links')
     handlers = re.findall(r'on\w+="[^"]*\$\{[^"]*"', (extract_decl(js, '_shareRender') or '') + (extract_decl(js, '_shareListRender') or ''))
     badh = [h for h in handlers if not re.fullmatch(r'on\w+="\w+\(\$\{(i|d)\}(, this\.checked)?\)"', h)]
