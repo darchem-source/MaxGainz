@@ -10,6 +10,8 @@
 // byte-identical there (gate 15 compares them): the server validates before
 // anything leaves the function, and the client validates again before
 // anything reaches the UI or saved data.
+// Since Priority 7 slice 4 they are generated: the single source is
+// app/ai-validators.js, copied into the marked region below by tools/bundle.py.
 
 const AI_MODEL = 'claude-haiku-5-5';
 const AI_TASKS = ['coach', 'nl', 'recap'];
@@ -19,6 +21,16 @@ const AI_SB_URL = 'https://lxudaetjuefylgjddonm.supabase.co';
 const AI_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx4dWRhZXRqdWVmeWxnamRkb25tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY3NTU1MzgsImV4cCI6MjA5MjMzMTUzOH0.Wr-9l63vjBQKu1NQPQsTJFwHwJiE9jhMxvJnR4P9wjg';
 
 // ── Shared validators (byte-identical in index.html) ──────────────────────
+// ==== BEGIN MODULE app/ai-validators.js — generated: edit app/ai-validators.js, then run python3 tools/bundle.py ====
+// app/ai-validators.js — AI request/answer validators shared by the app and the
+// server (netlify/functions/ai/core.mjs). Priority 7, slice 4.
+//
+// ONE source for both copies: edit THIS file, then run `python3 tools/bundle.py`.
+// It is copied into a marked region in index.html (client: checks every answer
+// before it reaches the UI or saved data) and into a marked region in core.mjs
+// (server: checks before anything leaves the function). Gate 15 still compares
+// the two copies function by function; gate 36 checks both regions equal this
+// file and runs it on its own. Pure: no globals, no I/O, no DOM.
 function _aiNum(v, lo, hi, isInt){
   return typeof v === 'number' && isFinite(v) && v >= lo && v <= hi && (!isInt || Math.floor(v) === v);
 }
@@ -216,6 +228,7 @@ function _aiCheckOutput(task, out, f){
   }
   return { ok:false, reason:'task' };
 }
+// ==== END MODULE app/ai-validators.js ====
 // ── end shared validators ─────────────────────────────────────────────────
 
 const AI_PROMPT_VERSION = { coach:'coach-1', nl:'nl-1', recap:'recap-1' };

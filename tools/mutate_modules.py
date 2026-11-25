@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Mutation check for the module gates (34: app/sync.js, 35: app/session.js).
+"""Mutation check for the module gates (34: app/sync.js, 35: app/session.js,
+36: app/ai-validators.js + app/ai.js).
 Plants one bug at a time — in a module (re-bundled, so only that gate's
 standalone scenarios can catch it) or in the bundle itself — and asserts the
 gate FAILS for each, and PASSES on the real tree.
-Usage: python3 tools/mutate_modules.py [app/sync.js|app/session.js]"""
+Usage: python3 tools/mutate_modules.py [app/sync.js|app/session.js|app/ai-validators.js|app/ai.js]"""
 import os, sys, shutil, tempfile, io, contextlib
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'tests')); sys.path.insert(0, os.path.join(ROOT, 'tools'))
@@ -53,17 +54,57 @@ SESSION_MUTANTS = [
     ('module touches the DOM', "function calc1RM(weight, reps){", "function calc1RM(weight, reps){ if(0) document.title = '';"),
 ]
 
+AI_VALIDATOR_MUTANTS = [
+    ('every number counts as grounded', "const bad = _aiNumbersIn(text).filter(n => !(allowed || []).some(a => Math.abs(a - n) < 1e-6));", "const bad = _aiNumbersIn(text).filter(n => false);"),
+    ('thousands separator split into two numbers', ".replace(/(\\d),(\\d{3})(?!\\d)/g, '$1$2');", ";"),
+    ('pain no longer detected', "return /\\b(pain\\w*|hurt\\w*|", "return /\\b(hurt\\w*|"),
+    ('markup allowed in coach notes', "!/[<>{}`\\\\\\u0000-\\u001f]/.test(s);", "true;"),
+    ('extra fact keys accepted', "  return k.length === keys.length && keys.every(", "  return k.length >= keys.length && keys.every("),
+    ('coach tip may omit the new weight', "if((D.action === 'increase' || D.action === 'deload') && D.to !== D.from && _aiNumbersIn(out.text).indexOf(D.to) === -1) return { ok:false, reason:'missing target' };", ""),
+    ('medical advice allowed', "    if(unsafe(out.text)) return { ok:false, reason:'medical' };\n    const D = f.decision;", "    const D = f.decision;"),
+    ('typed set may name an unlisted exercise', "      if(ids.indexOf(s.ex) === -1) return { ok:false, reason:'exercise' };", ""),
+    ('typed set may invent a unit', "      if((s.unit === 'lb' && !saidLb) || (s.unit === 'kg' && !saidKg)) return { ok:false, reason:'unit' };", ""),
+    ('validators read the clock (not pure)', "function _aiNum(v, lo, hi, isInt){", "function _aiNum(v, lo, hi, isInt){ if(0) Date.now();"),
+]
+
+AI_CLIENT_MUTANTS = [
+    ('no consent needed', "  if(!x.consented) return 'off';", ""),
+    ('signed-out calls allowed', "  if(!x.signedIn) return 'signed_out';", ""),
+    ('daily cap ignored', "  if(x.capped) return 'cap';", ""),
+    ('notes sent without the notes consent', "if(task === 'coach' && facts && facts.note !== null && facts.note !== undefined && !prefs.notes){", "if(false){"),
+    ('facts not checked before sending', "    if(factErr) return fallback(factErr === 'pain' ? 'pain' : 'invalid');", ""),
+    ('server answer not checked', "    if(!chk.ok) return fallback('invalid', Object.assign({ out: null, check: String(chk.reason || '').slice(0, 30) }, meta));", ""),
+    ('expired token not refreshed', "        if(refreshed === true) continue;", ""),
+    ('timeout ignored', "      if(!res || timedOut){", "      if(!res){"),
+    ('server consent-off not followed', "      if(reason === 'off') _aiAdoptServerOff();", ""),
+    ('consent tie turns AI on', "  if(!l.on) return l;\n  if(!c.on) return c;", ""),
+    ("store keeps another account's entries", "o.v !== 1 || o.uid !== uid) return fresh;", "o.v !== 1) return fresh;"),
+    ('failure export leaks the answer text', "      events: (e.events || [])", "      out: e.out, events: (e.events || [])"),
+    ("consent sync sent for another account", "  if(!q || q.uid !== _aiUid()) return;", "  if(!q) return;"),
+    ('beta members not enrolled', "      Object.keys(AI_FLAG_KEYS).forEach(k => localStorage.setItem(AI_FLAG_KEYS[k], '1'));", ""),
+    ('load-time call into index.html', "const AI_BETA_SURFACES = ['coach', 'nl', 'recap'];", "const AI_BETA_SURFACES = isAuthenticated() ? [] : ['coach', 'nl', 'recap'];"),
+    ('module touches the DOM', "function _aiHash(str){", "function _aiHash(str){ if(0) document.title = '';"),
+]
+
 def _html_mutants(m, html):
     end = bundle.end(m)
     if m == 'app/sync.js':
         return [('region edited by hand (drift)', html.replace('var _syncBackoff = 0;', 'var _syncBackoff = 1;', 1)),
                 ('function re-declared in index.html', html.replace(end, end + '\nfunction flushPending(){ return Promise.resolve(true); }', 1)),
                 ('var re-declared in index.html', html.replace(end, end + "\nvar PENDING_KEY = 'maxgainz_pending_v2';", 1))]
+    if m == 'app/ai-validators.js':
+        return [('region edited by hand (drift)', html.replace('function _aiNum(v, lo, hi, isInt){', 'function _aiNum(v, lo, hi, isInt){ ', 1)),
+                ('validator re-declared in index.html', html.replace(end, end + '\nfunction _aiGrounded(){ return { ok:true, bad:[] }; }', 1))]
+    if m == 'app/ai.js':
+        return [('region edited by hand (drift)', html.replace('const AI_CLIENT_DAILY_CALLS = 30;', 'const AI_CLIENT_DAILY_CALLS = 300;', 1)),
+                ('function re-declared in index.html', html.replace(end, end + '\nasync function _aiCall(){ return { ok:true }; }', 1)),
+                ('const re-declared in index.html', html.replace(end, end + "\nconst AI_PREFS_KEY = 'x';", 1))]
     return [('region edited by hand (drift)', html.replace('let _pendingRPE=null;', 'let _pendingRPE=0;', 1)),
             ('function re-declared in index.html', html.replace(end, end + '\nfunction calc1RM(w, r){ return w; }', 1)),
             ('var re-declared in index.html', html.replace(end, end + '\nvar _activeSessionOwner = null;', 1))]
 
-GATES = {'app/sync.js': ('gate_sync_module', SYNC_MUTANTS), 'app/session.js': ('gate_session_module', SESSION_MUTANTS)}
+GATES = {'app/sync.js': ('gate_sync_module', SYNC_MUTANTS), 'app/session.js': ('gate_session_module', SESSION_MUTANTS),
+         'app/ai-validators.js': ('gate_ai_module', AI_VALIDATOR_MUTANTS), 'app/ai.js': ('gate_ai_module', AI_CLIENT_MUTANTS)}
 
 def run(gate, html, root):
     buf = io.StringIO()
@@ -71,10 +112,19 @@ def run(gate, html, root):
     return ok, buf.getvalue()
 
 def tree(m, src):
+    """A temp root with every module, the bundler and core.mjs; `m` replaced by
+    `src` and re-bundled into any extra target (core.mjs for the validators)."""
     d = tempfile.mkdtemp()
-    os.makedirs(os.path.join(d, 'app')); os.makedirs(os.path.join(d, 'tools'))
+    shutil.copytree(os.path.join(ROOT, 'app'), os.path.join(d, 'app'))
+    os.makedirs(os.path.join(d, 'tools'))
     shutil.copy(os.path.join(ROOT, 'tools/bundle.py'), os.path.join(d, 'tools/bundle.py'))
+    os.makedirs(os.path.join(d, 'netlify/functions/ai'))
+    shutil.copy(os.path.join(ROOT, 'netlify/functions/ai/core.mjs'), os.path.join(d, 'netlify/functions/ai/core.mjs'))
     open(os.path.join(d, m), 'w', encoding='utf-8').write(src)
+    for other in bundle.ALSO_INTO.get(m, []):
+        op = os.path.join(d, other)
+        txt = open(op, encoding='utf-8').read()
+        open(op, 'w', encoding='utf-8').write(bundle.region_re(m).sub(lambda _: bundle.begin(m) + '\n' + src + bundle.end(m), txt, count=1))
     return d
 
 def check_module(m):
@@ -92,6 +142,15 @@ def check_module(m):
         try: ok, out = run(gate, html, d)
         finally: shutil.rmtree(d)
         print(('  ✓ caught' if not ok else '  ✗ MISSED') + ': ' + name); bad += ok
+    if m == 'app/ai-validators.js':
+        d = tree(m, src0)
+        try:
+            cp = os.path.join(d, 'netlify/functions/ai/core.mjs')
+            txt = open(cp, encoding='utf-8').read()
+            open(cp, 'w', encoding='utf-8').write(txt.replace("reason:'missing target'", "reason:'missing'", 1))
+            ok, out = run(gate, HTML, d)
+        finally: shutil.rmtree(d)
+        print(('  ✓ caught' if not ok else '  ✗ MISSED') + ': server copy (core.mjs) edited by hand'); bad += ok
     for name, html in _html_mutants(m, HTML):
         if html == HTML: print(f'  ✗ {name}: anchor not found'); bad += 1; continue
         ok, out = run(gate, html, ROOT)
