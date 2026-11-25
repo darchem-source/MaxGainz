@@ -5888,6 +5888,7 @@ VAL.profileGender = 'F'; _profileAutosaveField('profileGender');
 t(userProfile.gender === 'F', 'gender not saved');
 t(userProfile.weight === 82.4 && bodyWeightLog.length === 1 && bodyWeightLog[0].weight === 82.4 && bodyWeightLog[0].displayUnit === 'lbs', 'editing gender rewrote body weight: ' + JSON.stringify(bodyWeightLog));
 t(CHART === 0 && GREET === 0, 'gender edit re-rendered weight chart / greeting');
+t(userProfile.firstName === 'A', 'a non-name edit cleared the name fields');
 // a cleared or silly weight is never saved
 VAL.profileWeight = ''; _profileAutosaveField('profileWeight');
 t(userProfile.weight === 82.4 && bodyWeightLog[0].weight === 82.4, 'empty weight saved a default');
@@ -5901,8 +5902,51 @@ VAL.profileDOB = '1990-05-02'; _profileAutosaveField('profileDOB'); t(userProfil
 VAL.profileHeightCM = ''; _profileAutosaveField('profileHeightCM'); t(userProfile.heightCM === 180, 'empty height saved a default');
 // a name edit saves only that name and refreshes the greeting
 VAL.profilePreferredName = '  Sam  '; _profileAutosaveField('profilePreferredName');
-t(userProfile.preferredName === 'Sam' && userProfile.firstName === 'A' && GREET === 1, 'name edit');
+t(userProfile.preferredName === 'Sam' && userProfile.weight === 83.6 && userProfile.dob === '1990-05-02' && GREET === 1, 'name edit must save the name (and touch nothing else but the merged name fields)');
 t(_profileFieldValue({ kind:'text' }, 'x'.repeat(100), Date.now()).value.length === 60, 'text not capped');
+// one display name: shown from the old fields, and saving it clears the old fields + the duplicate email
+t(_profileDisplayName({ preferredName:'', firstName:'Max', lastName:'Gains' }, null) === 'Max Gains', 'display name from first/last');
+t(_profileDisplayName({ preferredName:' Maxi ', firstName:'Max' }, null) === 'Maxi', 'display name prefers the preferred name');
+t(_profileDisplayName({}, { name:'From signup' }) === 'From signup', 'display name falls back to sign-up name');
+userProfile.firstName = 'Max'; userProfile.lastName = 'Gains'; userProfile.email = 'old@copy.example';
+VAL.profilePreferredName = 'Maxi'; _profileAutosaveField('profilePreferredName');
+t(userProfile.preferredName === 'Maxi' && userProfile.firstName === '' && userProfile.lastName === '' && userProfile.email === '', 'saving the display name must clear first/last and the duplicate email: ' + JSON.stringify(userProfile));
+// weight in the user's unit, stored in kg
+var localStorage = { getItem: function(k){ return k === 'userWeightUnit' ? 'lbs' : null; } };
+VAL.profileWeight = '180'; _profileAutosaveField('profileWeight');
+var last = bodyWeightLog[bodyWeightLog.length - 1];
+t(Math.abs(userProfile.weight - 81.63) < 0.01 && last.displayWeight === 180 && last.displayUnit === 'lbs' && Math.abs(last.weight - 81.63) < 0.01, 'lbs weight not stored in kg: ' + JSON.stringify(last) + ' ' + userProfile.weight);
+VAL.profilePreferredName = ''; userProfile.firstName = 'Keep'; _profileAutosaveField('profilePreferredName');
+t(userProfile.preferredName === 'Maxi' && userProfile.firstName === 'Keep' && /not saved/.test(STATUS.profileSaveStatus.textContent), 'clearing the display name to retype must not wipe the names');
+t(_profileFieldValue(PROFILE_FIELD_RULES.profileWeight, '44', 0, 'lbs').ok === false && _profileFieldValue(PROFILE_FIELD_RULES.profileWeight, '45', 0, 'lbs').ok === true, 'lbs minimum must not go under 20 kg');
+VAL.profileWeight = '30'; _profileAutosaveField('profileWeight');
+t(Math.abs(userProfile.weight - 81.63) < 0.01 && /lbs/.test(STATUS.pfBodyStatus.textContent), 'lbs range not applied: ' + STATUS.pfBodyStatus.textContent);
+JSON.stringify(fails);
+"""
+
+P5_FILL = r"""
+var fails = [];
+function t(c, m){ if(!c) fails.push(m); }
+function mk(){ return { value:'', placeholder:'', style:{}, attrs:{}, setAttribute: function(k, v){ this.attrs[k] = v; }, parentNode: { appendChild: function(c){ E[c.id] = c; } } }; }
+var E = { profilePreferredName: mk(), profileEmail: mk(), profileWeight: mk(), profileHeightCM: mk() };
+var LBL = { prefname: mk(), email: mk() }, UNIT = { textContent:'kg' };
+var document = { activeElement: null, getElementById: function(id){ return E[id] || null; },
+  querySelector: function(q){ if(q.indexOf('prefname') !== -1) return LBL.prefname; if(q.indexOf('"email"') !== -1) return LBL.email; if(q.indexOf('body-weight') !== -1) return UNIT; return null; },
+  createElement: function(){ return mk(); } };
+var _profileV2Applied = true;
+var currentUser = { name:'Signup Name' };
+function getCurrentUserEmail(){ return 'auth@example.com'; }
+var LSU = 'lbs'; var localStorage = { getItem: function(k){ return k === 'userWeightUnit' ? LSU : null; } };
+var userProfile = { preferredName:'', firstName:'Max', lastName:'Gains', email:'old-typo@example', weight: 81.63, heightCM: 0 };
+_profileV2Fill();
+t(E.profilePreferredName.value === 'Max Gains', 'display name fallback: ' + E.profilePreferredName.value);
+t(E.profileEmail.value === 'auth@example.com' && E.profileEmail.readOnly === true, 'email must be the sign-in email, read-only: ' + E.profileEmail.value);
+t(E.profileWeight.value === 180 && UNIT.textContent === 'lbs', 'weight in lbs: ' + E.profileWeight.value + ' ' + UNIT.textContent);
+t(E.profileHeightCM.value === '', 'unset height must be empty, not 180');
+t(E.profileEmailHelp && /can\'t be changed/.test(E.profileEmailHelp.textContent), 'visible help text for the read-only email');
+// a field the user is typing in is never overwritten
+document.activeElement = E.profileWeight; E.profileWeight.value = '17'; _profileV2Fill();
+t(E.profileWeight.value === '17', 'refill clobbered the focused field');
 JSON.stringify(fails);
 """
 
@@ -5949,6 +5993,7 @@ def gate_profile_v2(html, js):
         if near is None: orphans.append((name, 'is not in any tagged block'))
         elif near[0] == 'pb' and near[1] in hidden:
             if near[1] == 'data-exportjson' or (near[1] == 'save' and 'saveProfile' in (a.get('onclick') or '')): continue   # replaced on purpose
+            if near[1] == 'names' and a.get('id') in ('profileFirstName', 'profileLastName'): continue   # merged into the display name
             orphans.append((name, f'sits in "{near[1]}", which the new layout hides'))
     for o, why in orphans: problems.append(f'control {o!r} on Profile {why} — it would vanish in the new layout')
     # (b) flag, move-only
@@ -5971,8 +6016,26 @@ def gate_profile_v2(html, js):
         if phrase not in fl: problems.append(f'autosave status must use the honest _announceSave wording and ignore stale results ({phrase})')
     if "if(document.visibilityState === 'hidden') _profileFlushCloud();" not in ap: problems.append('a pending account upload must be flushed when the app is hidden')
     if "'save'" not in hid: problems.append('the Save button must be hidden in the autosave layout')
+    fill = extract_decl(js, '_profileV2Fill') or ''
+    if "emailEl.readOnly = true;" not in fill or "getCurrentUserEmail()" not in fill or "id !== 'profileEmail'" not in ap:
+        problems.append('the sign-in email must be shown read-only and never saved from the form')
+    if "wEl.value = kg > 0 ? (unit === 'lbs' ? Math.round(kg * PROFILE_LB_PER_KG * 10) / 10 : kg) : '';" not in fill or "hEl.value = h > 0 ? h : '';" not in fill:
+        problems.append('no made-up 80 kg / 180 cm in the new layout; weight shown in the user\'s unit')
+    rp = extract_decl(js, 'renderProfile') or ''
+    if "_profileV2Fill()" not in rp or "_profileV2Fill()" not in (extract_decl(js, 'setWeightUnit') or ''):
+        problems.append('the new layout must refill after renderProfile and after a unit change')
+    legacy = [rp.find("getElementById('profile" + f + "').value=") for f in ('FirstName', 'Email', 'PreferredName', 'HeightCM', 'Weight')]
+    if min(legacy) == -1 or rp.find('_profileV2Fill()') < max(legacy):
+        problems.append('_profileV2Fill must run AFTER renderProfile\'s legacy field fills (or they overwrite it: wrong unit, old email, fake defaults)')
+    gr = extract_decl(js, '_renderGreeting') or ''
+    if '_profileDisplayName(userProfile, currentUser)' not in gr: problems.append('the greeting must use the same display name as the new layout')
+    if fill:
+        f4, _ = run_jxa('\n'.join([extract_const_line(js, 'PROFILE_LB_PER_KG') or '', extract_decl(js, '_profileWeightUnit') or '', extract_decl(js, '_profileDisplayName') or '', fill]) + '\n' + P5_FILL)
+        try: problems += json.loads(f4)
+        except Exception: problems.append('fill runner errored: ' + f4[:300])
     if rules:
-        dom = [extract_const_object(js, 'PROFILE_FIELD_RULES'), extract_decl(js, '_profileFieldValue'), extract_decl(js, '_profileAutosaveField')]
+        dom = [extract_const_line(js, 'PROFILE_LB_PER_KG') or '', extract_decl(js, '_profileWeightUnit') or '', extract_decl(js, '_profileDisplayName') or '',
+               extract_const_object(js, 'PROFILE_FIELD_RULES'), extract_decl(js, '_profileFieldValue'), extract_decl(js, '_profileAutosaveField')]
         out2, _ = run_jxa('\n'.join(dom) + '\n' + P5_AUTOSAVE)
         try: problems += json.loads(out2)
         except Exception: problems.append('autosave runner errored: ' + out2[:300])
